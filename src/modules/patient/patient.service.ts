@@ -1,66 +1,61 @@
 import { Patient } from './patient.model.js';
-import { CreatePatientDto, UpdatePatientDto, PatientQueryFilters } from './patient.types.js';
-import { ApiError } from '../../utils/ApiError.js';
-import { generateMRN } from '../../utils/generator.js';
+import { Account } from '../auth/auth.model.js';
+import { CreatePatientDTO, UpdatePatientDTO } from './patient.types.js';
 
 export class PatientService {
-  /**
-   * Registers a new patient record with auto-generated MRN
-   */
-  static async createPatient(dto: CreatePatientDto, organizationId: string) {
-    if (dto.insuranceType === 'HMO' && (!dto.hmoProvider || !dto.hmoPolicyNumber)) {
-      throw new ApiError(400, 'HMO Provider and Policy Number are required for HMO insured patients.');
+  private static async generateMRN(hospitalId: string): Promise<string> {
+    const hospital = await Account.findById(hospitalId);
+    const prefix = hospital?.code ? hospital.code.toUpperCase() : 'MED';
+    
+    const count = await Patient.countDocuments({ hospitalId });
+    const sequenceNumber = String(count + 1).padStart(5, '0');
+    
+    return `${prefix}-PAT-${sequenceNumber}`;
+  }
+
+  public static async createPatient(hospitalId: string, dto: CreatePatientDTO) {
+    if (dto.category === 'HMO' && !dto.hmoId) {
+      throw new Error('HMO Account ID is required for HMO category patients');
     }
 
-    let mrn = generateMRN();
-    let isUnique = false;
-
-    // Ensure MRN collision safety
-    while (!isUnique) {
-      const existing = await Patient.findOne({ mrn });
-      if (!existing) {
-        isUnique = true;
-      } else {
-        mrn = generateMRN();
-      }
-    }
+    const mrn = await this.generateMRN(hospitalId);
 
     const patient = await Patient.create({
       ...dto,
+      hospitalId,
       mrn,
-      organizationId,
+      dateOfBirth: new Date(dto.dateOfBirth),
     });
 
     return patient;
   }
 
-  /**
-   * Retrieves paginated list of patients with search and filters
-   */
-  static async getPatients(organizationId: string, filters: PatientQueryFilters) {
-    const page = Number(filters.page) || 1;
-    const limit = Number(filters.limit) || 20;
+  public static async getPatients(
+    hospitalId: string,
+    filters: { search?: string; category?: string; page?: number; limit?: number }
+  ) {
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
     const skip = (page - 1) * limit;
 
-    const query: any = { organizationId, isArchived: false };
+    const query: any = { hospitalId, isActive: true };
 
-    if (filters.insuranceType) query.insuranceType = filters.insuranceType;
-    if (filters.hmoProvider) query.hmoProvider = filters.hmoProvider;
-    if (filters.gender) query.gender = filters.gender;
+    if (filters.category) {
+      query.category = filters.category;
+    }
 
     if (filters.search) {
       query.$or = [
+        { mrn: { $regex: filters.search, $options: 'i' } },
         { firstName: { $regex: filters.search, $options: 'i' } },
         { lastName: { $regex: filters.search, $options: 'i' } },
-        { mrn: { $regex: filters.search, $options: 'i' } },
-        { phoneNumber: { $regex: filters.search, $options: 'i' } },
-        { hmoPolicyNumber: { $regex: filters.search, $options: 'i' } },
+        { phone: { $regex: filters.search, $options: 'i' } },
       ];
     }
 
     const [patients, total] = await Promise.all([
       Patient.find(query)
-        .populate('hmoProvider', 'name code')
+        .populate('hmoId', 'name code email')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -72,80 +67,42 @@ export class PatientService {
       pagination: {
         total,
         page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+        pages: Math.ceil(total / limit),
       },
     };
   }
 
-  /**
-   * Retrieves a single patient by MongoDB ID
-   */
-  static async getPatientById(id: string, organizationId: string) {
-    const patient = await Patient.findOne({ _id: id, organizationId, isArchived: false }).populate(
-      'hmoProvider',
-      'name code email phone'
+  public static async getPatientById(patientId: string, hospitalId: string) {
+    const patient = await Patient.findOne({ _id: patientId, hospitalId }).populate(
+      'hmoId',
+      'name code email'
     );
-
     if (!patient) {
-      throw new ApiError(404, 'Patient record not found.');
+      throw new Error('Patient record not found');
     }
-
     return patient;
   }
 
-  /**
-   * Retrieves a single patient by Medical Record Number (MRN)
-   */
-  static async getPatientByMRN(mrn: string, organizationId: string) {
-    const patient = await Patient.findOne({
-      mrn: mrn.toUpperCase(),
-      organizationId,
-      isArchived: false,
-    }).populate('hmoProvider', 'name code email phone');
-
-    if (!patient) {
-      throw new ApiError(404, `No patient found with MRN: ${mrn}`);
-    }
-
-    return patient;
-  }
-
-  /**
-   * Updates patient details
-   */
-  static async updatePatient(id: string, dto: UpdatePatientDto, organizationId: string) {
-    if (dto.insuranceType === 'HMO' && (!dto.hmoProvider || !dto.hmoPolicyNumber)) {
-      throw new ApiError(400, 'HMO Provider and Policy Number are required for HMO insured patients.');
+  public static async updatePatient(
+    patientId: string,
+    hospitalId: string,
+    dto: UpdatePatientDTO
+  ) {
+    const updateData: any = { ...dto };
+    if (dto.dateOfBirth) {
+      updateData.dateOfBirth = new Date(dto.dateOfBirth);
     }
 
     const patient = await Patient.findOneAndUpdate(
-      { _id: id, organizationId, isArchived: false },
-      { $set: dto },
+      { _id: patientId, hospitalId },
+      { $set: updateData },
       { new: true, runValidators: true }
-    ).populate('hmoProvider', 'name code');
-
-    if (!patient) {
-      throw new ApiError(404, 'Patient record not found.');
-    }
-
-    return patient;
-  }
-
-  /**
-   * Soft deletes / archives a patient record
-   */
-  static async archivePatient(id: string, organizationId: string) {
-    const patient = await Patient.findOneAndUpdate(
-      { _id: id, organizationId },
-      { $set: { isArchived: true } },
-      { new: true }
     );
 
     if (!patient) {
-      throw new ApiError(404, 'Patient record not found.');
+      throw new Error('Patient record not found');
     }
 
-    return { id: patient._id, mrn: patient.mrn, isArchived: true };
+    return patient;
   }
 }

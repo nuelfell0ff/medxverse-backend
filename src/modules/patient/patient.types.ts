@@ -1,84 +1,71 @@
 import { Document, Types } from 'mongoose';
 
-export type Gender = 'MALE' | 'FEMALE' | 'OTHER';
-export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-';
-export type Genotype = 'AA' | 'AS' | 'SS' | 'AC' | 'SC';
-export type InsuranceType = 'SELF_PAY' | 'HMO';
+export enum Gender {
+  MALE = 'MALE',
+  FEMALE = 'FEMALE',
+  OTHER = 'OTHER',
+}
 
-export interface IEmergencyContact {
-  name: string;
-  relationship: string;
-  phone: string;
+export enum BloodGroup {
+  A_POSITIVE = 'A+',
+  A_NEGATIVE = 'A-',
+  B_POSITIVE = 'B+',
+  B_NEGATIVE = 'B-',
+  AB_POSITIVE = 'AB+',
+  AB_NEGATIVE = 'AB-',
+  O_POSITIVE = 'O+',
+  O_NEGATIVE = 'O-',
+}
+
+export enum PatientCategory {
+  SELF_PAY = 'SELF_PAY',
+  HMO = 'HMO',
 }
 
 export interface IPatient {
-  mrn: string;
+  hospitalId: Types.ObjectId;
+  mrn: string; // Medical Record Number (e.g., STN-PAT-00001)
   firstName: string;
   lastName: string;
   dateOfBirth: Date;
   gender: Gender;
-  phoneNumber: string;
+  phone: string;
   email?: string;
   address?: string;
   bloodGroup?: BloodGroup;
-  genotype?: Genotype;
+  genotype?: string;
   allergies?: string[];
-  chronicConditions?: string[];
-  emergencyContact: IEmergencyContact;
-  insuranceType: InsuranceType;
-  hmoProvider?: Types.ObjectId;
+
+  // HMO Coverage Details
+  category: PatientCategory;
+  hmoId?: Types.ObjectId; // References an Account of type HMO
   hmoPolicyNumber?: string;
-  organizationId: Types.ObjectId;
-  isArchived: boolean;
-  createdAt?: Date;
-  updatedAt?: Date;
+
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface IPatientDocument extends IPatient, Document {
   _id: Types.ObjectId;
 }
 
-export interface CreatePatientDto {
+export interface CreatePatientDTO {
   firstName: string;
   lastName: string;
-  dateOfBirth: string | Date;
+  dateOfBirth: string;
   gender: Gender;
-  phoneNumber: string;
+  phone: string;
   email?: string;
   address?: string;
   bloodGroup?: BloodGroup;
-  genotype?: Genotype;
+  genotype?: string;
   allergies?: string[];
-  chronicConditions?: string[];
-  emergencyContact: IEmergencyContact;
-  insuranceType: InsuranceType;
-  hmoProvider?: string;
+  category: PatientCategory;
+  hmoId?: string;
   hmoPolicyNumber?: string;
 }
 
-export interface UpdatePatientDto {
-  firstName?: string;
-  lastName?: string;
-  dateOfBirth?: string | Date;
-  gender?: Gender;
-  phoneNumber?: string;
-  email?: string;
-  address?: string;
-  bloodGroup?: BloodGroup;
-  genotype?: Genotype;
-  allergies?: string[];
-  chronicConditions?: string[];
-  emergencyContact?: IEmergencyContact;
-  insuranceType?: InsuranceType;
-  hmoProvider?: string;
-  hmoPolicyNumber?: string;
-}
-
-export interface PatientQueryFilters {
-  insuranceType?: InsuranceType;
-  hmoProvider?: string;
-  gender?: Gender;
-  search?: string;
-  page?: number;
-  limit?: number;
+export interface UpdatePatientDTO extends Partial<CreatePatientDTO> {
+  isActive?: boolean;
 }

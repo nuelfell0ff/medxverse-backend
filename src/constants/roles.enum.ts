@@ -16,6 +16,7 @@ export enum UserRole {
   RADIOLOGIST = 'RADIOLOGIST',
   BILLING_OFFICER = 'BILLING_OFFICER',
   RECEPTIONIST = 'RECEPTIONIST',
+  ACCOUNTANT = 'ACCOUNTANT',
 
   // HMO Portal Roles
   HMO_ADMIN = 'HMO_ADMIN',
@@ -36,6 +37,7 @@ export const HOSPITAL_ROLES: UserRole[] = [
   UserRole.RADIOLOGIST,
   UserRole.BILLING_OFFICER,
   UserRole.RECEPTIONIST,
+  UserRole.ACCOUNTANT,
 ];
 
 export const HMO_ROLES: UserRole[] = [

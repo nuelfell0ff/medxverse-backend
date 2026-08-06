@@ -1,164 +1,105 @@
 import { Request, Response, NextFunction } from 'express';
 import { LaboratoryService } from './laboratory.service.js';
-import { ApiResponse } from '../../utils/ApiResponse.js';
 
 export class LaboratoryController {
-  /**
-   * Creates a new lab test catalog item
-   * POST /api/v1/laboratory/catalog
-   */
-  static async createLabTestCatalogItem(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  // Lab Catalog
+  public static async createLabTest(req: Request, res: Response, next: NextFunction) {
     try {
-      const testItem = await LaboratoryService.createLabTestCatalogItem(
-        req.body,
-        req.user!.organizationId
-      );
-      res.status(201).json(new ApiResponse(201, testItem, 'Lab test added to catalog successfully'));
+      const hospitalId = (req as any).user.hospitalId;
+      const test = await LaboratoryService.createLabTest(hospitalId, req.body);
+      res.status(201).json({ success: true, data: test });
     } catch (error) {
       next(error);
     }
   }
 
-  /**
-   * Gets available lab test catalog
-   * GET /api/v1/laboratory/catalog
-   */
-  static async getLabTestCatalog(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public static async getLabTests(req: Request, res: Response, next: NextFunction) {
     try {
-      const category = req.query.category as string;
-      const catalog = await LaboratoryService.getLabTestCatalog(
-        req.user!.organizationId,
-        category
-      );
-      res.status(200).json(new ApiResponse(200, catalog, 'Lab test catalog retrieved'));
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  /**
-   * Gets single lab test catalog item
-   * GET /api/v1/laboratory/catalog/:id
-   */
-  static async getLabTestCatalogById(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const testItem = await LaboratoryService.getLabTestCatalogById(
-        req.params.id,
-        req.user!.organizationId
-      );
-      res.status(200).json(new ApiResponse(200, testItem, 'Catalog test item retrieved'));
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  /**
-   * Updates lab test catalog item
-   * PATCH /api/v1/laboratory/catalog/:id
-   */
-  static async updateLabTestCatalogItem(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const updated = await LaboratoryService.updateLabTestCatalogItem(
-        req.params.id,
-        req.body,
-        req.user!.organizationId
-      );
-      res.status(200).json(new ApiResponse(200, updated, 'Catalog item updated successfully'));
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  /**
-   * Creates new lab order for patient
-   * POST /api/v1/laboratory/orders
-   */
-  static async createLabOrder(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const order = await LaboratoryService.createLabOrder(
-        req.body,
-        req.user!.id,
-        req.user!.organizationId
-      );
-      res.status(201).json(new ApiResponse(201, order, 'Laboratory order created successfully'));
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  /**
-   * Gets list of lab orders
-   * GET /api/v1/laboratory/orders
-   */
-  static async getLabOrders(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
+      const hospitalId = (req as any).user.hospitalId;
       const filters = {
-        patientId: req.query.patientId as string,
-        status: req.query.status as any,
-        priority: req.query.priority as any,
-        startDate: req.query.startDate as string,
-        endDate: req.query.endDate as string,
-        page: req.query.page ? Number(req.query.page) : undefined,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        search: req.query.search as string,
+        category: req.query.category as any,
+        isActive: req.query.isActive ? req.query.isActive === 'true' : undefined,
+        page: req.query.page ? parseInt(req.query.page as string) : undefined,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : undefined,
       };
-
-      const result = await LaboratoryService.getLabOrders(req.user!.organizationId, filters);
-      res.status(200).json(new ApiResponse(200, result, 'Lab orders retrieved successfully'));
+      const result = await LaboratoryService.getLabTests(hospitalId, filters);
+      res.status(200).json({ success: true, ...result });
     } catch (error) {
       next(error);
     }
   }
 
-  /**
-   * Gets specific lab order by ID
-   * GET /api/v1/laboratory/orders/:id
-   */
-  static async getLabOrderById(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  public static async updateLabTest(req: Request, res: Response, next: NextFunction) {
     try {
-      const order = await LaboratoryService.getLabOrderById(
-        req.params.id,
-        req.user!.organizationId
-      );
-      res.status(200).json(new ApiResponse(200, order, 'Lab order details retrieved'));
+      const hospitalId = (req as any).user.hospitalId;
+      const test = await LaboratoryService.updateLabTest(req.params.id as string, hospitalId, req.body);
+      res.status(200).json({ success: true, data: test });
     } catch (error) {
       next(error);
     }
   }
 
-  /**
-   * Submits/Updates test item results inside a lab order
-   * PATCH /api/v1/laboratory/orders/:orderId/items/:itemId
-   */
-  static async updateLabTestResult(
-    req: Request<{ orderId: string; itemId: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  // Lab Requests & Workflow
+  public static async createLabRequest(req: Request, res: Response, next: NextFunction) {
     try {
-      const updatedOrder = await LaboratoryService.updateLabTestResult(
-        req.params.orderId,
-        req.params.itemId,
-        req.body,
-        req.user!.id,
-        req.user!.organizationId
-      );
-      res.status(200).json(new ApiResponse(200, updatedOrder, 'Lab test result updated successfully'));
+      const hospitalId = (req as any).user.hospitalId;
+      const labRequest = await LaboratoryService.createLabRequest(hospitalId, req.body);
+      res.status(201).json({ success: true, data: labRequest });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async getLabRequests(req: Request, res: Response, next: NextFunction) {
+    try {
+      const hospitalId = (req as any).user.hospitalId;
+      const filters = {
+        status: req.query.status as any,
+        patientId: req.query.patientId as string,
+        page: req.query.page ? parseInt(req.query.page as string) : undefined,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : undefined,
+      };
+      const result = await LaboratoryService.getLabRequests(hospitalId, filters);
+      res.status(200).json({ success: true, ...result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async getLabRequestById(req: Request, res: Response, next: NextFunction) {
+    try {
+      const hospitalId = (req as any).user.hospitalId;
+      const labRequest = await LaboratoryService.getLabRequestById(req.params.id as string, hospitalId);
+      res.status(200).json({ success: true, data: labRequest });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async collectSample(req: Request, res: Response, next: NextFunction) {
+    try {
+      const hospitalId = (req as any).user.hospitalId;
+      const userId = (req as any).user.id;
+      const result = await LaboratoryService.collectSample(req.params.id as string, hospitalId, {
+        collectedBy: userId,
+        sampleTypeNotes: req.body.sampleTypeNotes,
+      });
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async submitResults(req: Request, res: Response, next: NextFunction) {
+    try {
+      const hospitalId = (req as any).user.hospitalId;
+      const userId = (req as any).user.id;
+      const result = await LaboratoryService.submitResults(req.params.id as string, hospitalId, {
+        performedBy: userId,
+        testResults: req.body.testResults,
+      });
+      res.status(200).json({ success: true, data: result });
     } catch (error) {
       next(error);
     }

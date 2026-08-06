@@ -1,112 +1,102 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response } from 'express';
+import { AuthRequest } from '../../middlewares/auth.middleware.js';
 import { PatientService } from './patient.service.js';
-import { ApiResponse } from '../../utils/ApiResponse.js';
 
 export class PatientController {
-  /**
-   * Registers a new patient
-   * POST /api/v1/patients
-   */
-  static async createPatient(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public static async createPatient(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const patient = await PatientService.createPatient(req.body, req.user!.organizationId);
-      res.status(201).json(new ApiResponse(201, patient, 'Patient registered successfully'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const patient = await PatientService.createPatient(hospitalId, req.body);
+      res.status(201).json({
+        success: true,
+        message: 'Patient registered successfully',
+        data: patient,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to register patient',
+      });
     }
   }
 
-  /**
-   * Retrieves paginated patients list
-   * GET /api/v1/patients
-   */
-  static async getPatients(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public static async getPatients(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const filters = {
-        insuranceType: req.query.insuranceType as any,
-        hmoProvider: req.query.hmoProvider as string,
-        gender: req.query.gender as any,
-        search: req.query.search as string,
-        page: req.query.page ? Number(req.query.page) : undefined,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
-      };
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
 
-      const result = await PatientService.getPatients(req.user!.organizationId, filters);
-      res.status(200).json(new ApiResponse(200, result, 'Patient directory retrieved'));
-    } catch (error) {
-      next(error);
+      const { search, category, page, limit } = req.query;
+
+      const result = await PatientService.getPatients(hospitalId, {
+        search: search ? String(search) : undefined,
+        category: category ? String(category) : undefined,
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 20,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: result.patients,
+        pagination: result.pagination,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch patients',
+      });
     }
   }
 
-  /**
-   * Gets patient by Mongo ID
-   * GET /api/v1/patients/:id
-   */
-  static async getPatientById(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  public static async getPatientById(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const patient = await PatientService.getPatientById(req.params.id, req.user!.organizationId);
-      res.status(200).json(new ApiResponse(200, patient, 'Patient details retrieved'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const id = req.params.id as string;
+      const patient = await PatientService.getPatientById(id, hospitalId);
+      res.status(200).json({
+        success: true,
+        data: patient,
+      });
+    } catch (error: any) {
+      res.status(404).json({
+        success: false,
+        message: error.message || 'Patient not found',
+      });
     }
   }
 
-  /**
-   * Gets patient by MRN
-   * GET /api/v1/patients/mrn/:mrn
-   */
-  static async getPatientByMRN(
-    req: Request<{ mrn: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  public static async updatePatient(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const patient = await PatientService.getPatientByMRN(req.params.mrn, req.user!.organizationId);
-      res.status(200).json(new ApiResponse(200, patient, 'Patient details retrieved'));
-    } catch (error) {
-      next(error);
-    }
-  }
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
 
-  /**
-   * Updates patient record
-   * PATCH /api/v1/patients/:id
-   */
-  static async updatePatient(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const updatedPatient = await PatientService.updatePatient(
-        req.params.id,
-        req.body,
-        req.user!.organizationId
-      );
-      res.status(200).json(new ApiResponse(200, updatedPatient, 'Patient record updated'));
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  /**
-   * Soft deletes / archives patient
-   * DELETE /api/v1/patients/:id
-   */
-  static async archivePatient(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const result = await PatientService.archivePatient(req.params.id, req.user!.organizationId);
-      res.status(200).json(new ApiResponse(200, result, 'Patient record archived successfully'));
-    } catch (error) {
-      next(error);
+      const id = req.params.id as string;
+      const patient = await PatientService.updatePatient(id, hospitalId, req.body);
+      res.status(200).json({
+        success: true,
+        message: 'Patient updated successfully',
+        data: patient,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to update patient',
+      });
     }
   }
 }

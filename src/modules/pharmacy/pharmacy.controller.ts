@@ -1,122 +1,145 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response } from 'express';
+import { AuthRequest } from '../../middlewares/auth.middleware.js';
 import { PharmacyService } from './pharmacy.service.js';
-import { ApiResponse } from '../../utils/ApiResponse.js';
+import { PrescriptionStatus } from './pharmacy.types.js';
 
 export class PharmacyController {
-  /**
-   * Adds new drug item to inventory
-   * POST /api/v1/pharmacy/inventory
-   */
-  static async addDrug(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // --- MEDICATIONS ---
+
+  public static async createMedication(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const drug = await PharmacyService.addDrug(req.body, req.user!.organizationId);
-      res.status(201).json(new ApiResponse(201, drug, 'Drug added to inventory successfully'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const medication = await PharmacyService.createMedication(hospitalId, req.body);
+      res.status(201).json({
+        success: true,
+        message: 'Medication added to inventory successfully',
+        data: medication,
+      });
+    } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
     }
   }
 
-  /**
-   * Retrieves pharmacy inventory list
-   * GET /api/v1/pharmacy/inventory
-   */
-  static async getInventory(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public static async getMedications(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const filters = {
-        category: req.query.category as any,
-        lowStock: req.query.lowStock === 'true',
-        search: req.query.search as string,
-        page: req.query.page ? Number(req.query.page) : undefined,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
-      };
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
 
-      const result = await PharmacyService.getInventory(req.user!.organizationId, filters);
-      res.status(200).json(new ApiResponse(200, result, 'Pharmacy inventory retrieved'));
-    } catch (error) {
-      next(error);
+      const { search, category, lowStock, page, limit } = req.query;
+
+      const result = await PharmacyService.getMedications(hospitalId, {
+        search: search ? String(search) : undefined,
+        category: category ? String(category) : undefined,
+        lowStock: lowStock === 'true',
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 20,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: result.medications,
+        pagination: result.pagination,
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
     }
   }
 
-  /**
-   * Gets specific drug item details
-   * GET /api/v1/pharmacy/inventory/:id
-   */
-  static async getDrugById(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  public static async addStockBatch(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const drug = await PharmacyService.getDrugById(req.params.id, req.user!.organizationId);
-      res.status(200).json(new ApiResponse(200, drug, 'Drug details retrieved'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const id = req.params.id as string;
+      const medication = await PharmacyService.addStockBatch(id, hospitalId, req.body);
+
+      res.status(200).json({
+        success: true,
+        message: 'Stock batch added successfully',
+        data: medication,
+      });
+    } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
     }
   }
 
-  /**
-   * Updates drug item details/stock level
-   * PATCH /api/v1/pharmacy/inventory/:id
-   */
-  static async updateDrug(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  // --- PRESCRIPTIONS ---
+
+  public static async createPrescription(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const updatedDrug = await PharmacyService.updateDrug(
-        req.params.id,
-        req.body,
-        req.user!.organizationId
-      );
-      res.status(200).json(new ApiResponse(200, updatedDrug, 'Drug record updated successfully'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const prescription = await PharmacyService.createPrescription(hospitalId, req.body);
+      res.status(201).json({
+        success: true,
+        message: 'Prescription issued successfully',
+        data: prescription,
+      });
+    } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
     }
   }
 
-  /**
-   * Dispenses prescription medications
-   * POST /api/v1/pharmacy/dispense
-   */
-  static async dispensePrescription(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  public static async getPrescriptions(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const record = await PharmacyService.dispensePrescription(
-        req.body,
-        req.user!.id,
-        req.user!.organizationId
-      );
-      res.status(201).json(new ApiResponse(201, record, 'Medications dispensed successfully'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const { status, patientId, page, limit } = req.query;
+
+      const result = await PharmacyService.getPrescriptions(hospitalId, {
+        status: status ? (status as PrescriptionStatus) : undefined,
+        patientId: patientId ? String(patientId) : undefined,
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 20,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: result.prescriptions,
+        pagination: result.pagination,
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
     }
   }
 
-  /**
-   * Gets list of past dispense logs
-   * GET /api/v1/pharmacy/dispense-history
-   */
-  static async getDispenseHistory(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  public static async dispensePrescription(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const page = req.query.page ? Number(req.query.page) : 1;
-      const limit = req.query.limit ? Number(req.query.limit) : 20;
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
 
-      const result = await PharmacyService.getDispenseHistory(
-        req.user!.organizationId,
-        page,
-        limit
-      );
-      res.status(200).json(new ApiResponse(200, result, 'Dispense history retrieved'));
-    } catch (error) {
-      next(error);
+      const id = req.params.id as string;
+      const prescription = await PharmacyService.dispensePrescription(id, hospitalId, req.body);
+
+      res.status(200).json({
+        success: true,
+        message: 'Prescription items dispensed successfully',
+        data: prescription,
+      });
+    } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
     }
   }
 }

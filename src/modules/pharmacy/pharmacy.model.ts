@@ -1,13 +1,36 @@
-import { Schema, model } from 'mongoose';
-import { IDrugDocument, IDispenseRecordDocument } from './pharmacy.types.js';
+import mongoose, { Schema } from 'mongoose';
+import {
+  IMedicationDocument,
+  IPrescriptionDocument,
+  MedicationCategory,
+  PrescriptionStatus,
+} from './pharmacy.types.js';
 
-const drugSchema = new Schema<IDrugDocument>(
+// --- Stock Batch Schema ---
+const StockBatchSchema = new Schema(
   {
+    batchNumber: { type: String, required: true, trim: true },
+    quantity: { type: Number, required: true, min: 0 },
+    unitPrice: { type: Number, required: true, min: 0 },
+    expiryDate: { type: Date, required: true },
+    receivedDate: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
+
+// --- Medication Schema ---
+const MedicationSchema = new Schema<IMedicationDocument>(
+  {
+    hospitalId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Account',
+      required: [true, 'Hospital account ID is required'],
+      index: true,
+    },
     name: {
       type: String,
-      required: [true, 'Drug name is required'],
+      required: [true, 'Medication name is required'],
       trim: true,
-      index: true,
     },
     genericName: {
       type: String,
@@ -15,153 +38,115 @@ const drugSchema = new Schema<IDrugDocument>(
     },
     category: {
       type: String,
-      enum: [
-        'ANALGESIC',
-        'ANTIBIOTIC',
-        'ANTIVIRAL',
-        'ANTIHYPERTENSIVE',
-        'ANTIDIABETIC',
-        'ANTIHISTAMINE',
-        'SUPPLEMENT',
-        'OTHER',
-      ],
-      default: 'OTHER',
-      index: true,
+      enum: Object.values(MedicationCategory),
+      default: MedicationCategory.TABLET,
     },
-    sku: {
+    unit: {
       type: String,
-      required: true,
-      unique: true,
-      uppercase: true,
-      trim: true,
-      index: true,
-    },
-    batchNumber: {
-      type: String,
-      required: [true, 'Batch number is required'],
+      required: [true, 'Unit of measurement (e.g. tablet, bottle) is required'],
       trim: true,
     },
-    quantityInStock: {
-      type: Number,
-      required: [true, 'Initial stock quantity is required'],
-      min: [0, 'Quantity cannot be negative'],
-      default: 0,
-    },
-    reorderLevel: {
+    minReorderLevel: {
       type: Number,
       default: 10,
     },
-    unitPrice: {
+    batches: [StockBatchSchema],
+    totalQuantity: {
       type: Number,
-      required: [true, 'Unit price is required'],
-      min: [0, 'Price cannot be negative'],
+      default: 0,
     },
-    expiryDate: {
-      type: Date,
-      required: [true, 'Expiry date is required'],
+    sellingPricePerUnit: {
+      type: Number,
+      required: [true, 'Selling price per unit is required'],
+      min: 0,
     },
-    manufacturer: {
-      type: String,
-      trim: true,
-    },
-    organizationId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Organization',
-      required: [true, 'Organization ID is required'],
-      index: true,
-    },
-    isActive: {
+    requiresPrescription: {
       type: Boolean,
       default: true,
+    },
+  },
+  { timestamps: true }
+);
+
+MedicationSchema.index({ hospitalId: 1, name: 1 }, { unique: true });
+
+// Sync total quantity prior to save
+MedicationSchema.pre('save', function (this: IMedicationDocument) {
+  if (this.batches) {
+    this.totalQuantity = this.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+  }
+});
+
+// --- Prescription Item Schema ---
+const PrescriptionItemSchema = new Schema(
+  {
+    medicationId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Medication',
+      required: true,
+    },
+    medicationName: { type: String, required: true },
+    dosage: { type: String, required: true },
+    frequency: { type: String, required: true },
+    duration: { type: String, required: true },
+    quantityPrescribed: { type: Number, required: true, min: 1 },
+    quantityDispensed: { type: Number, default: 0, min: 0 },
+    unitPrice: { type: Number, required: true },
+    isDispensed: { type: Boolean, default: false },
+  },
+  { _id: true }
+);
+
+// --- Prescription Schema ---
+const PrescriptionSchema = new Schema<IPrescriptionDocument>(
+  {
+    hospitalId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Account',
+      required: [true, 'Hospital account ID is required'],
       index: true,
     },
-  },
-  {
-    timestamps: true,
-  }
-);
-
-drugSchema.index({ name: 'text', genericName: 'text', sku: 'text' });
-
-export const Drug = model<IDrugDocument>('Drug', drugSchema);
-
-const dispensedItemSchema = new Schema(
-  {
-    drugId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Drug',
-      required: true,
-    },
-    drugName: {
+    prescriptionNumber: {
       type: String,
       required: true,
+      unique: true,
     },
-    quantity: {
-      type: Number,
-      required: true,
-      min: 1,
-    },
-    unitPrice: {
-      type: Number,
-      required: true,
-    },
-    subtotal: {
-      type: Number,
-      required: true,
-    },
-  },
-  { _id: false }
-);
-
-const dispenseRecordSchema = new Schema<IDispenseRecordDocument>(
-  {
     patientId: {
       type: Schema.Types.ObjectId,
       ref: 'Patient',
       required: [true, 'Patient ID is required'],
       index: true,
     },
-    opdVisitId: {
+    doctorId: {
       type: Schema.Types.ObjectId,
-      ref: 'OPDVisit',
+      ref: 'Staff',
+      required: [true, 'Doctor ID is required'],
       index: true,
     },
-    dispensedBy: {
+    ipdAdmissionId: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: [true, 'Pharmacist ID is required'],
-      index: true,
+      ref: 'IpdAdmission',
     },
-    organizationId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Organization',
-      required: [true, 'Organization ID is required'],
-      index: true,
-    },
-    items: {
-      type: [dispensedItemSchema],
-      required: true,
-    },
-    totalAmount: {
-      type: Number,
-      required: true,
-    },
-    paymentStatus: {
+    items: [PrescriptionItemSchema],
+    status: {
       type: String,
-      enum: ['PENDING', 'PAID', 'COVERED_BY_HMO'],
-      default: 'PENDING',
+      enum: Object.values(PrescriptionStatus),
+      default: PrescriptionStatus.PENDING,
+      index: true,
     },
-    notes: {
-      type: String,
-      trim: true,
-    },
+    notes: { type: String, trim: true },
+    dispensedBy: { type: Schema.Types.ObjectId, ref: 'Staff' },
+    dispensedAt: { type: Date },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-export const DispenseRecord = model<IDispenseRecordDocument>(
-  'DispenseRecord',
-  dispenseRecordSchema
-);
+PrescriptionSchema.index({ hospitalId: 1, status: 1 });
+
+export const Medication =
+  mongoose.models.Medication ||
+  mongoose.model<IMedicationDocument>('Medication', MedicationSchema);
+
+export const Prescription =
+  mongoose.models.Prescription ||
+  mongoose.model<IPrescriptionDocument>('Prescription', PrescriptionSchema);

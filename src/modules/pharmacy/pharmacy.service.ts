@@ -1,218 +1,265 @@
-import { Drug, DispenseRecord } from './pharmacy.model.js';
-import { OPDVisit } from '../opd/opd.model.js';
+import { Types } from 'mongoose';
+import { Medication, Prescription } from './pharmacy.model.js';
+import { Patient } from '../patient/patient.model.js';
+import { Staff } from '../staff/staff.model.js';
 import {
-  CreateDrugDto,
-  UpdateDrugDto,
-  DispensePrescriptionDto,
-  DrugQueryFilters,
-  IDispensedItem,
+  CreateMedicationDTO,
+  AddStockBatchDTO,
+  CreatePrescriptionDTO,
+  DispensePrescriptionDTO,
+  PrescriptionStatus,
+  IPrescriptionItem,
+  IStockBatch,
 } from './pharmacy.types.js';
-import { ApiError } from '../../utils/ApiError.js';
 
 export class PharmacyService {
-  /**
-   * Helper to generate unique SKU for inventory item
-   */
-  private static generateSKU(name: string): string {
-    const prefix = name.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase();
-    const random = Math.floor(1000 + Math.random() * 9000);
-    return `DRG-${prefix}${random}`;
-  }
+  // --- MEDICATION INVENTORY MANAGEMENT ---
 
-  /**
-   * Adds a new drug item to hospital inventory
-   */
-  static async addDrug(dto: CreateDrugDto, organizationId: string) {
-    const sku = dto.sku ? dto.sku.toUpperCase() : this.generateSKU(dto.name);
-
-    const existingSku = await Drug.findOne({ sku });
-    if (existingSku) {
-      throw new ApiError(409, `Drug item with SKU '${sku}' already exists.`);
+  public static async createMedication(hospitalId: string, dto: CreateMedicationDTO) {
+    const existing = await Medication.findOne({ hospitalId, name: dto.name });
+    if (existing) {
+      throw new Error(`Medication '${dto.name}' already exists in inventory`);
     }
 
-    const drug = await Drug.create({
+    const batches = [];
+    if (dto.initialStock) {
+      batches.push({
+        batchNumber: dto.initialStock.batchNumber,
+        quantity: dto.initialStock.quantity,
+        unitPrice: dto.initialStock.unitPrice,
+        expiryDate: new Date(dto.initialStock.expiryDate),
+        receivedDate: new Date(),
+      });
+    }
+
+    const totalQuantity = batches.reduce((acc, b) => acc + b.quantity, 0);
+
+    const medication = await Medication.create({
       ...dto,
-      sku,
-      organizationId,
+      hospitalId,
+      batches,
+      totalQuantity,
     });
 
-    return drug;
+    return medication;
   }
 
-  /**
-   * Retrieves paginated list of inventory drugs with search and filters
-   */
-  static async getInventory(organizationId: string, filters: DrugQueryFilters) {
-    const page = Number(filters.page) || 1;
-    const limit = Number(filters.limit) || 20;
+  public static async getMedications(
+    hospitalId: string,
+    filters: { search?: string; category?: string; lowStock?: boolean; page?: number; limit?: number }
+  ) {
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
     const skip = (page - 1) * limit;
 
-    const query: any = { organizationId, isActive: true };
-
-    if (filters.category) query.category = filters.category;
-
-    if (filters.lowStock) {
-      query.$expr = { $lte: ['$quantityInStock', '$reorderLevel'] };
-    }
+    const query: any = { hospitalId };
 
     if (filters.search) {
       query.$or = [
         { name: { $regex: filters.search, $options: 'i' } },
         { genericName: { $regex: filters.search, $options: 'i' } },
-        { sku: { $regex: filters.search, $options: 'i' } },
       ];
     }
+    if (filters.category) query.category = filters.category;
+    if (filters.lowStock) {
+      query.$expr = { $lte: ['$totalQuantity', '$minReorderLevel'] };
+    }
 
-    const [drugs, total] = await Promise.all([
-      Drug.find(query).sort({ name: 1 }).skip(skip).limit(limit),
-      Drug.countDocuments(query),
+    const [medications, total] = await Promise.all([
+      Medication.find(query).sort({ name: 1 }).skip(skip).limit(limit),
+      Medication.countDocuments(query),
     ]);
 
     return {
-      drugs,
+      medications,
       pagination: {
         total,
         page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+        pages: Math.ceil(total / limit),
       },
     };
   }
 
-  /**
-   * Gets a single drug item by ID
-   */
-  static async getDrugById(id: string, organizationId: string) {
-    const drug = await Drug.findOne({ _id: id, organizationId });
-    if (!drug) {
-      throw new ApiError(404, 'Drug record not found in inventory.');
-    }
-    return drug;
-  }
-
-  /**
-   * Updates drug item details or updates stock level
-   */
-  static async updateDrug(id: string, dto: UpdateDrugDto, organizationId: string) {
-    const drug = await Drug.findOneAndUpdate(
-      { _id: id, organizationId },
-      { $set: dto },
-      { new: true, runValidators: true }
-    );
-
-    if (!drug) {
-      throw new ApiError(404, 'Drug record not found in inventory.');
+  public static async addStockBatch(medicationId: string, hospitalId: string, dto: AddStockBatchDTO) {
+    const medication = await Medication.findOne({ _id: medicationId, hospitalId });
+    if (!medication) {
+      throw new Error('Medication record not found');
     }
 
-    return drug;
-  }
-
-  /**
-   * Dispenses medication to a patient and updates inventory stock levels
-   */
-  static async dispensePrescription(
-    dto: DispensePrescriptionDto,
-    pharmacistId: string,
-    organizationId: string
-  ) {
-    if (!dto.items || dto.items.length === 0) {
-      throw new ApiError(400, 'At least one drug item must be selected for dispensing.');
-    }
-
-    const dispensedItems: IDispensedItem[] = [];
-    let totalAmount = 0;
-
-    // Process each requested drug item and verify stock availability
-    for (const item of dto.items) {
-      const drug = await Drug.findOne({
-        _id: item.drugId,
-        organizationId,
-        isActive: true,
-      });
-
-      if (!drug) {
-        throw new ApiError(404, `Drug ID '${item.drugId}' not found or inactive.`);
-      }
-
-      if (drug.quantityInStock < item.quantity) {
-        throw new ApiError(
-          400,
-          `Insufficient stock for '${drug.name}'. Requested: ${item.quantity}, Available: ${drug.quantityInStock}`
-        );
-      }
-
-      const subtotal = drug.unitPrice * item.quantity;
-      totalAmount += subtotal;
-
-      // Deduct stock
-      drug.quantityInStock -= item.quantity;
-      await drug.save();
-
-      dispensedItems.push({
-        drugId: drug._id,
-        drugName: drug.name,
-        quantity: item.quantity,
-        unitPrice: drug.unitPrice,
-        subtotal,
-      });
-    }
-
-    // Create Dispense Record
-    const dispenseRecord = await DispenseRecord.create({
-      patientId: dto.patientId,
-      opdVisitId: dto.opdVisitId,
-      dispensedBy: pharmacistId,
-      organizationId,
-      items: dispensedItems,
-      totalAmount,
-      paymentStatus: dto.paymentStatus || 'PENDING',
-      notes: dto.notes,
+    medication.batches.push({
+      batchNumber: dto.batchNumber,
+      quantity: dto.quantity,
+      unitPrice: dto.unitPrice,
+      expiryDate: new Date(dto.expiryDate),
+      receivedDate: new Date(),
     });
 
-    // If linked to an OPD Visit, mark prescribed items as dispensed
-    if (dto.opdVisitId) {
-      const visit = await OPDVisit.findOne({ _id: dto.opdVisitId, organizationId });
-      if (visit && visit.prescriptions) {
-        visit.prescriptions.forEach((p) => {
-          const matched = dispensedItems.some((di) =>
-            di.drugName.toLowerCase().includes(p.drugName.toLowerCase())
-          );
-          if (matched) p.dispensed = true;
-        });
-        await visit.save();
-      }
-    }
+    await medication.save();
+    return medication;
+  }
 
-    return dispenseRecord.populate([
-      { path: 'patientId', select: 'firstName lastName mrn insuranceType' },
-      { path: 'dispensedBy', select: 'firstName lastName staffCode' },
+  // --- PRESCRIPTION MANAGEMENT ---
+
+  public static async createPrescription(hospitalId: string, dto: CreatePrescriptionDTO) {
+    const patient = await Patient.findOne({ _id: dto.patientId, hospitalId });
+    if (!patient) throw new Error('Patient record not found');
+
+    const doctor = await Staff.findOne({ _id: dto.doctorId, hospitalId, role: 'DOCTOR' });
+    if (!doctor) throw new Error('Doctor record not found');
+
+    // Build items with selling prices from inventory
+    const preparedItems = await Promise.all(
+      dto.items.map(async (item) => {
+        const med = await Medication.findOne({ _id: item.medicationId, hospitalId });
+        if (!med) throw new Error(`Medication with ID ${item.medicationId} not found`);
+
+        return {
+          medicationId: med._id,
+          medicationName: med.name,
+          dosage: item.dosage,
+          frequency: item.frequency,
+          duration: item.duration,
+          quantityPrescribed: item.quantityPrescribed,
+          quantityDispensed: 0,
+          unitPrice: med.sellingPricePerUnit,
+          isDispensed: false,
+        };
+      })
+    );
+
+    const rxCount = await Prescription.countDocuments({ hospitalId });
+    const prescriptionNumber = `RX-${Date.now().toString().slice(-6)}-${rxCount + 1}`;
+
+    const prescription = await Prescription.create({
+      hospitalId,
+      prescriptionNumber,
+      patientId: dto.patientId,
+      doctorId: dto.doctorId,
+      ipdAdmissionId: dto.ipdAdmissionId,
+      items: preparedItems,
+      notes: dto.notes,
+      status: PrescriptionStatus.PENDING,
+    });
+
+    return prescription.populate([
+      { path: 'patientId', select: 'mrn firstName lastName category' },
+      { path: 'doctorId', select: 'firstName lastName department' },
     ]);
   }
 
-  /**
-   * Retrieves dispense history records
-   */
-  static async getDispenseHistory(organizationId: string, page: number = 1, limit: number = 20) {
+  public static async getPrescriptions(
+    hospitalId: string,
+    filters: { status?: PrescriptionStatus; patientId?: string; page?: number; limit?: number }
+  ) {
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
     const skip = (page - 1) * limit;
 
-    const [records, total] = await Promise.all([
-      DispenseRecord.find({ organizationId })
-        .populate('patientId', 'firstName lastName mrn insuranceType')
-        .populate('dispensedBy', 'firstName lastName staffCode')
+    const query: any = { hospitalId };
+
+    if (filters.status) query.status = filters.status;
+    if (filters.patientId) query.patientId = filters.patientId;
+
+    const [prescriptions, total] = await Promise.all([
+      Prescription.find(query)
+        .populate('patientId', 'mrn firstName lastName category')
+        .populate('doctorId', 'firstName lastName department')
+        .populate('dispensedBy', 'firstName lastName')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      DispenseRecord.countDocuments({ organizationId }),
+      Prescription.countDocuments(query),
     ]);
 
     return {
-      records,
+      prescriptions,
       pagination: {
         total,
         page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+        pages: Math.ceil(total / limit),
       },
     };
+  }
+
+  // --- DISPENSING & FEFO INVENTORY DEPLETION ---
+
+  public static async dispensePrescription(
+    prescriptionId: string,
+    hospitalId: string,
+    dto: DispensePrescriptionDTO
+  ) {
+    const rx = await Prescription.findOne({ _id: prescriptionId, hospitalId });
+    if (!rx) throw new Error('Prescription not found');
+
+    if (rx.status === PrescriptionStatus.DISPENSED) {
+      throw new Error('Prescription has already been fully dispensed');
+    }
+
+    // Process each item to dispense
+    for (const reqItem of dto.items) {
+      const rxItem = rx.items.find((i: IPrescriptionItem) => i.medicationId.toString() === reqItem.medicationId);
+      if (!rxItem) throw new Error(`Item ${reqItem.medicationId} is not in this prescription`);
+
+      const remainingNeeded = rxItem.quantityPrescribed - rxItem.quantityDispensed;
+      if (reqItem.quantityToDispense > remainingNeeded) {
+        throw new Error(
+          `Cannot dispense ${reqItem.quantityToDispense} for ${rxItem.medicationName}. Only ${remainingNeeded} remaining.`
+        );
+      }
+
+      // Deplete from Medication Stock (First-Expiry-First-Out / FEFO)
+      const med = await Medication.findOne({ _id: reqItem.medicationId, hospitalId });
+      if (!med) throw new Error(`Medication ${rxItem.medicationName} missing from inventory`);
+
+      if (med.totalQuantity < reqItem.quantityToDispense) {
+        throw new Error(`Insufficient stock for ${med.name}. Available: ${med.totalQuantity}`);
+      }
+
+      let toDeduct = reqItem.quantityToDispense;
+
+      // Sort batches by earliest expiry date (FEFO)
+      med.batches.sort((a: IStockBatch, b: IStockBatch) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
+
+      for (const batch of med.batches) {
+        if (toDeduct <= 0) break;
+
+        if (batch.quantity >= toDeduct) {
+          batch.quantity -= toDeduct;
+          toDeduct = 0;
+        } else {
+          toDeduct -= batch.quantity;
+          batch.quantity = 0;
+        }
+      }
+
+      // Remove depleted batches
+      med.batches = med.batches.filter((b: IStockBatch) => b.quantity > 0);
+      await med.save();
+
+      // Update RX Item status
+      rxItem.quantityDispensed += reqItem.quantityToDispense;
+      if (rxItem.quantityDispensed >= rxItem.quantityPrescribed) {
+        rxItem.isDispensed = true;
+      }
+    }
+
+    // Evaluate global status of prescription
+    const allDispensed = rx.items.every((i: IPrescriptionItem) => i.isDispensed);
+    const someDispensed = rx.items.some((i: IPrescriptionItem) => i.quantityDispensed > 0);
+
+    rx.status = allDispensed
+      ? PrescriptionStatus.DISPENSED
+      : someDispensed
+      ? PrescriptionStatus.PARTIALLY_DISPENSED
+      : PrescriptionStatus.PENDING;
+
+    rx.dispensedBy = new Types.ObjectId(dto.dispensedById);
+    rx.dispensedAt = new Date();
+
+    await rx.save();
+    return rx.populate([
+      { path: 'patientId', select: 'mrn firstName lastName category' },
+      { path: 'doctorId', select: 'firstName lastName' },
+    ]);
   }
 }

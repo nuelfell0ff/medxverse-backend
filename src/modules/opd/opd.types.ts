@@ -1,103 +1,60 @@
 import { Document, Types } from 'mongoose';
 
-export type OPDVisitStatus =
-  | 'QUEUED'
-  | 'TRIAGED'
-  | 'IN_CONSULTATION'
-  | 'COMPLETED'
-  | 'CANCELLED';
-
-export type PriorityLevel = 'ROUTINE' | 'URGENT' | 'EMERGENCY';
+export enum OpdStatus {
+  SCHEDULED = 'SCHEDULED',
+  WAITING = 'WAITING',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
 
 export interface IVitals {
-  temperature?: number; // in Celsius
-  bloodPressureSystolic?: number; // mmHg
-  bloodPressureDiastolic?: number; // mmHg
+  bloodPressure?: string; // e.g. "120/80"
   pulseRate?: number; // bpm
+  temperature?: number; // °C
   respiratoryRate?: number; // breaths/min
-  oxygenSaturation?: number; // % SpO2
   weight?: number; // kg
   height?: number; // cm
-  bmi?: number;
-  recordedBy?: Types.ObjectId;
-  recordedAt?: Date;
+  spo2?: number; // %
 }
 
-export interface IDiagnosis {
-  code?: string; // ICD-10 code
-  description: string;
-  type: 'PRIMARY' | 'SECONDARY';
-}
-
-export interface IPrescriptionItem {
-  drugName: string;
-  dosage: string;
-  frequency: string;
-  duration: string;
-  instructions?: string;
-  dispensed?: boolean;
-}
-
-export interface ILabOrderRequest {
-  testName: string;
-  notes?: string;
-  status?: 'PENDING' | 'COMPLETED';
-}
-
-export interface IOPDVisit {
+export interface IOpdEncounter {
+  hospitalId: Types.ObjectId;
   patientId: Types.ObjectId;
-  doctorId?: Types.ObjectId;
-  organizationId: Types.ObjectId;
-  visitNumber: string;
-  status: OPDVisitStatus;
-  priority: PriorityLevel;
-  chiefComplaint: string;
+  doctorId: Types.ObjectId; // References Staff model (DOCTOR role)
+  encounterDate: Date;
+  status: OpdStatus;
+  reasonForVisit: string;
   vitals?: IVitals;
-  clinicalNotes?: string;
-  diagnoses?: IDiagnosis[];
-  prescriptions?: IPrescriptionItem[];
-  labOrders?: ILabOrderRequest[];
-  consultationStartTime?: Date;
-  consultationEndTime?: Date;
-  createdAt?: Date;
-  updatedAt?: Date;
+  symptoms?: string[];
+  diagnosis?: string;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export interface IOPDVisitDocument extends IOPDVisit, Document {
+export interface IOpdDocument extends IOpdEncounter, Document {
   _id: Types.ObjectId;
 }
 
-export interface CreateOPDVisitDto {
+export interface CreateOpdDTO {
   patientId: string;
+  doctorId: string;
+  encounterDate?: string;
+  reasonForVisit: string;
+  symptoms?: string[];
+}
+
+export interface RecordVitalsDTO {
+  vitals: IVitals;
+}
+
+export interface UpdateOpdDTO {
   doctorId?: string;
-  priority?: PriorityLevel;
-  chiefComplaint: string;
-}
-
-export interface RecordVitalsDto {
-  temperature?: number;
-  bloodPressureSystolic?: number;
-  bloodPressureDiastolic?: number;
-  pulseRate?: number;
-  respiratoryRate?: number;
-  oxygenSaturation?: number;
-  weight?: number;
-  height?: number;
-}
-
-export interface CompleteConsultationDto {
-  clinicalNotes: string;
-  diagnoses?: IDiagnosis[];
-  prescriptions?: IPrescriptionItem[];
-  labOrders?: ILabOrderRequest[];
-}
-
-export interface OPDQueryFilters {
-  doctorId?: string;
-  status?: OPDVisitStatus;
-  priority?: PriorityLevel;
-  date?: string;
-  search?: string;
-  page?: number;
-  limit?: number;
+  status?: OpdStatus;
+  reasonForVisit?: string;
+  symptoms?: string[];
+  diagnosis?: string;
+  notes?: string;
+  vitals?: IVitals;
 }

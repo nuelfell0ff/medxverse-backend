@@ -1,123 +1,131 @@
-import { Request, Response, NextFunction } from 'express';
-import { OPDService } from './opd.service.js';
-import { ApiResponse } from '../../utils/ApiResponse.js';
+import { Response } from 'express';
+import { AuthRequest } from '../../middlewares/auth.middleware.js';
+import { OpdService } from './opd.service.js';
+import { OpdStatus } from './opd.types.js';
 
-export class OPDController {
-  /**
-   * Check in patient to OPD queue
-   * POST /api/v1/opd/check-in
-   */
-  static async createVisit(req: Request, res: Response, next: NextFunction): Promise<void> {
+export class OpdController {
+  public static async createEncounter(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const visit = await OPDService.createVisit(req.body, req.user!.organizationId);
-      res.status(201).json(new ApiResponse(201, visit, 'Patient checked in to OPD queue'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const encounter = await OpdService.createEncounter(hospitalId, req.body);
+      res.status(201).json({
+        success: true,
+        message: 'OPD encounter checked in successfully',
+        data: encounter,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to check in OPD encounter',
+      });
     }
   }
 
-  /**
-   * Record patient vitals
-   * POST /api/v1/opd/:id/vitals
-   */
-  static async recordVitals(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  public static async getEncounters(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const visit = await OPDService.recordVitals(
-        req.params.id,
-        req.body,
-        req.user!.id,
-        req.user!.organizationId
-      );
-      res.status(200).json(new ApiResponse(200, visit, 'Patient vitals recorded successfully'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const { doctorId, patientId, status, date, page, limit } = req.query;
+
+      const result = await OpdService.getEncounters(hospitalId, {
+        doctorId: doctorId ? String(doctorId) : undefined,
+        patientId: patientId ? String(patientId) : undefined,
+        status: status ? (status as OpdStatus) : undefined,
+        date: date ? String(date) : undefined,
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 20,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: result.encounters,
+        pagination: result.pagination,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch OPD encounters',
+      });
     }
   }
 
-  /**
-   * Start consultation
-   * PATCH /api/v1/opd/:id/start-consultation
-   */
-  static async startConsultation(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  public static async getEncounterById(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const visit = await OPDService.startConsultation(
-        req.params.id,
-        req.user!.id,
-        req.user!.organizationId
-      );
-      res.status(200).json(new ApiResponse(200, visit, 'Consultation session started'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const id = req.params.id as string;
+      const encounter = await OpdService.getEncounterById(id, hospitalId);
+
+      res.status(200).json({
+        success: true,
+        data: encounter,
+      });
+    } catch (error: any) {
+      res.status(404).json({
+        success: false,
+        message: error.message || 'OPD encounter not found',
+      });
     }
   }
 
-  /**
-   * Complete consultation
-   * POST /api/v1/opd/:id/complete
-   */
-  static async completeConsultation(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  public static async recordVitals(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const visit = await OPDService.completeConsultation(
-        req.params.id,
-        req.body,
-        req.user!.id,
-        req.user!.organizationId
-      );
-      res.status(200).json(new ApiResponse(200, visit, 'Consultation completed successfully'));
-    } catch (error) {
-      next(error);
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
+
+      const id = req.params.id as string;
+      const encounter = await OpdService.recordVitals(id, hospitalId, req.body);
+
+      res.status(200).json({
+        success: true,
+        message: 'Vitals recorded successfully',
+        data: encounter,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to record vitals',
+      });
     }
   }
 
-  /**
-   * Get OPD Queue / List
-   * GET /api/v1/opd
-   */
-  static async getQueue(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public static async updateEncounter(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const filters = {
-        doctorId: req.query.doctorId as string,
-        status: req.query.status as any,
-        priority: req.query.priority as any,
-        date: req.query.date as string,
-        search: req.query.search as string,
-        page: req.query.page ? Number(req.query.page) : undefined,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
-      };
+      const hospitalId = req.account?.accountId;
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
 
-      const result = await OPDService.getQueue(req.user!.organizationId, filters);
-      res.status(200).json(new ApiResponse(200, result, 'OPD queue retrieved successfully'));
-    } catch (error) {
-      next(error);
-    }
-  }
+      const id = req.params.id as string;
+      const encounter = await OpdService.updateEncounter(id, hospitalId, req.body);
 
-  /**
-   * Get OPD Visit Details
-   * GET /api/v1/opd/:id
-   */
-  static async getVisitById(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const visit = await OPDService.getVisitById(req.params.id, req.user!.organizationId);
-      res.status(200).json(new ApiResponse(200, visit, 'OPD visit record retrieved'));
-    } catch (error) {
-      next(error);
+      res.status(200).json({
+        success: true,
+        message: 'OPD encounter updated successfully',
+        data: encounter,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to update OPD encounter',
+      });
     }
   }
 }

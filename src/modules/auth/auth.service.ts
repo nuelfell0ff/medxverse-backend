@@ -1,111 +1,99 @@
-import jwt from 'jsonwebtoken';
-import { User } from '../user/user.model.js';
-import { env } from '../../config/env.js';
-import { ApiError } from '../../utils/ApiError.js';
-import { AuthUserPayload } from '../../middlewares/auth.middleware.js';
-import { LoginDto, LoginResponse, AuthTokens } from './auth.types.js';
+import jwt, { SignOptions } from 'jsonwebtoken';
+import { Account } from './auth.model.js';
+import {
+  RegisterAccountDTO,
+  LoginDTO,
+  AuthResponse,
+  IAccountDocument,
+} from './auth.types.js';
 
 export class AuthService {
-  /**
-   * Generates Access and Refresh JWT Tokens
-   */
-  private static generateTokens(payload: AuthUserPayload): AuthTokens {
-    const accessToken = jwt.sign(payload, env.JWT_SECRET, {
-      expiresIn: env.JWT_EXPIRES_IN as any,
-    });
+  private static generateToken(account: IAccountDocument): string {
+    const secret = process.env.JWT_SECRET || 'fallback_secret_key';
+    const expiresIn = (process.env.JWT_EXPIRES_IN || '7d') as SignOptions['expiresIn'];
 
-    const refreshToken = jwt.sign(payload, env.JWT_REFRESH_SECRET, {
-      expiresIn: env.JWT_REFRESH_EXPIRES_IN as any,
-    });
-
-    return { accessToken, refreshToken };
+    return jwt.sign(
+      {
+        accountId: account._id.toString(),
+        accountType: account.accountType,
+        name: account.name,
+        email: account.email,
+      },
+      secret,
+      { expiresIn }
+    );
   }
 
-  /**
-   * Authenticates user credential and returns user session with tokens
-   */
-  static async login(dto: LoginDto): Promise<LoginResponse> {
-    const { email, password } = dto;
-
-    if (!email || !password) {
-      throw new ApiError(400, 'Please provide email and password.');
-    }
-
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
-
-    if (!user || !(await user.comparePassword(password))) {
-      throw new ApiError(401, 'Invalid email or password credentials.');
-    }
-
-    if (!user.isActive) {
-      throw new ApiError(403, 'Your account is currently deactivated. Contact organization admin.');
-    }
-
-    const tokenPayload: AuthUserPayload = {
-      id: user._id.toString(),
-      email: user.email,
-      role: user.role,
-      organizationId: user.organizationId.toString(),
+  private static formatAccountPayload(account: IAccountDocument) {
+    return {
+      id: account._id.toString(),
+      name: account.name,
+      email: account.email,
+      accountType: account.accountType,
+      code: account.code,
+      phone: account.phone,
+      address: account.address,
+      logoUrl: account.logoUrl,
     };
+  }
 
-    const tokens = this.generateTokens(tokenPayload);
+  public static async register(dto: RegisterAccountDTO): Promise<AuthResponse> {
+    const existingAccount = await Account.findOne({ email: dto.email.toLowerCase() });
+    if (existingAccount) {
+      throw new Error('An account with this email already exists');
+    }
+
+    if (dto.code) {
+      const existingCode = await Account.findOne({ code: dto.code.toUpperCase() });
+      if (existingCode) {
+        throw new Error('Account code is already taken');
+      }
+    }
+
+    const newAccount = await Account.create({
+      ...dto,
+      email: dto.email.toLowerCase(),
+      code: dto.code ? dto.code.toUpperCase() : undefined,
+    });
+
+    const token = this.generateToken(newAccount);
 
     return {
-      user: {
-        id: user._id.toString(),
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        role: user.role,
-        organizationId: user.organizationId.toString(),
-        staffCode: user.staffCode,
-        isActive: user.isActive,
-      },
-      tokens,
+      token,
+      account: this.formatAccountPayload(newAccount),
     };
   }
 
-  /**
-   * Issues a new Access Token using a valid Refresh Token
-   */
-  static async refreshSession(refreshToken: string): Promise<{ accessToken: string }> {
-    if (!refreshToken) {
-      throw new ApiError(400, 'Refresh token is required.');
+  public static async login(dto: LoginDTO): Promise<AuthResponse> {
+    const account = await Account.findOne({ email: dto.email.toLowerCase() }).select('+password');
+
+    if (!account) {
+      throw new Error('Invalid email or password');
     }
 
-    try {
-      const decoded = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET) as AuthUserPayload;
-
-      const user = await User.findById(decoded.id);
-      if (!user || !user.isActive) {
-        throw new ApiError(401, 'User no longer exists or is deactivated.');
-      }
-
-      const newAccessToken = jwt.sign(
-        {
-          id: user._id.toString(),
-          email: user.email,
-          role: user.role,
-          organizationId: user.organizationId.toString(),
-        },
-        env.JWT_SECRET,
-        { expiresIn: env.JWT_EXPIRES_IN as any }
-      );
-
-      return { accessToken: newAccessToken };
-    } catch (error) {
-      throw new ApiError(401, 'Invalid or expired refresh token.');
+    if (!account.isActive) {
+      throw new Error('This account has been deactivated. Please contact support.');
     }
+
+    const isMatch = await account.comparePassword(dto.password);
+    if (!isMatch) {
+      throw new Error('Invalid email or password');
+    }
+
+    const token = this.generateToken(account);
+
+    return {
+      token,
+      account: this.formatAccountPayload(account),
+    };
   }
 
-  /**
-   * Retrieves profile details for currently authenticated user
-   */
-  static async getCurrentUser(userId: string): Promise<any> {
-    const user = await User.findById(userId).populate('organizationId', 'name type code logoUrl');
-    if (!user) {
-      throw new ApiError(404, 'User profile not found.');
+  public static async getProfile(accountId: string) {
+    const account = await Account.findById(accountId);
+    if (!account) {
+      throw new Error('Account not found');
     }
-    return user;
+
+    return this.formatAccountPayload(account);
   }
 }

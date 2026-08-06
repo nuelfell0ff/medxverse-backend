@@ -1,57 +1,23 @@
 import { Router } from 'express';
 import { PharmacyController } from './pharmacy.controller.js';
 import { protect, restrictTo } from '../../middlewares/auth.middleware.js';
-import { UserRole } from '../../constants/roles.enum.js';
 
 const router = Router();
 
-// Protect all pharmacy routes
-router.use(protect);
+router.use(protect, restrictTo('HOSPITAL'));
 
-// Inventory queries
-router.get('/inventory', PharmacyController.getInventory);
-router.get('/inventory/:id', PharmacyController.getDrugById);
+// Inventory Routes
+router.route('/medications')
+  .post(PharmacyController.createMedication)
+  .get(PharmacyController.getMedications);
 
-// Inventory management (Pharmacist, Admins)
-router.post(
-  '/inventory',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.PHARMACIST
-  ),
-  PharmacyController.addDrug
-);
+router.post('/medications/:id/batches', PharmacyController.addStockBatch);
 
-router.patch(
-  '/inventory/:id',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.PHARMACIST
-  ),
-  PharmacyController.updateDrug
-);
+// Prescription Routes
+router.route('/prescriptions')
+  .post(PharmacyController.createPrescription)
+  .get(PharmacyController.getPrescriptions);
 
-// Dispensing workflow (Pharmacists)
-router.post(
-  '/dispense',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.PHARMACIST
-  ),
-  PharmacyController.dispensePrescription
-);
-
-router.get(
-  '/dispense-history',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.PHARMACIST
-  ),
-  PharmacyController.getDispenseHistory
-);
+router.post('/prescriptions/:id/dispense', PharmacyController.dispensePrescription);
 
 export default router;

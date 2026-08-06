@@ -1,123 +1,128 @@
 import { Document, Types } from 'mongoose';
 
-export type LabTestCategory =
-  | 'HAEMATOLOGY'
-  | 'BIOCHEMISTRY'
-  | 'MICROBIOLOGY'
-  | 'PARASITOLOGY'
-  | 'SEROLOGY'
-  | 'PATHOLOGY'
-  | 'OTHER';
+export enum LabTestCategory {
+  HAEMATOLOGY = 'HAEMATOLOGY',
+  BIOCHEMISTRY = 'BIOCHEMISTRY',
+  MICROBIOLOGY = 'MICROBIOLOGY',
+  PARASITOLOGY = 'PARASITOLOGY',
+  IMMUNOLOGY = 'IMMUNOLOGY',
+  HISTOPATHOLOGY = 'HISTOPATHOLOGY',
+  OTHER = 'OTHER',
+}
 
-export type LabTestStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-export type LabOrderPriority = 'ROUTINE' | 'URGENT' | 'EMERGENCY';
-export type PaymentStatus = 'PENDING' | 'PAID' | 'COVERED_BY_HMO';
-export type ParameterResultFlag = 'NORMAL' | 'ABNORMAL' | 'CRITICAL';
+export enum LabRequestStatus {
+  PENDING = 'PENDING',
+  SAMPLE_COLLECTED = 'SAMPLE_COLLECTED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
 
-export interface ILabTestCatalog {
+export enum LabPriority {
+  ROUTINE = 'ROUTINE',
+  URGENT = 'URGENT',
+  STAT = 'STAT',
+}
+
+export interface ILabParameter {
   name: string;
+  unit?: string;
+  referenceRange?: string; // e.g., "4.0 - 11.0 x10^9/L" or "70 - 99 mg/dL"
+}
+
+export interface ILabTestDocument extends Document {
+  hospitalId: Types.ObjectId;
   code: string;
-  category: LabTestCategory;
-  price: number;
-  sampleType: string;
-  turnaroundTimeHours?: number;
-  referenceRange?: string;
-  unit?: string;
-  organizationId: Types.ObjectId;
-  isActive: boolean;
-  createdAt?: Date;
-  updatedAt?: Date;
-}
-
-export interface ILabTestCatalogDocument extends ILabTestCatalog, Document {
-  _id: Types.ObjectId;
-}
-
-export interface CreateLabTestCatalogDto {
   name: string;
-  code?: string;
   category: LabTestCategory;
+  description?: string;
+  sampleType: string; // e.g., "Whole Blood", "Urine", "Serum", "Swab"
+  parameters: ILabParameter[];
   price: number;
-  sampleType: string;
-  turnaroundTimeHours?: number;
-  referenceRange?: string;
-  unit?: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export interface UpdateLabTestCatalogDto {
-  name?: string;
-  category?: LabTestCategory;
-  price?: number;
-  sampleType?: string;
-  turnaroundTimeHours?: number;
-  referenceRange?: string;
-  unit?: string;
-  isActive?: boolean;
-}
-
-export interface ILabResultParameter {
+export interface ILabResultValue {
   parameterName: string;
   value: string;
   unit?: string;
   referenceRange?: string;
-  flag?: ParameterResultFlag;
+  isAbnormal?: boolean;
 }
 
-export interface ILabOrderItem {
-  testCatalogId: Types.ObjectId;
+export interface ILabRequestItem {
+  _id?: Types.ObjectId;
+  testId: Types.ObjectId;
   testName: string;
-  category: LabTestCategory;
   price: number;
-  status: LabTestStatus;
-  sampleCollectedAt?: Date;
-  completedAt?: Date;
-  parameters?: ILabResultParameter[];
-  overallResult?: string;
+  status: LabRequestStatus;
+  results?: ILabResultValue[];
   remarks?: string;
 }
 
-export interface ILabOrder {
-  orderNumber: string;
+export interface ILabRequestDocument extends Document {
+  hospitalId: Types.ObjectId;
+  requestNumber: string;
   patientId: Types.ObjectId;
-  opdVisitId?: Types.ObjectId;
-  orderedBy: Types.ObjectId;
-  labTechnicianId?: Types.ObjectId;
-  organizationId: Types.ObjectId;
-  items: ILabOrderItem[];
+  doctorId: Types.ObjectId;
+  ipdAdmissionId?: Types.ObjectId;
+  priority: LabPriority;
+  status: LabRequestStatus;
+  sampleCollectedAt?: Date;
+  sampleCollectedBy?: Types.ObjectId;
+  sampleTypeNotes?: string;
+  items: ILabRequestItem[];
   totalAmount: number;
-  priority: LabOrderPriority;
-  paymentStatus: PaymentStatus;
-  clinicalNotes?: string;
-  createdAt?: Date;
-  updatedAt?: Date;
+  notes?: string;
+  performedBy?: Types.ObjectId;
+  completedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export interface ILabOrderDocument extends ILabOrder, Document {
-  _id: Types.ObjectId;
+// --- DTOs ---
+
+export interface CreateLabTestDTO {
+  code: string;
+  name: string;
+  category: LabTestCategory;
+  description?: string;
+  sampleType: string;
+  parameters: ILabParameter[];
+  price: number;
 }
 
-export interface CreateLabOrderDto {
+export interface UpdateLabTestDTO {
+  name?: string;
+  category?: LabTestCategory;
+  description?: string;
+  sampleType?: string;
+  parameters?: ILabParameter[];
+  price?: number;
+  isActive?: boolean;
+}
+
+export interface CreateLabRequestDTO {
   patientId: string;
-  opdVisitId?: string;
-  testCatalogIds: string[];
-  priority?: LabOrderPriority;
-  paymentStatus?: PaymentStatus;
-  clinicalNotes?: string;
+  doctorId: string;
+  ipdAdmissionId?: string;
+  priority?: LabPriority;
+  testIds: string[];
+  notes?: string;
 }
 
-export interface UpdateLabResultDto {
-  parameters?: ILabResultParameter[];
-  overallResult?: string;
-  remarks?: string;
-  status?: LabTestStatus;
+export interface CollectSampleDTO {
+  collectedBy: string;
+  sampleTypeNotes?: string;
 }
 
-export interface LabOrderQueryFilters {
-  patientId?: string;
-  status?: LabTestStatus;
-  priority?: LabOrderPriority;
-  startDate?: string;
-  endDate?: string;
-  page?: number;
-  limit?: number;
+export interface SubmitTestResultsDTO {
+  performedBy: string;
+  testResults: {
+    testId: string;
+    results: ILabResultValue[];
+    remarks?: string;
+  }[];
 }

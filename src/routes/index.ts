@@ -1,17 +1,41 @@
 import { Router } from 'express';
+// import organizationRoutes from '../modules/organization/organization.routes.js';
 import authRoutes from '../modules/auth/auth.routes.js';
+// import userRoutes from '../modules/user/user.routes.js';
+import staffRoutes from '../modules/staff/staff.routes.js';
+import patientRoutes from '../modules/patient/patient.routes.js';
+import opdRoutes from '../modules/opd/opd.routes.js';
+import ipdRoutes from '../modules/ipd/ipd.routes.js';
+import pharmacyRoutes from '../modules/pharmacy/pharmacy.routes.js';
+import labRoutes from '../modules/laboratory/laboratory.routes.js';
+import radiologyRoutes from '../modules/radiology/radiology.routes.js';
+import billingRoutes from '../modules/billing/billing.routes.js';
+import hmoRoutes from '../modules/hmo/hmo.routes.js';
+// import lexiRoutes from '../modules/lexi-ai/lexi.routes.js';
 
-const router = Router();
+const v1Router = Router();
 
-// Base v1 Health Check
-router.get('/', (_req, res) => {
-  res.status(200).json({
-    status: 'success',
-    message: 'MedxVerse API v1 Ecosystem Operational',
-  });
-});
+// Platform & Onboarding
+// v1Router.use('/organizations', organizationRoutes);
+v1Router.use('/auth', authRoutes);
+v1Router.use('/staff', staffRoutes);
+// v1Router.use('/users', userRoutes);
 
-// Authentication & Identity Module
-router.use('/auth', authRoutes);
+// // Clinical & Patient Management
+v1Router.use('/patients', patientRoutes);
+v1Router.use('/opd', opdRoutes);
+v1Router.use('/ipd', ipdRoutes);
 
-export default router;
+// // Diagnostics & Ancillary
+v1Router.use('/pharmacy', pharmacyRoutes);
+v1Router.use('/laboratory', labRoutes);
+v1Router.use('/radiology', radiologyRoutes);
+
+// // Financials & Payors
+v1Router.use('/billing', billingRoutes);
+v1Router.use('/hmo', hmoRoutes);
+
+// // AI Assistance
+// v1Router.use('/lexi-ai', lexiRoutes);
+
+export default v1Router;

@@ -1,72 +1,62 @@
 import { Request, Response, NextFunction } from 'express';
-import { JwtUtils } from '../utils/jwt.js';
-import { ApiError } from '../utils/ApiError.js';
-import { UserRole } from '../constants/roles.enum.js';
-import { AuthUserPayload } from '../modules/auth/auth.types.js';
+import jwt from 'jsonwebtoken';
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: AuthUserPayload;
-    }
-  }
+export interface AuthRequest extends Request {
+  account?: {
+    accountId: string;
+    accountType: 'HOSPITAL' | 'HMO';
+    name: string;
+    email: string;
+    role?: string;
+  };
+  user?: any;
 }
 
-/**
- * Validates JWT Access Token from Authorization Header
- */
-export const protect = async (
-  req: Request,
-  _res: Response,
+export const authenticateAccount = (
+  req: AuthRequest,
+  res: Response,
   next: NextFunction
-): Promise<void> => {
+): void => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ success: false, message: 'Access denied. No token provided.' });
+    return;
+  }
+
+  const token = authHeader.split(' ')[1];
+
   try {
-    let token: string | undefined;
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || 'fallback_secret_key'
+    ) as any;
 
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith('Bearer')
-    ) {
-      token = req.headers.authorization.split(' ')[1];
-    }
-
-    if (!token) {
-      throw new ApiError(401, 'Authentication required. Token missing from authorization header.');
-    }
-
-    const decoded = JwtUtils.verifyAccessToken(token);
-
-    req.user = {
-      id: decoded.id,
-      email: decoded.email,
-      role: decoded.role,
-      organizationId: decoded.organizationId,
-    };
-
+    req.account = decoded;
+    req.user = decoded; // Attach to req.user for controllers expecting req.user
     next();
-  } catch (error: any) {
-    next(error);
+  } catch (error) {
+    res.status(401).json({ success: false, message: 'Invalid or expired token.' });
   }
 };
 
-/**
- * Restricts access to specified RBAC roles
- */
-export const restrictTo = (...allowedRoles: UserRole[]) => {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    if (!req.user) {
-      return next(new ApiError(401, 'Authentication required.'));
-    }
+// Restrict access based on AccountType or User Role (e.g., restrictTo('HOSPITAL', 'ADMIN', 'DOCTOR', 'LAB_TECHNICIAN'))
+export const restrictTo = (...allowedRoles: string[]) => {
+  return (req: AuthRequest, res: Response, next: NextFunction): void => {
+    const role = req.user?.role || req.account?.accountType;
 
-    if (!allowedRoles.includes(req.user.role)) {
-      return next(
-        new ApiError(
-          403,
-          `Forbidden: Role '${req.user.role}' is not authorized to perform this operation.`
-        )
-      );
+    if (!role || !allowedRoles.includes(role)) {
+      res.status(403).json({
+        success: false,
+        message: 'Forbidden. You do not have permission to perform this action.',
+      });
+      return;
     }
-
     next();
   };
 };
+
+// Compatibility aliases for legacy/route imports
+export const protect = authenticateAccount;
+export const authenticate = authenticateAccount;
+export const authorize = restrictTo;

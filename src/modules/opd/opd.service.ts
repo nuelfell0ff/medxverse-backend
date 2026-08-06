@@ -1,225 +1,123 @@
-import { OPDVisit } from './opd.model.js';
+import { OpdEncounter } from './opd.model.js';
 import { Patient } from '../patient/patient.model.js';
-import {
-  CreateOPDVisitDto,
-  RecordVitalsDto,
-  CompleteConsultationDto,
-  OPDQueryFilters,
-} from './opd.types.js';
-import { ApiError } from '../../utils/ApiError.js';
-import { generateOPDVisitNumber } from '../../utils/generator.js';
+import { Staff } from '../staff/staff.model.js';
+import { CreateOpdDTO, UpdateOpdDTO, RecordVitalsDTO, OpdStatus } from './opd.types.js';
 
-export class OPDService {
-  /**
-   * Registers a new OPD Visit/Check-in for a patient
-   */
-  static async createVisit(dto: CreateOPDVisitDto, organizationId: string) {
-    const patient = await Patient.findOne({
-      _id: dto.patientId,
-      organizationId,
-      isArchived: false,
-    });
-
+export class OpdService {
+  public static async createEncounter(hospitalId: string, dto: CreateOpdDTO) {
+    // Validate Patient belongs to this Hospital
+    const patient = await Patient.findOne({ _id: dto.patientId, hospitalId });
     if (!patient) {
-      throw new ApiError(404, 'Patient record not found in this organization.');
+      throw new Error('Patient not found under this hospital');
     }
 
-    // Check for active existing visit for the patient on the same day
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    // Validate Doctor belongs to this Hospital
+    const doctor = await Staff.findOne({ _id: dto.doctorId, hospitalId, role: 'DOCTOR' });
+    if (!doctor) {
+      throw new Error('Doctor not found or staff member is not assigned as a DOCTOR');
+    }
 
-    const activeVisit = await OPDVisit.findOne({
-      patientId: dto.patientId,
-      organizationId,
-      status: { $in: ['QUEUED', 'TRIAGED', 'IN_CONSULTATION'] },
-      createdAt: { $gte: startOfDay },
+    const encounter = await OpdEncounter.create({
+      ...dto,
+      hospitalId,
+      encounterDate: dto.encounterDate ? new Date(dto.encounterDate) : new Date(),
+      status: OpdStatus.WAITING,
     });
 
-    if (activeVisit) {
-      throw new ApiError(400, 'Patient already has an active OPD consultation in progress today.');
-    }
-
-    const visitNumber = generateOPDVisitNumber();
-
-    const visit = await OPDVisit.create({
-      ...dto,
-      visitNumber,
-      organizationId,
-      status: 'QUEUED',
-    });
-
-    return visit.populate([
-      { path: 'patientId', select: 'firstName lastName mrn dateOfBirth gender phoneNumber' },
-      { path: 'doctorId', select: 'firstName lastName staffCode department' },
+    return encounter.populate([
+      { path: 'patientId', select: 'mrn firstName lastName phone gender dateOfBirth bloodGroup category' },
+      { path: 'doctorId', select: 'firstName lastName role department' },
     ]);
   }
 
-  /**
-   * Records nurse/triage vitals for an OPD visit
-   */
-  static async recordVitals(
-    visitId: string,
-    dto: RecordVitalsDto,
-    recordedByUserId: string,
-    organizationId: string
+  public static async getEncounters(
+    hospitalId: string,
+    filters: { doctorId?: string; patientId?: string; status?: OpdStatus; date?: string; page?: number; limit?: number }
   ) {
-    const visit = await OPDVisit.findOne({ _id: visitId, organizationId });
-    if (!visit) {
-      throw new ApiError(404, 'OPD visit record not found.');
-    }
-
-    if (visit.status === 'COMPLETED' || visit.status === 'CANCELLED') {
-      throw new ApiError(400, `Cannot record vitals for a visit with status '${visit.status}'.`);
-    }
-
-    let bmi: number | undefined;
-    if (dto.weight && dto.height) {
-      const heightInMeters = dto.height / 100;
-      bmi = parseFloat((dto.weight / (heightInMeters * heightInMeters)).toFixed(2));
-    }
-
-    visit.vitals = {
-      ...dto,
-      bmi,
-      recordedBy: recordedByUserId as any,
-      recordedAt: new Date(),
-    };
-
-    if (visit.status === 'QUEUED') {
-      visit.status = 'TRIAGED';
-    }
-
-    await visit.save();
-
-    return visit.populate([
-      { path: 'patientId', select: 'firstName lastName mrn dateOfBirth gender' },
-      { path: 'vitals.recordedBy', select: 'firstName lastName staffCode' },
-    ]);
-  }
-
-  /**
-   * Starts a consultation session with a doctor
-   */
-  static async startConsultation(visitId: string, doctorId: string, organizationId: string) {
-    const visit = await OPDVisit.findOne({ _id: visitId, organizationId });
-    if (!visit) {
-      throw new ApiError(404, 'OPD visit record not found.');
-    }
-
-    if (visit.status === 'COMPLETED' || visit.status === 'CANCELLED') {
-      throw new ApiError(400, `Cannot start consultation on a visit that is ${visit.status}.`);
-    }
-
-    visit.status = 'IN_CONSULTATION';
-    visit.doctorId = doctorId as any;
-    visit.consultationStartTime = new Date();
-
-    await visit.save();
-
-    return visit.populate([
-      { path: 'patientId', select: 'firstName lastName mrn dateOfBirth gender bloodGroup genotype allergies' },
-      { path: 'doctorId', select: 'firstName lastName staffCode department' },
-    ]);
-  }
-
-  /**
-   * Completes consultation, recording doctor's notes, diagnoses, prescriptions, and lab orders
-   */
-  static async completeConsultation(
-    visitId: string,
-    dto: CompleteConsultationDto,
-    doctorId: string,
-    organizationId: string
-  ) {
-    const visit = await OPDVisit.findOne({ _id: visitId, organizationId });
-    if (!visit) {
-      throw new ApiError(404, 'OPD visit record not found.');
-    }
-
-    if (visit.status !== 'IN_CONSULTATION' && visit.status !== 'TRIAGED') {
-      throw new ApiError(400, 'Consultation must be started or triaged before completion.');
-    }
-
-    visit.clinicalNotes = dto.clinicalNotes;
-    visit.diagnoses = dto.diagnoses || [];
-    visit.prescriptions = dto.prescriptions || [];
-    visit.labOrders = dto.labOrders || [];
-    visit.doctorId = doctorId as any;
-    visit.status = 'COMPLETED';
-    visit.consultationEndTime = new Date();
-
-    await visit.save();
-
-    return visit.populate([
-      { path: 'patientId', select: 'firstName lastName mrn' },
-      { path: 'doctorId', select: 'firstName lastName staffCode' },
-    ]);
-  }
-
-  /**
-   * Retrieves active OPD queue with pagination and filters
-   */
-  static async getQueue(organizationId: string, filters: OPDQueryFilters) {
-    const page = Number(filters.page) || 1;
-    const limit = Number(filters.limit) || 20;
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
     const skip = (page - 1) * limit;
 
-    const query: any = { organizationId };
+    const query: any = { hospitalId };
 
-    if (filters.status) {
-      query.status = filters.status;
-    }
-
-    if (filters.doctorId) {
-      query.doctorId = filters.doctorId;
-    }
-
-    if (filters.priority) {
-      query.priority = filters.priority;
-    }
+    if (filters.doctorId) query.doctorId = filters.doctorId;
+    if (filters.patientId) query.patientId = filters.patientId;
+    if (filters.status) query.status = filters.status;
 
     if (filters.date) {
-      const selectedDate = new Date(filters.date);
-      const startOfDay = new Date(selectedDate.setHours(0, 0, 0, 0));
-      const endOfDay = new Date(selectedDate.setHours(23, 59, 59, 999));
-      query.createdAt = { $gte: startOfDay, $lte: endOfDay };
+      const startOfDay = new Date(filters.date);
+      startOfDay.setHours(0, 0, 0, 0);
+
+      const endOfDay = new Date(filters.date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      query.encounterDate = { $gte: startOfDay, $lte: endOfDay };
     }
 
-    const [visits, total] = await Promise.all([
-      OPDVisit.find(query)
-        .populate('patientId', 'firstName lastName mrn phoneNumber dateOfBirth gender insuranceType')
-        .populate('doctorId', 'firstName lastName staffCode')
-        .sort({ priority: -1, createdAt: 1 })
+    const [encounters, total] = await Promise.all([
+      OpdEncounter.find(query)
+        .populate('patientId', 'mrn firstName lastName phone gender dateOfBirth bloodGroup category')
+        .populate('doctorId', 'firstName lastName role department')
+        .sort({ encounterDate: -1 })
         .skip(skip)
         .limit(limit),
-      OPDVisit.countDocuments(query),
+      OpdEncounter.countDocuments(query),
     ]);
 
     return {
-      visits,
+      encounters,
       pagination: {
         total,
         page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+        pages: Math.ceil(total / limit),
       },
     };
   }
 
-  /**
-   * Gets single OPD visit details
-   */
-  static async getVisitById(visitId: string, organizationId: string) {
-    const visit = await OPDVisit.findOne({ _id: visitId, organizationId }).populate([
-      { path: 'patientId', select: 'firstName lastName mrn dateOfBirth gender phoneNumber bloodGroup genotype allergies chronicConditions' },
-      { path: 'doctorId', select: 'firstName lastName staffCode department' },
-      { path: 'vitals.recordedBy', select: 'firstName lastName staffCode' },
+  public static async getEncounterById(id: string, hospitalId: string) {
+    const encounter = await OpdEncounter.findOne({ _id: id, hospitalId }).populate([
+      { path: 'patientId', select: 'mrn firstName lastName phone gender dateOfBirth bloodGroup genotype allergies category hmoPolicyNumber' },
+      { path: 'doctorId', select: 'firstName lastName role department licenseNumber' },
     ]);
 
-    if (!visit) {
-      throw new ApiError(404, 'OPD visit record not found.');
+    if (!encounter) {
+      throw new Error('OPD encounter record not found');
     }
 
-    return visit;
+    return encounter;
+  }
+
+  public static async recordVitals(id: string, hospitalId: string, dto: RecordVitalsDTO) {
+    const encounter = await OpdEncounter.findOneAndUpdate(
+      { _id: id, hospitalId },
+      { $set: { vitals: dto.vitals } },
+      { new: true, runValidators: true }
+    ).populate([
+      { path: 'patientId', select: 'mrn firstName lastName' },
+      { path: 'doctorId', select: 'firstName lastName' },
+    ]);
+
+    if (!encounter) {
+      throw new Error('OPD encounter record not found');
+    }
+
+    return encounter;
+  }
+
+  public static async updateEncounter(id: string, hospitalId: string, dto: UpdateOpdDTO) {
+    const encounter = await OpdEncounter.findOneAndUpdate(
+      { _id: id, hospitalId },
+      { $set: dto },
+      { new: true, runValidators: true }
+    ).populate([
+      { path: 'patientId', select: 'mrn firstName lastName' },
+      { path: 'doctorId', select: 'firstName lastName' },
+    ]);
+
+    if (!encounter) {
+      throw new Error('OPD encounter record not found');
+    }
+
+    return encounter;
   }
 }

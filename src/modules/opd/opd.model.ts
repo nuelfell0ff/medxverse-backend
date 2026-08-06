@@ -1,55 +1,27 @@
-import { Schema, model } from 'mongoose';
-import { IOPDVisitDocument } from './opd.types.js';
+import mongoose, { Schema } from 'mongoose';
+import { IOpdDocument, OpdStatus } from './opd.types.js';
 
-const vitalsSchema = new Schema(
+const VitalsSchema = new Schema(
   {
-    temperature: { type: Number },
-    bloodPressureSystolic: { type: Number },
-    bloodPressureDiastolic: { type: Number },
+    bloodPressure: { type: String, trim: true },
     pulseRate: { type: Number },
+    temperature: { type: Number },
     respiratoryRate: { type: Number },
-    oxygenSaturation: { type: Number },
     weight: { type: Number },
     height: { type: Number },
-    bmi: { type: Number },
-    recordedBy: { type: Schema.Types.ObjectId, ref: 'User' },
-    recordedAt: { type: Date, default: Date.now },
+    spo2: { type: Number },
   },
   { _id: false }
 );
 
-const diagnosisSchema = new Schema(
+const OpdEncounterSchema = new Schema<IOpdDocument>(
   {
-    code: { type: String, trim: true },
-    description: { type: String, required: true, trim: true },
-    type: { type: String, enum: ['PRIMARY', 'SECONDARY'], default: 'PRIMARY' },
-  },
-  { _id: false }
-);
-
-const prescriptionItemSchema = new Schema(
-  {
-    drugName: { type: String, required: true, trim: true },
-    dosage: { type: String, required: true, trim: true },
-    frequency: { type: String, required: true, trim: true },
-    duration: { type: String, required: true, trim: true },
-    instructions: { type: String, trim: true },
-    dispensed: { type: Boolean, default: false },
-  },
-  { _id: false }
-);
-
-const labOrderRequestSchema = new Schema(
-  {
-    testName: { type: String, required: true, trim: true },
-    notes: { type: String, trim: true },
-    status: { type: String, enum: ['PENDING', 'COMPLETED'], default: 'PENDING' },
-  },
-  { _id: false }
-);
-
-const opdVisitSchema = new Schema<IOPDVisitDocument>(
-  {
+    hospitalId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Account',
+      required: [true, 'Hospital account ID is required'],
+      index: true,
+    },
     patientId: {
       type: Schema.Types.ObjectId,
       ref: 'Patient',
@@ -58,51 +30,52 @@ const opdVisitSchema = new Schema<IOPDVisitDocument>(
     },
     doctorId: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Staff',
+      required: [true, 'Attending doctor ID is required'],
       index: true,
     },
-    organizationId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Organization',
-      required: [true, 'Organization ID is required'],
-      index: true,
-    },
-    visitNumber: {
-      type: String,
-      required: true,
-      unique: true,
-      uppercase: true,
-      trim: true,
+    encounterDate: {
+      type: Date,
+      default: Date.now,
       index: true,
     },
     status: {
       type: String,
-      enum: ['QUEUED', 'TRIAGED', 'IN_CONSULTATION', 'COMPLETED', 'CANCELLED'],
-      default: 'QUEUED',
+      enum: Object.values(OpdStatus),
+      default: OpdStatus.WAITING,
       index: true,
     },
-    priority: {
+    reasonForVisit: {
       type: String,
-      enum: ['ROUTINE', 'URGENT', 'EMERGENCY'],
-      default: 'ROUTINE',
-      index: true,
-    },
-    chiefComplaint: {
-      type: String,
-      required: [true, 'Chief complaint is required'],
+      required: [true, 'Reason for visit is required'],
       trim: true,
     },
-    vitals: { type: vitalsSchema },
-    clinicalNotes: { type: String, trim: true },
-    diagnoses: { type: [diagnosisSchema], default: [] },
-    prescriptions: { type: [prescriptionItemSchema], default: [] },
-    labOrders: { type: [labOrderRequestSchema], default: [] },
-    consultationStartTime: { type: Date },
-    consultationEndTime: { type: Date },
+    vitals: {
+      type: VitalsSchema,
+    },
+    symptoms: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+    diagnosis: {
+      type: String,
+      trim: true,
+    },
+    notes: {
+      type: String,
+      trim: true,
+    },
   },
   {
     timestamps: true,
   }
 );
 
-export const OPDVisit = model<IOPDVisitDocument>('OPDVisit', opdVisitSchema);
+OpdEncounterSchema.index({ hospitalId: 1, encounterDate: -1 });
+OpdEncounterSchema.index({ hospitalId: 1, doctorId: 1, status: 1 });
+
+export const OpdEncounter =
+  mongoose.models.OpdEncounter ||
+  mongoose.model<IOpdDocument>('OpdEncounter', OpdEncounterSchema);

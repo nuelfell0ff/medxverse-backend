@@ -1,290 +1,237 @@
-import { LabTestCatalog, LabOrder } from './laboratory.model.js';
-import { OPDVisit } from '../opd/opd.model.js';
+import { Types } from 'mongoose';
+import { LabTest, LabRequest } from './laboratory.model.js';
+import { Patient } from '../patient/patient.model.js';
+import { Staff } from '../staff/staff.model.js';
 import {
-  CreateLabTestCatalogDto,
-  UpdateLabTestCatalogDto,
-  CreateLabOrderDto,
-  UpdateLabResultDto,
-  LabOrderQueryFilters,
-  ILabOrderItem,
+  CreateLabTestDTO,
+  UpdateLabTestDTO,
+  CreateLabRequestDTO,
+  CollectSampleDTO,
+  SubmitTestResultsDTO,
+  LabRequestStatus,
+  LabTestCategory,
+  ILabRequestItem,
 } from './laboratory.types.js';
-import { ApiError } from '../../utils/ApiError.js';
 
 export class LaboratoryService {
-  /**
-   * Helper to generate unique order numbers
-   */
-  private static generateOrderNumber(): string {
-    const date = new Date();
-    const yearMonth = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}`;
-    const random = Math.floor(10000 + Math.random() * 90000);
-    return `LAB-${yearMonth}-${random}`;
-  }
+  // --- LAB TEST CATALOG MANAGEMENT ---
 
-  /**
-   * Helper to generate unique catalog test codes
-   */
-  private static generateTestCode(name: string): string {
-    const prefix = name.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase();
-    const random = Math.floor(100 + Math.random() * 900);
-    return `TST-${prefix}${random}`;
-  }
-
-  /**
-   * Adds a new lab test offering to the catalog
-   */
-  static async createLabTestCatalogItem(dto: CreateLabTestCatalogDto, organizationId: string) {
-    const code = dto.code ? dto.code.toUpperCase() : this.generateTestCode(dto.name);
-
-    const existingCode = await LabTestCatalog.findOne({ code });
-    if (existingCode) {
-      throw new ApiError(409, `Test code '${code}' already exists.`);
+  public static async createLabTest(hospitalId: string, dto: CreateLabTestDTO) {
+    const existing = await LabTest.findOne({ hospitalId, code: dto.code.toUpperCase() });
+    if (existing) {
+      throw new Error(`Lab test with code '${dto.code}' already exists`);
     }
 
-    const testItem = await LabTestCatalog.create({
+    const labTest = await LabTest.create({
       ...dto,
-      code,
-      organizationId,
+      code: dto.code.toUpperCase(),
+      hospitalId,
     });
 
-    return testItem;
+    return labTest;
   }
 
-  /**
-   * Gets all available laboratory catalog tests
-   */
-  static async getLabTestCatalog(organizationId: string, category?: string) {
-    const query: any = { organizationId, isActive: true };
-    if (category) query.category = category;
-
-    return LabTestCatalog.find(query).sort({ category: 1, name: 1 });
-  }
-
-  /**
-   * Retrieves single catalog item
-   */
-  static async getLabTestCatalogById(id: string, organizationId: string) {
-    const testItem = await LabTestCatalog.findOne({ _id: id, organizationId });
-    if (!testItem) {
-      throw new ApiError(404, 'Lab test catalog entry not found.');
-    }
-    return testItem;
-  }
-
-  /**
-   * Updates lab test catalog entry
-   */
-  static async updateLabTestCatalogItem(
-    id: string,
-    dto: UpdateLabTestCatalogDto,
-    organizationId: string
+  public static async getLabTests(
+    hospitalId: string,
+    filters: { search?: string; category?: LabTestCategory; isActive?: boolean; page?: number; limit?: number }
   ) {
-    const testItem = await LabTestCatalog.findOneAndUpdate(
-      { _id: id, organizationId },
-      { $set: dto },
-      { new: true, runValidators: true }
-    );
-
-    if (!testItem) {
-      throw new ApiError(404, 'Lab test catalog entry not found.');
-    }
-
-    return testItem;
-  }
-
-  /**
-   * Creates a laboratory request order for a patient
-   */
-  static async createLabOrder(
-    dto: CreateLabOrderDto,
-    doctorId: string,
-    organizationId: string
-  ) {
-    if (!dto.testCatalogIds || dto.testCatalogIds.length === 0) {
-      throw new ApiError(400, 'At least one lab test must be selected for the order.');
-    }
-
-    const catalogItems = await LabTestCatalog.find({
-      _id: { $in: dto.testCatalogIds },
-      organizationId,
-      isActive: true,
-    });
-
-    if (catalogItems.length !== dto.testCatalogIds.length) {
-      throw new ApiError(400, 'One or more selected lab tests are invalid or inactive.');
-    }
-
-    let totalAmount = 0;
-    const orderItems: ILabOrderItem[] = catalogItems.map((item) => {
-      totalAmount += item.price;
-      return {
-        testCatalogId: item._id,
-        testName: item.name,
-        category: item.category,
-        price: item.price,
-        status: 'PENDING',
-      };
-    });
-
-    const orderNumber = this.generateOrderNumber();
-
-    const labOrder = await LabOrder.create({
-      orderNumber,
-      patientId: dto.patientId,
-      opdVisitId: dto.opdVisitId,
-      orderedBy: doctorId,
-      organizationId,
-      items: orderItems,
-      totalAmount,
-      priority: dto.priority || 'ROUTINE',
-      paymentStatus: dto.paymentStatus || 'PENDING',
-      clinicalNotes: dto.clinicalNotes,
-    });
-
-    // Link lab test request to OPD visit record if provided
-    if (dto.opdVisitId) {
-      const visit = (await OPDVisit.findOne({ _id: dto.opdVisitId, organizationId })) as any;
-      if (visit) {
-        if (!visit.labRequests) {
-          visit.labRequests = [];
-        }
-
-        catalogItems.forEach((item) => {
-          visit.labRequests.push({
-            testName: item.name,
-            category: item.category,
-            status: 'PENDING',
-          });
-        });
-
-        visit.markModified('labRequests');
-        await visit.save();
-      }
-    }
-
-    return labOrder.populate([
-      { path: 'patientId', select: 'firstName lastName mrn insuranceType' },
-      { path: 'orderedBy', select: 'firstName lastName staffCode department' },
-    ]);
-  }
-
-  /**
-   * Gets list of lab orders with filtering options
-   */
-  static async getLabOrders(organizationId: string, filters: LabOrderQueryFilters) {
-    const page = Number(filters.page) || 1;
-    const limit = Number(filters.limit) || 20;
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
     const skip = (page - 1) * limit;
 
-    const query: any = { organizationId };
+    const query: any = { hospitalId };
 
-    if (filters.patientId) query.patientId = filters.patientId;
-    if (filters.priority) query.priority = filters.priority;
-    if (filters.status) query['items.status'] = filters.status;
-
-    if (filters.startDate || filters.endDate) {
-      query.createdAt = {};
-      if (filters.startDate) query.createdAt.$gte = new Date(filters.startDate);
-      if (filters.endDate) query.createdAt.$lte = new Date(filters.endDate);
+    if (filters.search) {
+      query.$or = [
+        { name: { $regex: filters.search, $options: 'i' } },
+        { code: { $regex: filters.search, $options: 'i' } },
+      ];
     }
+    if (filters.category) query.category = filters.category;
+    if (filters.isActive !== undefined) query.isActive = filters.isActive;
 
-    const [orders, total] = await Promise.all([
-      LabOrder.find(query)
-        .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
-        .populate('orderedBy', 'firstName lastName staffCode')
-        .populate('labTechnicianId', 'firstName lastName staffCode')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      LabOrder.countDocuments(query),
+    const [tests, total] = await Promise.all([
+      LabTest.find(query).sort({ category: 1, name: 1 }).skip(skip).limit(limit),
+      LabTest.countDocuments(query),
     ]);
 
     return {
-      orders,
+      tests,
       pagination: {
         total,
         page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+        pages: Math.ceil(total / limit),
       },
     };
   }
 
-  /**
-   * Retrieves single lab order by ID
-   */
-  static async getLabOrderById(id: string, organizationId: string) {
-    const order = await LabOrder.findOne({ _id: id, organizationId })
-      .populate('patientId', 'firstName lastName mrn gender dateOfBirth insuranceType')
-      .populate('orderedBy', 'firstName lastName staffCode department')
-      .populate('labTechnicianId', 'firstName lastName staffCode');
+  public static async updateLabTest(testId: string, hospitalId: string, dto: UpdateLabTestDTO) {
+    const test = await LabTest.findOneAndUpdate(
+      { _id: testId, hospitalId },
+      { $set: dto },
+      { new: true, runValidators: true }
+    );
 
-    if (!order) {
-      throw new ApiError(404, 'Lab order not found.');
-    }
-
-    return order;
+    if (!test) throw new Error('Lab test not found');
+    return test;
   }
 
-  /**
-   * Updates result data for a specific test item inside a lab order
-   */
-  static async updateLabTestResult(
-    orderId: string,
-    itemId: string,
-    dto: UpdateLabResultDto,
-    technicianId: string,
-    organizationId: string
+  // --- LAB REQUEST MANAGEMENT ---
+
+  public static async createLabRequest(hospitalId: string, dto: CreateLabRequestDTO) {
+    const patient = await Patient.findOne({ _id: dto.patientId, hospitalId });
+    if (!patient) throw new Error('Patient record not found');
+
+    const doctor = await Staff.findOne({ _id: dto.doctorId, hospitalId });
+    if (!doctor) throw new Error('Doctor record not found');
+
+    if (!dto.testIds || dto.testIds.length === 0) {
+      throw new Error('At least one lab test must be selected');
+    }
+
+    // Fetch test details & build items
+    const selectedTests = await LabTest.find({
+      _id: { $in: dto.testIds },
+      hospitalId,
+      isActive: true,
+    });
+
+    if (selectedTests.length !== dto.testIds.length) {
+      throw new Error('One or more selected tests are invalid or inactive');
+    }
+
+    let totalAmount = 0;
+    const items = selectedTests.map((test) => {
+      totalAmount += test.price;
+      return {
+        testId: test._id,
+        testName: test.name,
+        price: test.price,
+        status: LabRequestStatus.PENDING,
+        results: [],
+      };
+    });
+
+    const reqCount = await LabRequest.countDocuments({ hospitalId });
+    const requestNumber = `LAB-${Date.now().toString().slice(-6)}-${reqCount + 1}`;
+
+    const labRequest = await LabRequest.create({
+      hospitalId,
+      requestNumber,
+      patientId: dto.patientId,
+      doctorId: dto.doctorId,
+      ipdAdmissionId: dto.ipdAdmissionId,
+      priority: dto.priority,
+      status: LabRequestStatus.PENDING,
+      items,
+      totalAmount,
+      notes: dto.notes,
+    });
+
+    return labRequest.populate([
+      { path: 'patientId', select: 'mrn firstName lastName category gender age' },
+      { path: 'doctorId', select: 'firstName lastName department' },
+    ]);
+  }
+
+  public static async getLabRequests(
+    hospitalId: string,
+    filters: { status?: LabRequestStatus; patientId?: string; page?: number; limit?: number }
   ) {
-    const order = await LabOrder.findOne({ _id: orderId, organizationId });
-    if (!order) {
-      throw new ApiError(404, 'Lab order not found.');
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const query: any = { hospitalId };
+
+    if (filters.status) query.status = filters.status;
+    if (filters.patientId) query.patientId = filters.patientId;
+
+    const [requests, total] = await Promise.all([
+      LabRequest.find(query)
+        .populate('patientId', 'mrn firstName lastName category gender')
+        .populate('doctorId', 'firstName lastName department')
+        .populate('sampleCollectedBy', 'firstName lastName')
+        .populate('performedBy', 'firstName lastName')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      LabRequest.countDocuments(query),
+    ]);
+
+    return {
+      requests,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  public static async getLabRequestById(requestId: string, hospitalId: string) {
+    const request = await LabRequest.findOne({ _id: requestId, hospitalId }).populate([
+      { path: 'patientId', select: 'mrn firstName lastName category gender dateOfBirth' },
+      { path: 'doctorId', select: 'firstName lastName department' },
+      { path: 'sampleCollectedBy', select: 'firstName lastName' },
+      { path: 'performedBy', select: 'firstName lastName' },
+      { path: 'items.testId', select: 'code name category parameters sampleType' },
+    ]);
+
+    if (!request) throw new Error('Lab request not found');
+    return request;
+  }
+
+  // --- SAMPLE COLLECTION & RESULT WORKFLOW ---
+
+  public static async collectSample(requestId: string, hospitalId: string, dto: CollectSampleDTO) {
+    const request = await LabRequest.findOne({ _id: requestId, hospitalId });
+    if (!request) throw new Error('Lab request not found');
+
+    if (request.status !== LabRequestStatus.PENDING) {
+      throw new Error(`Cannot collect sample. Request is currently ${request.status}`);
     }
 
-    const item = order.items.find((i: any) => i._id.toString() === itemId);
-    if (!item) {
-      throw new ApiError(404, 'Test item not found in this order.');
+    request.status = LabRequestStatus.SAMPLE_COLLECTED;
+    request.sampleCollectedAt = new Date();
+    request.sampleCollectedBy = new Types.ObjectId(dto.collectedBy);
+    if (dto.sampleTypeNotes) request.sampleTypeNotes = dto.sampleTypeNotes;
+
+    // Update item status
+    request.items.forEach((item: ILabRequestItem) => {
+      item.status = LabRequestStatus.SAMPLE_COLLECTED;
+    });
+
+    await request.save();
+    return request;
+  }
+
+  public static async submitResults(requestId: string, hospitalId: string, dto: SubmitTestResultsDTO) {
+    const request = await LabRequest.findOne({ _id: requestId, hospitalId });
+    if (!request) throw new Error('Lab request not found');
+
+    if (request.status === LabRequestStatus.CANCELLED || request.status === LabRequestStatus.COMPLETED) {
+      throw new Error(`Cannot submit results for a ${request.status} request`);
     }
 
-    if (dto.parameters) item.parameters = dto.parameters;
-    if (dto.overallResult !== undefined) item.overallResult = dto.overallResult;
-    if (dto.remarks !== undefined) item.remarks = dto.remarks;
-
-    const targetStatus = dto.status || 'COMPLETED';
-    item.status = targetStatus;
-
-    if (targetStatus === 'IN_PROGRESS' && !item.sampleCollectedAt) {
-      item.sampleCollectedAt = new Date();
-    }
-
-    if (targetStatus === 'COMPLETED') {
-      item.completedAt = new Date();
-    }
-
-    order.labTechnicianId = technicianId as any;
-    await order.save();
-
-    // Reflect test completion on linked OPD visit
-    if (order.opdVisitId && targetStatus === 'COMPLETED') {
-      const visit = (await OPDVisit.findOne({ _id: order.opdVisitId, organizationId })) as any;
-      if (visit && visit.labRequests) {
-        const opdLabItem = visit.labRequests.find(
-          (lr: { testName?: string }) =>
-            lr.testName && lr.testName.toLowerCase() === item.testName.toLowerCase()
-        );
-
-        if (opdLabItem) {
-          opdLabItem.status = 'COMPLETED';
-          opdLabItem.resultSummary = item.overallResult;
-          visit.markModified('labRequests');
-          await visit.save();
-        }
+    for (const testResult of dto.testResults) {
+      const item = request.items.find((i: ILabRequestItem) => i.testId.toString() === testResult.testId);
+      if (item) {
+        item.results = testResult.results;
+        item.remarks = testResult.remarks;
+        item.status = LabRequestStatus.COMPLETED;
       }
     }
 
-    return order.populate([
-      { path: 'patientId', select: 'firstName lastName mrn' },
-      { path: 'labTechnicianId', select: 'firstName lastName staffCode' },
-    ]);
+    const allCompleted = request.items.every((i: ILabRequestItem) => i.status === LabRequestStatus.COMPLETED);
+
+    request.status = allCompleted ? LabRequestStatus.COMPLETED : LabRequestStatus.IN_PROGRESS;
+    request.performedBy = new Types.ObjectId(dto.performedBy);
+    if (allCompleted) {
+      request.completedAt = new Date();
+    }
+
+    await request.save();
+    return request;
   }
 }

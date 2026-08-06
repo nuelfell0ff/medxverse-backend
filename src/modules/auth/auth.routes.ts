@@ -1,14 +1,11 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.js';
-import { protect } from '../../middlewares/auth.middleware.js';
+import { authenticateAccount } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
-// Public Authentication Routes
+router.post('/register', AuthController.register);
 router.post('/login', AuthController.login);
-router.post('/refresh', AuthController.refreshToken);
+router.get('/me', authenticateAccount, AuthController.me);
 
-// Protected Auth Routes
-router.get('/me', protect, AuthController.me);
-
-export default router;
+export default router;  

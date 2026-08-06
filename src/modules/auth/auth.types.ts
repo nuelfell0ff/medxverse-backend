@@ -1,41 +1,54 @@
-import { UserRole } from '../../constants/roles.enum.js';
+import { Document, Types } from 'mongoose';
 
-export interface AuthUserPayload {
-  id: string;
-  email: string;
-  role: UserRole;
-  organizationId: string;
+export enum AccountType {
+  HOSPITAL = 'HOSPITAL',
+  HMO = 'HMO',
 }
 
-// Alias for compatibility
-export type IJwtPayload = AuthUserPayload;
+export interface IAccount {
+  name: string;
+  email: string;
+  password?: string;
+  accountType: AccountType;
+  code?: string;
+  phone: string;
+  address?: string;
+  logoUrl?: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
-export interface LoginDto {
+export interface IAccountDocument extends IAccount, Document {
+  _id: Types.ObjectId;
+  comparePassword(candidatePassword: string): Promise<boolean>;
+}
+
+export interface RegisterAccountDTO {
+  name: string;
+  email: string;
+  password: string;
+  accountType: AccountType;
+  code?: string;
+  phone: string;
+  address?: string;
+}
+
+export interface LoginDTO {
   email: string;
   password: string;
 }
 
-export interface RefreshTokenDto {
-  refreshToken: string;
-}
-
-export interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-}
-
-export interface AuthUserResponse {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  role: UserRole;
-  organizationId: string;
-  staffCode?: string;
-  isActive: boolean;
-}
-
-export interface LoginResponse {
-  user: AuthUserResponse;
-  tokens: AuthTokens;
+export interface AuthResponse {
+  token: string;
+  account: {
+    id: string;
+    name: string;
+    email: string;
+    accountType: AccountType;
+    code?: string;
+    phone: string;
+    address?: string;
+    logoUrl?: string;
+  };
 }

@@ -1,22 +1,18 @@
-import { Schema, model } from 'mongoose';
-import { IPatientDocument } from './patient.types.js';
+import mongoose, { Schema } from 'mongoose';
+import { IPatientDocument, Gender, BloodGroup, PatientCategory } from './patient.types.js';
 
-const emergencyContactSchema = new Schema(
+const PatientSchema = new Schema<IPatientDocument>(
   {
-    name: { type: String, required: true, trim: true },
-    relationship: { type: String, required: true, trim: true },
-    phone: { type: String, required: true, trim: true },
-  },
-  { _id: false }
-);
-
-const patientSchema = new Schema<IPatientDocument>(
-  {
+    hospitalId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Account',
+      required: [true, 'Hospital account ID is required'],
+      index: true,
+    },
     mrn: {
       type: String,
       required: true,
       unique: true,
-      uppercase: true,
       trim: true,
       index: true,
     },
@@ -36,14 +32,13 @@ const patientSchema = new Schema<IPatientDocument>(
     },
     gender: {
       type: String,
-      enum: ['MALE', 'FEMALE', 'OTHER'],
+      enum: Object.values(Gender),
       required: [true, 'Gender is required'],
     },
-    phoneNumber: {
+    phone: {
       type: String,
       required: [true, 'Phone number is required'],
       trim: true,
-      index: true,
     },
     email: {
       type: String,
@@ -56,50 +51,35 @@ const patientSchema = new Schema<IPatientDocument>(
     },
     bloodGroup: {
       type: String,
-      enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'],
+      enum: Object.values(BloodGroup),
     },
     genotype: {
       type: String,
-      enum: ['AA', 'AS', 'SS', 'AC', 'SC'],
+      trim: true,
     },
-    allergies: {
-      type: [String],
-      default: [],
-    },
-    chronicConditions: {
-      type: [String],
-      default: [],
-    },
-    emergencyContact: {
-      type: emergencyContactSchema,
-      required: [true, 'Emergency contact details are required'],
-    },
-    insuranceType: {
+    allergies: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+    category: {
       type: String,
-      enum: ['SELF_PAY', 'HMO'],
-      default: 'SELF_PAY',
-      required: true,
-      index: true,
+      enum: Object.values(PatientCategory),
+      default: PatientCategory.SELF_PAY,
     },
-    hmoProvider: {
+    hmoId: {
       type: Schema.Types.ObjectId,
-      ref: 'Organization',
+      ref: 'Account',
       index: true,
     },
     hmoPolicyNumber: {
       type: String,
       trim: true,
-      index: true,
     },
-    organizationId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Organization',
-      required: [true, 'Hospital Organization ID is required'],
-      index: true,
-    },
-    isArchived: {
+    isActive: {
       type: Boolean,
-      default: false,
+      default: true,
       index: true,
     },
   },
@@ -108,6 +88,9 @@ const patientSchema = new Schema<IPatientDocument>(
   }
 );
 
-patientSchema.index({ firstName: 'text', lastName: 'text', mrn: 'text', phoneNumber: 'text' });
+PatientSchema.index({ hospitalId: 1, mrn: 1 });
+PatientSchema.index({ hospitalId: 1, phone: 1 });
 
-export const Patient = model<IPatientDocument>('Patient', patientSchema);
+export const Patient =
+  mongoose.models.Patient ||
+  mongoose.model<IPatientDocument>('Patient', PatientSchema);

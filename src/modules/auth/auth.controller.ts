@@ -1,46 +1,57 @@
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response } from 'express';
 import { AuthService } from './auth.service.js';
-import { ApiResponse } from '../../utils/ApiResponse.js';
 
 export class AuthController {
-  /**
-   * Handles User Authentication Login
-   * POST /api/v1/auth/login
-   */
-  static async login(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public static async register(req: Request, res: Response): Promise<void> {
+    try {
+      const result = await AuthService.register(req.body);
+      res.status(201).json({
+        success: true,
+        message: 'Account registered successfully',
+        data: result,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Registration failed',
+      });
+    }
+  }
+
+  public static async login(req: Request, res: Response): Promise<void> {
     try {
       const result = await AuthService.login(req.body);
-      res.status(200).json(new ApiResponse(200, result, 'User logged in successfully'));
-    } catch (error) {
-      next(error);
+      res.status(200).json({
+        success: true,
+        message: 'Login successful',
+        data: result,
+      });
+    } catch (error: any) {
+      res.status(401).json({
+        success: false,
+        message: error.message || 'Authentication failed',
+      });
     }
   }
 
-  /**
-   * Handles Token Refreshing
-   * POST /api/v1/auth/refresh
-   */
-  static async refreshToken(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public static async me(req: Request, res: Response): Promise<void> {
     try {
-      const { refreshToken } = req.body;
-      const result = await AuthService.refreshSession(refreshToken);
-      res.status(200).json(new ApiResponse(200, result, 'Access token refreshed successfully'));
-    } catch (error) {
-      next(error);
-    }
-  }
+      const accountId = (req as any).account?.accountId;
+      if (!accountId) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return;
+      }
 
-  /**
-   * Returns Current Authenticated User Profile
-   * GET /api/v1/auth/me
-   */
-  static async me(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const userId = req.user!.id;
-      const user = await AuthService.getCurrentUser(userId);
-      res.status(200).json(new ApiResponse(200, user, 'Current user profile retrieved'));
-    } catch (error) {
-      next(error);
+      const profile = await AuthService.getProfile(accountId);
+      res.status(200).json({
+        success: true,
+        data: profile,
+      });
+    } catch (error: any) {
+      res.status(404).json({
+        success: false,
+        message: error.message || 'Failed to fetch account profile',
+      });
     }
   }
 }

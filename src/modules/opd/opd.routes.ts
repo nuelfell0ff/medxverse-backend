@@ -1,52 +1,19 @@
 import { Router } from 'express';
-import { OPDController } from './opd.controller.js';
+import { OpdController } from './opd.controller.js';
 import { protect, restrictTo } from '../../middlewares/auth.middleware.js';
-import { UserRole } from '../../constants/roles.enum.js';
 
 const router = Router();
 
-// Protect all OPD routes
-router.use(protect);
+router.use(protect, restrictTo('HOSPITAL'));
 
-// OPD Queue listing and detail view
-router.get('/', OPDController.getQueue);
-router.get('/:id', OPDController.getVisitById);
+router.route('/')
+  .post(OpdController.createEncounter)
+  .get(OpdController.getEncounters);
 
-// Check in patient to OPD (Receptionists, Nurses, Admin)
-router.post(
-  '/check-in',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.RECEPTIONIST,
-    UserRole.NURSE
-  ),
-  OPDController.createVisit
-);
+router.route('/:id')
+  .get(OpdController.getEncounterById)
+  .patch(OpdController.updateEncounter);
 
-// Record vitals (Nurses, Doctors)
-router.post(
-  '/:id/vitals',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.NURSE,
-    UserRole.DOCTOR
-  ),
-  OPDController.recordVitals
-);
-
-// Consultation workflow (Doctors)
-router.patch(
-  '/:id/start-consultation',
-  restrictTo(UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN, UserRole.DOCTOR),
-  OPDController.startConsultation
-);
-
-router.post(
-  '/:id/complete',
-  restrictTo(UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN, UserRole.DOCTOR),
-  OPDController.completeConsultation
-);
+router.patch('/:id/vitals', OpdController.recordVitals);
 
 export default router;

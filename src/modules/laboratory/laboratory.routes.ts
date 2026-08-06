@@ -1,60 +1,36 @@
 import { Router } from 'express';
 import { LaboratoryController } from './laboratory.controller.js';
-import { protect, restrictTo } from '../../middlewares/auth.middleware.js';
-import { UserRole } from '../../constants/roles.enum.js';
+import { authenticate, authorize } from '../../middlewares/auth.middleware.js'; // Adjust path to your auth middleware
 
 const router = Router();
 
-// Protect all lab routes
-router.use(protect);
+router.use(authenticate);
 
-// Catalog routes
-router.get('/catalog', LaboratoryController.getLabTestCatalog);
-router.get('/catalog/:id', LaboratoryController.getLabTestCatalogById);
+// --- Test Catalog Routes ---
+router
+  .route('/tests')
+  .post(authorize('ADMIN', 'LAB_TECHNICIAN'), LaboratoryController.createLabTest)
+  .get(LaboratoryController.getLabTests);
 
-router.post(
-  '/catalog',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.LAB_TECHNICIAN
-  ),
-  LaboratoryController.createLabTestCatalogItem
-);
+router
+  .route('/tests/:id')
+  .patch(authorize('ADMIN', 'LAB_TECHNICIAN'), LaboratoryController.updateLabTest);
 
-router.patch(
-  '/catalog/:id',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.LAB_TECHNICIAN
-  ),
-  LaboratoryController.updateLabTestCatalogItem
-);
+// --- Lab Request Routes ---
+router
+  .route('/requests')
+  .post(authorize('DOCTOR', 'ADMIN'), LaboratoryController.createLabRequest)
+  .get(LaboratoryController.getLabRequests);
 
-// Order management
-router.get('/orders', LaboratoryController.getLabOrders);
-router.get('/orders/:id', LaboratoryController.getLabOrderById);
+router.route('/requests/:id').get(LaboratoryController.getLabRequestById);
 
-router.post(
-  '/orders',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.DOCTOR
-  ),
-  LaboratoryController.createLabOrder
-);
+// --- Lab Workflow Routes ---
+router
+  .route('/requests/:id/collect-sample')
+  .post(authorize('LAB_TECHNICIAN', 'NURSE', 'ADMIN'), LaboratoryController.collectSample);
 
-// Result recording
-router.patch(
-  '/orders/:orderId/items/:itemId',
-  restrictTo(
-    UserRole.SYSTEM_ADMIN,
-    UserRole.HOSPITAL_ADMIN,
-    UserRole.LAB_TECHNICIAN
-  ),
-  LaboratoryController.updateLabTestResult
-);
+router
+  .route('/requests/:id/results')
+  .post(authorize('LAB_TECHNICIAN', 'ADMIN'), LaboratoryController.submitResults);
 
 export default router;
