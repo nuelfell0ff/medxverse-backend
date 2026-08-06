@@ -1,11 +1,18 @@
 export class ApiError extends Error {
-  public statusCode: number;
-  public errors: any[];
-  public isOperational: boolean;
+  statusCode: number;
+  success: boolean;
+  errors: any[];
+  isOperational: boolean;
 
-  constructor(statusCode: number, message: string, errors = [], stack = '') {
+  constructor(
+    statusCode: number,
+    message: string = 'Something went wrong',
+    errors: any[] = [],
+    stack: string = ''
+  ) {
     super(message);
     this.statusCode = statusCode;
+    this.success = false;
     this.errors = errors;
     this.isOperational = true;
 

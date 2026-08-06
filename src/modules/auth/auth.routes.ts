@@ -1,11 +1,14 @@
 import { Router } from 'express';
-import { registerOrgAndAdmin, login, getProfile } from './auth.controller.js';
-import { authenticate } from '../../middlewares/auth.middleware.js';
+import { AuthController } from './auth.controller.js';
+import { protect } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
-router.post('/register-org', registerOrgAndAdmin);
-router.post('/login', login);
-router.get('/me', authenticate, getProfile);
+// Public Authentication Routes
+router.post('/login', AuthController.login);
+router.post('/refresh', AuthController.refreshToken);
+
+// Protected Auth Routes
+router.get('/me', protect, AuthController.me);
 
 export default router;

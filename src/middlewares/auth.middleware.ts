@@ -1,52 +1,72 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
+import { JwtUtils } from '../utils/jwt.js';
 import { ApiError } from '../utils/ApiError.js';
-import { User } from '../modules/auth/user.model.js';
-import { UserRole } from '../modules/auth/user.types.js';
-import { OrganizationType } from '../modules/organization/organization.types.js';
+import { UserRole } from '../constants/roles.enum.js';
+import { AuthUserPayload } from '../modules/auth/auth.types.js';
 
-export interface AuthRequest extends Request {
-  user?: any;
+declare global {
+  namespace Express {
+    interface Request {
+      user?: AuthUserPayload;
+    }
+  }
 }
 
-export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction) => {
+/**
+ * Validates JWT Access Token from Authorization Header
+ */
+export const protect = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new ApiError(401, 'Unauthorized: Access token missing');
+    let token: string | undefined;
+
+    if (
+      req.headers.authorization &&
+      req.headers.authorization.startsWith('Bearer')
+    ) {
+      token = req.headers.authorization.split(' ')[1];
     }
 
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
-
-    const user = await User.findById(decoded.id).populate('organizationId');
-    if (!user || !user.isActive) {
-      throw new ApiError(401, 'User account is deactivated or invalid');
+    if (!token) {
+      throw new ApiError(401, 'Authentication required. Token missing from authorization header.');
     }
 
-    req.user = user;
+    const decoded = JwtUtils.verifyAccessToken(token);
+
+    req.user = {
+      id: decoded.id,
+      email: decoded.email,
+      role: decoded.role,
+      organizationId: decoded.organizationId,
+    };
+
     next();
-  } catch (error) {
-    next(new ApiError(401, 'Invalid or expired token'));
+  } catch (error: any) {
+    next(error);
   }
 };
 
-// Guard by Organization Type (HOSPITAL vs HMO)
-export const authorizeOrgType = (...allowedOrgTypes: OrganizationType[]) => {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (!req.user || !allowedOrgTypes.includes(req.user.orgType)) {
-      return next(new ApiError(403, 'Forbidden: Invalid Organization Workspace access'));
+/**
+ * Restricts access to specified RBAC roles
+ */
+export const restrictTo = (...allowedRoles: UserRole[]) => {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      return next(new ApiError(401, 'Authentication required.'));
     }
-    next();
-  };
-};
 
-// Guard by Roles
-export const authorizeRoles = (...roles: UserRole[]) => {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (!req.user || !roles.includes(req.user.role)) {
-      return next(new ApiError(403, 'Forbidden: Insufficient role permissions'));
+    if (!allowedRoles.includes(req.user.role)) {
+      return next(
+        new ApiError(
+          403,
+          `Forbidden: Role '${req.user.role}' is not authorized to perform this operation.`
+        )
+      );
     }
+
     next();
   };
 };

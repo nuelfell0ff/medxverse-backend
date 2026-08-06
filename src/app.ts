@@ -1,29 +1,44 @@
-import express, { Application } from 'express';
+import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
 import morgan from 'morgan';
-import { errorHandler } from './middlewares/errorHandler.js';
-import authRoutes from './modules/auth/auth.routes.js';
+import { env } from './config/env.js';
+import { globalErrorHandler, notFoundHandler } from './middlewares/error.middleware.js';
+import v1Router from './routes/index.js';
 
 const app: Application = express();
 
-app.use(helmet());
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || '*' }));
+// Middleware Setup
+app.use(
+  cors({
+    origin: env.CORS_ORIGIN,
+    credentials: true,
+  })
+);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-if (process.env.NODE_ENV === 'development') {
+if (env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
+} else {
+  app.use(morgan('combined'));
 }
 
-// Routes
-app.use('/api/v1/auth', authRoutes);
-
-// Health Check
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', system: 'MedxVerse Multi-Tenant Engine' });
+// Health Check Route
+app.get('/health', (_req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'ok',
+    system: 'MedxVerse Core API',
+    environment: env.NODE_ENV,
+    timestamp: new Date().toISOString(),
+  });
 });
 
-app.use(errorHandler);
+// Primary V1 API Routes
+app.use('/api/v1', v1Router);
+
+// 404 and Global Error Middleware
+app.use(notFoundHandler);
+app.use(globalErrorHandler);
 
 export default app;

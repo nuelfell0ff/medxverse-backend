@@ -1,23 +1,63 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { IOrganization, OrganizationType } from './organization.types.js';
-
-export interface IOrganizationDocument extends Omit<IOrganization, '_id'>, Document {}
+import { Schema, model } from 'mongoose';
+import { OrgType } from '../../constants/roles.enum.js';
+import { IOrganizationDocument } from './organization.types.js';
 
 const organizationSchema = new Schema<IOrganizationDocument>(
   {
-    name: { type: String, required: true, trim: true },
-    code: { type: String, required: true, unique: true, uppercase: true, trim: true },
+    name: {
+      type: String,
+      required: [true, 'Organization name is required'],
+      trim: true,
+    },
     type: {
       type: String,
-      enum: Object.values(OrganizationType),
-      required: true,
+      enum: Object.values(OrgType),
+      required: [true, 'Organization type (HOSPITAL or HMO) is required'],
+      index: true,
     },
-    email: { type: String, required: true, lowercase: true, trim: true },
-    phone: { type: String, required: true, trim: true },
-    address: { type: String, trim: true },
-    isActive: { type: Boolean, default: true },
+    code: {
+      type: String,
+      required: [true, 'Organization unique code is required'],
+      unique: true,
+      uppercase: true,
+      trim: true,
+      index: true,
+    },
+    email: {
+      type: String,
+      required: [true, 'Organization primary email is required'],
+      lowercase: true,
+      trim: true,
+    },
+    phone: {
+      type: String,
+      required: [true, 'Organization contact phone number is required'],
+      trim: true,
+    },
+    address: {
+      type: String,
+      trim: true,
+    },
+    logoUrl: {
+      type: String,
+      trim: true,
+    },
+    registrationNumber: {
+      type: String,
+      trim: true,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-export const Organization = mongoose.model<IOrganizationDocument>('Organization', organizationSchema);
+export const Organization = model<IOrganizationDocument>(
+  'Organization',
+  organizationSchema
+);

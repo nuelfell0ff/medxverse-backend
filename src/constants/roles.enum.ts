@@ -1,0 +1,46 @@
+export enum OrgType {
+  HOSPITAL = 'HOSPITAL',
+  HMO = 'HMO',
+}
+
+export enum UserRole {
+  // Super Admin
+  SYSTEM_ADMIN = 'SYSTEM_ADMIN',
+
+  // Hospital System Roles
+  HOSPITAL_ADMIN = 'HOSPITAL_ADMIN',
+  DOCTOR = 'DOCTOR',
+  NURSE = 'NURSE',
+  PHARMACIST = 'PHARMACIST',
+  LAB_TECHNICIAN = 'LAB_TECHNICIAN',
+  RADIOLOGIST = 'RADIOLOGIST',
+  BILLING_OFFICER = 'BILLING_OFFICER',
+  RECEPTIONIST = 'RECEPTIONIST',
+
+  // HMO Portal Roles
+  HMO_ADMIN = 'HMO_ADMIN',
+  HMO_CLAIMS_OFFICER = 'HMO_CLAIMS_OFFICER',
+  HMO_MEDICAL_OFFICER = 'HMO_MEDICAL_OFFICER',
+  HMO_OFFICER = 'HMO_OFFICER',
+
+  // Patient / Enrollee
+  PATIENT = 'PATIENT',
+}
+
+export const HOSPITAL_ROLES: UserRole[] = [
+  UserRole.HOSPITAL_ADMIN,
+  UserRole.DOCTOR,
+  UserRole.NURSE,
+  UserRole.PHARMACIST,
+  UserRole.LAB_TECHNICIAN,
+  UserRole.RADIOLOGIST,
+  UserRole.BILLING_OFFICER,
+  UserRole.RECEPTIONIST,
+];
+
+export const HMO_ROLES: UserRole[] = [
+  UserRole.HMO_ADMIN,
+  UserRole.HMO_CLAIMS_OFFICER,
+  UserRole.HMO_MEDICAL_OFFICER,
+  UserRole.HMO_OFFICER
+];

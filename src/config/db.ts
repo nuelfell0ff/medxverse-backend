@@ -1,11 +1,23 @@
 import mongoose from 'mongoose';
+import { env } from './env.js';
 
-export const connectDB = async () => {
+export const connectDB = async (): Promise<void> => {
   try {
-    const conn = await mongoose.connect(process.env.MONGO_URI || '');
-    console.log(`📡 MongoDB Connected: ${conn.connection.host}`);
+    mongoose.set('strictQuery', true);
+
+    const conn = await mongoose.connect(env.MONGO_URI);
+
+    console.log(`[Database] MongoDB Connected: ${conn.connection.host}`);
+
+    mongoose.connection.on('error', (err) => {
+      console.error(`[Database Error] Connection error: ${err}`);
+    });
+
+    mongoose.connection.on('disconnected', () => {
+      console.warn('[Database Warning] MongoDB disconnected. Attempting reconnect...');
+    });
   } catch (error) {
-    console.error(`❌ Database Connection Error: ${error}`);
+    console.error(`[Database Critical] Failed to connect to MongoDB: ${error}`);
     process.exit(1);
   }
 };
