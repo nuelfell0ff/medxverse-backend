@@ -5,6 +5,15 @@ export enum AccountType {
   HMO = 'HMO',
 }
 
+// Added missing JWT payload interface
+export interface AuthUserPayload {
+  id: string;
+  email: string;
+  accountType: AccountType;
+  role?: string;
+  hospitalId?: string;
+}
+
 export interface IAccount {
   name: string;
   email: string;
