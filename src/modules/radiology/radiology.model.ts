@@ -1,36 +1,63 @@
 import { Schema, model } from 'mongoose';
-import { IRadiologyRequest } from './radiology.types.js';
+import {
+  IRadiologyOrderDocument,
+  ImagingModality,
+  RadiologyOrderStatus,
+  PriorityLevel,
+} from './radiology.types.js';
 
-const radiologyRequestSchema = new Schema<IRadiologyRequest>(
+const PacsMetadataSchema = new Schema(
   {
-    hospitalId: { type: Schema.Types.ObjectId, required: true, ref: 'Hospital', index: true },
-    patientId: { type: Schema.Types.ObjectId, required: true, ref: 'Patient', index: true },
-    requestedBy: { type: Schema.Types.ObjectId, required: true, ref: 'User' },
-    radiologistId: { type: Schema.Types.ObjectId, ref: 'User' },
-    imagingType: {
+    studyInstanceUid: { type: String, trim: true },
+    seriesInstanceUid: { type: String, trim: true },
+    imageCount: { type: Number, default: 0 },
+    dicomViewerUrl: { type: String, trim: true },
+    dicomFileKeys: [{ type: String, trim: true }],
+  },
+  { _id: false }
+);
+
+const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
+  {
+    hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
+    patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
+    orderingDoctorId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    radiologistId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    modality: {
       type: String,
-      enum: ['X_RAY', 'MRI', 'CT_SCAN', 'ULTRASOUND', 'MAMMOGRAM'],
+      enum: Object.values(ImagingModality),
       required: true,
+      index: true,
     },
-    bodyPart: { type: String, required: true },
-    clinicalIndication: { type: String, required: true },
+    procedureName: { type: String, required: true, trim: true },
+    bodyPart: { type: String, required: true, trim: true },
+    clinicalIndication: { type: String, required: true, trim: true },
     priority: {
       type: String,
-      enum: ['ROUTINE', 'URGENT', 'EMERGENCY'],
-      default: 'ROUTINE',
+      enum: Object.values(PriorityLevel),
+      default: PriorityLevel.ROUTINE,
+      required: true,
     },
     status: {
       type: String,
-      enum: ['ORDERED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
-      default: 'ORDERED',
+      enum: Object.values(RadiologyOrderStatus),
+      default: RadiologyOrderStatus.REQUESTED,
+      required: true,
       index: true,
     },
-    findings: { type: String },
-    impression: { type: String },
-    imageUrls: [{ type: String }],
+    pacsMetadata: { type: PacsMetadataSchema },
+    findings: { type: String, trim: true },
+    impression: { type: String, trim: true },
+    radiologistNotes: { type: String, trim: true },
     reportedAt: { type: Date },
+    cancellationReason: { type: String, trim: true },
   },
   { timestamps: true }
 );
 
-export const RadiologyRequestModel = model<IRadiologyRequest>('RadiologyRequest', radiologyRequestSchema);
+RadiologyOrderSchema.index({ hospitalId: 1, modality: 1, status: 1 });
+
+export const RadiologyOrderModel = model<IRadiologyOrderDocument>(
+  'RadiologyOrder',
+  RadiologyOrderSchema
+);

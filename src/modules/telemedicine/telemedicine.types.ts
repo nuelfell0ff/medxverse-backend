@@ -1,0 +1,83 @@
+import { Document, Types } from 'mongoose';
+
+export enum ConsultationType {
+  VIDEO = 'VIDEO',
+  VOICE = 'VOICE',
+  CHAT = 'CHAT',
+}
+
+export enum ConsultationStatus {
+  WAITING_ROOM = 'WAITING_ROOM',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+  NO_SHOW = 'NO_SHOW',
+}
+
+export interface ITelemedicineSession {
+  hospitalId: Types.ObjectId;
+  patientId: Types.ObjectId;
+  doctorId: Types.ObjectId;
+  consultationType: ConsultationType;
+  status: ConsultationStatus;
+  scheduledStartTime: Date;
+  joinedWaitingRoomAt?: Date;
+  actualStartTime?: Date;
+  endTime?: Date;
+  durationMinutes?: number;
+  meetingRoomId: string;
+  meetingUrl?: string;
+  chiefComplaint?: string;
+  clinicalNotes?: string;
+  recordingUrl?: string;
+}
+
+export interface ITelemedicineSessionDocument extends ITelemedicineSession, Document {
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ITelemedicineMessage {
+  hospitalId: Types.ObjectId;
+  sessionId: Types.ObjectId;
+  senderId: Types.ObjectId;
+  senderModel: 'User' | 'Patient';
+  messageText: string;
+  attachmentUrl?: string;
+  sentAt: Date;
+}
+
+export interface ITelemedicineMessageDocument extends ITelemedicineMessage, Document {}
+
+export interface CreateTelemedicineSessionInput {
+  hospitalId: string;
+  patientId: string;
+  doctorId: string;
+  consultationType: ConsultationType;
+  scheduledStartTime: Date;
+  chiefComplaint?: string;
+}
+
+export interface UpdateSessionStatusInput {
+  status: ConsultationStatus;
+  clinicalNotes?: string;
+  recordingUrl?: string;
+}
+
+export interface SendMessageInput {
+  hospitalId: string;
+  sessionId: string;
+  senderId: string;
+  senderModel: 'User' | 'Patient';
+  messageText: string;
+  attachmentUrl?: string;
+}
+
+export interface GetSessionsQuery {
+  page?: number;
+  limit?: number;
+  patientId?: string;
+  doctorId?: string;
+  status?: ConsultationStatus;
+  consultationType?: ConsultationType;
+}

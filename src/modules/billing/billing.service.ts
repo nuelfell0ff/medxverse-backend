@@ -1,190 +1,172 @@
 import { Types } from 'mongoose';
-import { BillingInvoiceModel } from './billing.model.js';
+import { InvoiceModel } from './billing.model.js';
 import {
-  ICreateInvoiceDTO,
-  IRecordPaymentDTO,
-  IInvoiceQueryFilters,
+  CreateInvoiceInput,
+  GetInvoicesQuery,
+  IInvoiceDocument,
   InvoiceStatus,
-  IBillingInvoiceDocument,
+  RecordPaymentInput,
 } from './billing.types.js';
 
 export class BillingService {
-  private static generateInvoiceNumber(): string {
+  private generateInvoiceNumber(): string {
+    const prefix = 'INV';
     const timestamp = Date.now().toString().slice(-6);
     const random = Math.floor(1000 + Math.random() * 9000);
-    return `INV-${timestamp}-${random}`;
+    return `${prefix}-${timestamp}-${random}`;
   }
 
-  static async createInvoice(
-    hospitalId: string,
-    userId: string,
-    dto: ICreateInvoiceDTO
-  ): Promise<IBillingInvoiceDocument> {
-    const items = dto.items.map((item) => ({
+  private generateTransactionId(): string {
+    const prefix = 'TXN';
+    const timestamp = Date.now().toString().slice(-6);
+    const random = Math.floor(1000 + Math.random() * 9000);
+    return `${prefix}-${timestamp}-${random}`;
+  }
+
+  public async createInvoice(input: CreateInvoiceInput): Promise<IInvoiceDocument> {
+    const formattedItems = input.items.map((item) => ({
       ...item,
       totalPrice: item.quantity * item.unitPrice,
     }));
 
+    const subtotal = formattedItems.reduce((acc, curr) => acc + curr.totalPrice, 0);
+    const discount = input.discount || 0;
+    const tax = input.tax || 0;
+    const totalAmount = Math.max(0, subtotal - discount + tax);
     const invoiceNumber = this.generateInvoiceNumber();
 
-    const invoice = new BillingInvoiceModel({
-      hospitalId: new Types.ObjectId(hospitalId),
-      patientId: new Types.ObjectId(dto.patientId),
+    return InvoiceModel.create({
+      hospitalId: input.hospitalId,
+      patientId: input.patientId,
       invoiceNumber,
-      items,
-      discount: dto.discount || 0,
-      tax: dto.tax || 0,
-      dueDate: dto.dueDate,
-      notes: dto.notes,
-      createdBy: new Types.ObjectId(userId),
-      payments: [],
+      items: formattedItems,
+      subtotal,
+      discount,
+      tax,
+      totalAmount,
+      amountPaid: 0,
+      balanceDue: totalAmount,
+      status: InvoiceStatus.PENDING,
+      dueDate: input.dueDate,
+      createdById: input.createdById,
+      notes: input.notes,
     });
-
-    return await invoice.save();
   }
 
-  static async getInvoices(hospitalId: string, filters: IInvoiceQueryFilters) {
-    const page = Number(filters.page) || 1;
-    const limit = Number(filters.limit) || 10;
+  public async getInvoices(
+    hospitalId: string,
+    query: GetInvoicesQuery
+  ): Promise<{ invoices: IInvoiceDocument[]; total: number; page: number; totalPages: number }> {
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(50, Math.max(1, query.limit || 20));
     const skip = (page - 1) * limit;
 
-    const query: Record<string, any> = {
-      hospitalId: new Types.ObjectId(hospitalId),
-    };
+    const filter: Record<string, unknown> = { hospitalId };
 
-    if (filters.patientId) {
-      query.patientId = new Types.ObjectId(filters.patientId);
-    }
+    if (query.status) filter.status = query.status;
+    if (query.patientId) filter.patientId = query.patientId;
 
-    if (filters.status) {
-      query.status = filters.status;
-    }
-
-    if (filters.startDate || filters.endDate) {
-      query.createdAt = {};
-      if (filters.startDate) query.createdAt.$gte = new Date(filters.startDate);
-      if (filters.endDate) query.createdAt.$lte = new Date(filters.endDate);
+    if (query.startDate || query.endDate) {
+      filter.createdAt = {};
+      if (query.startDate) {
+        (filter.createdAt as Record<string, unknown>).$gte = new Date(query.startDate);
+      }
+      if (query.endDate) {
+        (filter.createdAt as Record<string, unknown>).$lte = new Date(query.endDate);
+      }
     }
 
     const [invoices, total] = await Promise.all([
-      BillingInvoiceModel.find(query)
-        .populate('patientId', 'firstName lastName email phone')
-        .populate('createdBy', 'firstName lastName')
+      InvoiceModel.find(filter)
+        .populate('patientId', 'firstName lastName mrn phone email')
+        .populate('createdById', 'firstName lastName role')
+        .populate('payments.receivedBy', 'firstName lastName role')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .lean(),
-      BillingInvoiceModel.countDocuments(query),
+        .exec(),
+      InvoiceModel.countDocuments(filter),
     ]);
 
     return {
       invoices,
-      pagination: {
-        total,
-        page,
-        limit,
-        pages: Math.ceil(total / limit),
-      },
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
     };
   }
 
-  static async getInvoiceById(hospitalId: string, invoiceId: string): Promise<IBillingInvoiceDocument> {
-    const invoice = await BillingInvoiceModel.findOne({
-      _id: new Types.ObjectId(invoiceId),
-      hospitalId: new Types.ObjectId(hospitalId),
-    })
-      .populate('patientId', 'firstName lastName email phone gender dob')
-      .populate('createdBy', 'firstName lastName email')
-      .populate('payments.paidBy', 'firstName lastName');
-
-    if (!invoice) {
-      throw new Error('Invoice not found');
-    }
-
-    return invoice;
+  public async getInvoiceById(invoiceId: string, hospitalId: string): Promise<IInvoiceDocument | null> {
+    return InvoiceModel.findOne({ _id: invoiceId, hospitalId })
+      .populate('patientId', 'firstName lastName mrn phone email address')
+      .populate('createdById', 'firstName lastName role')
+      .populate('payments.receivedBy', 'firstName lastName role')
+      .exec();
   }
 
-  static async recordPayment(
-    hospitalId: string,
+  public async recordPayment(
     invoiceId: string,
-    userId: string,
-    dto: IRecordPaymentDTO
-  ): Promise<IBillingInvoiceDocument> {
-    const invoice = await BillingInvoiceModel.findOne({
-      _id: new Types.ObjectId(invoiceId),
-      hospitalId: new Types.ObjectId(hospitalId),
-    });
-
+    hospitalId: string,
+    input: RecordPaymentInput
+  ): Promise<IInvoiceDocument | null> {
+    const invoice = await InvoiceModel.findOne({ _id: invoiceId, hospitalId });
     if (!invoice) {
-      throw new Error('Invoice not found');
-    }
-
-    if (invoice.status === InvoiceStatus.CANCELLED) {
-      throw new Error('Cannot record payment for a cancelled invoice');
+      throw new Error('Invoice not found.');
     }
 
     if (invoice.status === InvoiceStatus.PAID) {
-      throw new Error('Invoice is already fully paid');
+      throw new Error('Invoice is already fully paid.');
     }
 
-    if (dto.amount > invoice.balanceDue) {
-      throw new Error(`Payment amount exceeds balance due of $${invoice.balanceDue.toFixed(2)}`);
+    if (input.amount > invoice.balanceDue) {
+      throw new Error(`Payment amount (${input.amount}) exceeds balance due (${invoice.balanceDue}).`);
     }
 
-    invoice.payments.push({
-      amount: dto.amount,
-      paymentMethod: dto.paymentMethod,
-      transactionRef: dto.transactionRef,
+    const paymentRecord = {
+      transactionId: this.generateTransactionId(),
+      amount: input.amount,
+      paymentMethod: input.paymentMethod,
+      paymentReference: input.paymentReference,
+      receivedBy: new Types.ObjectId(input.receivedBy),
       paidAt: new Date(),
-      paidBy: new Types.ObjectId(userId),
-      notes: dto.notes,
-    });
+      notes: input.notes,
+    };
 
-    return await invoice.save();
-  }
+    const newAmountPaid = invoice.amountPaid + input.amount;
+    const newBalanceDue = Math.max(0, invoice.totalAmount - newAmountPaid);
+    const newStatus =
+      newBalanceDue === 0 ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID;
 
-  static async cancelInvoice(
-    hospitalId: string,
-    invoiceId: string,
-    reason?: string
-  ): Promise<IBillingInvoiceDocument> {
-    const invoice = await BillingInvoiceModel.findOne({
-      _id: new Types.ObjectId(invoiceId),
-      hospitalId: new Types.ObjectId(hospitalId),
-    });
-
-    if (!invoice) {
-      throw new Error('Invoice not found');
-    }
-
-    if (invoice.amountPaid > 0) {
-      throw new Error('Cannot cancel an invoice with recorded payments');
-    }
-
-    invoice.status = InvoiceStatus.CANCELLED;
-    if (reason) {
-      invoice.notes = invoice.notes ? `${invoice.notes}\nCancellation Reason: ${reason}` : `Cancellation Reason: ${reason}`;
-    }
-
-    return await invoice.save();
-  }
-
-  static async getRevenueSummary(hospitalId: string) {
-    const matchHospital = { hospitalId: new Types.ObjectId(hospitalId) };
-
-    const summary = await BillingInvoiceModel.aggregate([
-      { $match: matchHospital },
+    return InvoiceModel.findOneAndUpdate(
+      { _id: invoiceId, hospitalId },
       {
-        $group: {
-          _id: null,
-          totalBilled: { $sum: '$totalAmount' },
-          totalCollected: { $sum: '$amountPaid' },
-          totalOutstanding: { $sum: '$balanceDue' },
-          totalInvoices: { $sum: 1 },
+        $set: {
+          amountPaid: newAmountPaid,
+          balanceDue: newBalanceDue,
+          status: newStatus,
+        },
+        $push: { payments: paymentRecord },
+      },
+      { new: true }
+    ).exec();
+  }
+
+  public async cancelInvoice(
+    invoiceId: string,
+    hospitalId: string,
+    reason?: string
+  ): Promise<IInvoiceDocument | null> {
+    return InvoiceModel.findOneAndUpdate(
+      { _id: invoiceId, hospitalId, status: InvoiceStatus.PENDING },
+      {
+        $set: {
+          status: InvoiceStatus.CANCELLED,
+          notes: reason ? `Cancelled: ${reason}` : 'Cancelled',
         },
       },
-    ]);
-
-    return summary[0] || { totalBilled: 0, totalCollected: 0, totalOutstanding: 0, totalInvoices: 0 };
+      { new: true }
+    ).exec();
   }
 }
+
+export const billingService = new BillingService();

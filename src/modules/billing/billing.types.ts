@@ -1,97 +1,105 @@
 import { Document, Types } from 'mongoose';
 
-export enum InvoiceStatus {
-  DRAFT = 'DRAFT',
-  PENDING = 'PENDING',
-  PARTIALLY_PAID = 'PARTIALLY_PAID',
-  PAID = 'PAID',
-  CANCELLED = 'CANCELLED',
-  REFUNDED = 'REFUNDED',
-}
-
 export enum PaymentMethod {
   CASH = 'CASH',
   CARD = 'CARD',
   BANK_TRANSFER = 'BANK_TRANSFER',
   INSURANCE = 'INSURANCE',
   MOBILE_MONEY = 'MOBILE_MONEY',
-}
-
-export enum ItemCategory {
-  CONSULTATION = 'CONSULTATION',
-  LAB_TEST = 'LAB_TEST',
-  PHARMACY = 'PHARMACY',
-  PROCEDURE = 'PROCEDURE',
-  ROOM_CHARGE = 'ROOM_CHARGE',
   OTHER = 'OTHER',
 }
 
-export interface IInvoiceItem {
+export enum InvoiceStatus {
+  PENDING = 'PENDING',
+  PARTIALLY_PAID = 'PARTIALLY_PAID',
+  PAID = 'PAID',
+  REFUNDED = 'REFUNDED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum LineItemCategory {
+  CONSULTATION = 'CONSULTATION',
+  LABORATORY = 'LABORATORY',
+  RADIOLOGY = 'RADIOLOGY',
+  PHARMACY = 'PHARMACY',
+  SURGERY = 'SURGERY',
+  BED_CHARGE = 'BED_CHARGE',
+  PROCEDURE = 'PROCEDURE',
+  MISCELLANEOUS = 'MISCELLANEOUS',
+}
+
+export interface IInvoiceLineItem {
   description: string;
-  category: ItemCategory;
+  category: LineItemCategory;
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  referenceId?: string; // Links to LabOrder, Prescription, Encounter, etc.
 }
 
 export interface IPaymentRecord {
-  _id?: Types.ObjectId;
+  transactionId: string;
   amount: number;
   paymentMethod: PaymentMethod;
-  transactionRef?: string;
+  paymentReference?: string;
+  receivedBy: Types.ObjectId;
   paidAt: Date;
-  paidBy: Types.ObjectId;
   notes?: string;
 }
 
-export interface IBillingInvoice {
+export interface IInvoice {
   hospitalId: Types.ObjectId;
   patientId: Types.ObjectId;
   invoiceNumber: string;
-  items: IInvoiceItem[];
+  status: InvoiceStatus;
+  items: IInvoiceLineItem[];
   subtotal: number;
   discount: number;
   tax: number;
   totalAmount: number;
   amountPaid: number;
   balanceDue: number;
-  status: InvoiceStatus;
-  dueDate: Date;
   payments: IPaymentRecord[];
+  dueDate?: Date;
+  createdById: Types.ObjectId;
   notes?: string;
-  createdBy: Types.ObjectId;
-  createdAt?: Date;
-  updatedAt?: Date;
 }
 
-export interface IBillingInvoiceDocument extends IBillingInvoice, Document {}
+export interface IInvoiceDocument extends IInvoice, Document {
+  createdAt: Date;
+  updatedAt: Date;
+}
 
-export interface ICreateInvoiceDTO {
+export interface CreateInvoiceInput {
+  hospitalId: string;
   patientId: string;
-  items: Array<{
+  items: {
     description: string;
-    category: ItemCategory;
+    category: LineItemCategory;
     quantity: number;
     unitPrice: number;
-  }>;
+    referenceId?: string;
+  }[];
   discount?: number;
   tax?: number;
-  dueDate: Date;
+  dueDate?: Date;
+  createdById: string;
   notes?: string;
 }
 
-export interface IRecordPaymentDTO {
+export interface RecordPaymentInput {
   amount: number;
   paymentMethod: PaymentMethod;
-  transactionRef?: string;
+  paymentReference?: string;
+  receivedBy: string;
   notes?: string;
 }
 
-export interface IInvoiceQueryFilters {
-  patientId?: string;
-  status?: InvoiceStatus;
-  startDate?: string;
-  endDate?: string;
+export interface GetInvoicesQuery {
   page?: number;
   limit?: number;
+  status?: InvoiceStatus;
+  patientId?: string;
+  startDate?: string;
+  endDate?: string;
 }

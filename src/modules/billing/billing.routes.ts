@@ -1,45 +1,15 @@
 import { Router } from 'express';
-import { BillingController } from './billing.controller.js';
-import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
+import { billingController } from './billing.controller.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
 router.use(authenticate);
 
-router.post(
-  '/',
-  authorize('ADMIN', 'ACCOUNTANT', 'RECEPTIONIST'),
-  BillingController.createInvoice
-);
-
-router.get(
-  '/',
-  authorize('ADMIN', 'ACCOUNTANT', 'DOCTOR', 'RECEPTIONIST'),
-  BillingController.getInvoices
-);
-
-router.get(
-  '/summary',
-  authorize('ADMIN', 'ACCOUNTANT'),
-  BillingController.getRevenueSummary
-);
-
-router.get(
-  '/:id',
-  authorize('ADMIN', 'ACCOUNTANT', 'DOCTOR', 'RECEPTIONIST'),
-  BillingController.getInvoiceById
-);
-
-router.post(
-  '/:id/payments',
-  authorize('ADMIN', 'ACCOUNTANT'),
-  BillingController.recordPayment
-);
-
-router.patch(
-  '/:id/cancel',
-  authorize('ADMIN', 'ACCOUNTANT'),
-  BillingController.cancelInvoice
-);
+router.post('/', (req, res, next) => billingController.createInvoice(req, res, next));
+router.get('/', (req, res, next) => billingController.getInvoices(req, res, next));
+router.get('/:id', (req, res, next) => billingController.getInvoiceById(req, res, next));
+router.post('/:id/payments', (req, res, next) => billingController.recordPayment(req, res, next));
+router.patch('/:id/cancel', (req, res, next) => billingController.cancelInvoice(req, res, next));
 
 export default router;

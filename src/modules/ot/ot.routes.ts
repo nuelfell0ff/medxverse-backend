@@ -1,0 +1,18 @@
+import { Router } from 'express';
+import { otController } from './ot.controller.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
+
+const router = Router();
+
+router.use(authenticate);
+
+router.post('/', (req, res, next) => otController.createCase(req, res, next));
+router.get('/', (req, res, next) => otController.getCases(req, res, next));
+router.get('/:id', (req, res, next) => otController.getCaseById(req, res, next));
+router.patch('/:id/status', (req, res, next) => otController.updateStatus(req, res, next));
+router.patch('/:id/team', (req, res, next) => otController.updateSurgicalTeam(req, res, next));
+router.patch('/:id/post-op-notes', (req, res, next) =>
+  otController.updatePostOpNotes(req, res, next)
+);
+
+export default router;

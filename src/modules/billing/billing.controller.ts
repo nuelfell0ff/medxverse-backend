@@ -1,105 +1,136 @@
 import { Request, Response, NextFunction } from 'express';
-import { BillingService } from './billing.service.js';
-import { IInvoiceQueryFilters } from './billing.types.js';
+import { billingService } from './billing.service.js';
+import { InvoiceStatus, LineItemCategory, PaymentMethod } from './billing.types.js';
+
+export interface AuthenticatedRequest extends Request {
+  user: {
+    _id: string;
+    hospitalId: string;
+    [key: string]: unknown;
+  };
+}
 
 export class BillingController {
-  static async createInvoice(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async createInvoice(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = (req as any).user.hospitalId as string;
-      const userId = (req as any).user._id as string;
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
+      const createdById = authReq.user._id;
 
-      const invoice = await BillingService.createInvoice(hospitalId, userId, req.body);
+      const { patientId, items, discount, tax, dueDate, notes } = req.body;
 
-      res.status(201).json({
-        success: true,
-        message: 'Invoice created successfully',
-        data: invoice,
+      const invoice = await billingService.createInvoice({
+        hospitalId,
+        patientId,
+        items: items as {
+          description: string;
+          category: LineItemCategory;
+          quantity: number;
+          unitPrice: number;
+          referenceId?: string;
+        }[],
+        discount,
+        tax,
+        dueDate: dueDate ? new Date(dueDate) : undefined,
+        createdById,
+        notes,
       });
+
+      res.status(201).json({ success: true, data: invoice });
     } catch (error) {
       next(error);
     }
   }
 
-  static async getInvoices(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async getInvoices(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = (req as any).user.hospitalId as string;
-      const filters = req.query as unknown as IInvoiceQueryFilters;
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
 
-      const result = await BillingService.getInvoices(hospitalId, filters);
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+      const status = req.query.status as InvoiceStatus | undefined;
+      const patientId = req.query.patientId as string | undefined;
+      const startDate = req.query.startDate as string | undefined;
+      const endDate = req.query.endDate as string | undefined;
 
-      res.status(200).json({
-        success: true,
-        data: result.invoices,
-        pagination: result.pagination,
+      const result = await billingService.getInvoices(hospitalId, {
+        page,
+        limit,
+        status,
+        patientId,
+        startDate,
+        endDate,
       });
+
+      res.status(200).json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
   }
 
-  static async getInvoiceById(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async getInvoiceById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = (req as any).user.hospitalId as string;
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
       const id = req.params.id as string;
 
-      const invoice = await BillingService.getInvoiceById(hospitalId, id);
+      const invoice = await billingService.getInvoiceById(id, hospitalId);
 
-      res.status(200).json({
-        success: true,
-        data: invoice,
-      });
+      if (!invoice) {
+        res.status(404).json({ success: false, message: 'Invoice not found' });
+        return;
+      }
+
+      res.status(200).json({ success: true, data: invoice });
     } catch (error) {
       next(error);
     }
   }
 
-  static async recordPayment(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async recordPayment(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = (req as any).user.hospitalId as string;
-      const userId = (req as any).user._id as string;
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
+      const receivedBy = authReq.user._id;
       const id = req.params.id as string;
 
-      const updatedInvoice = await BillingService.recordPayment(hospitalId, id, userId, req.body);
+      const { amount, paymentMethod, paymentReference, notes } = req.body;
 
-      res.status(200).json({
-        success: true,
-        message: 'Payment recorded successfully',
-        data: updatedInvoice,
+      const updated = await billingService.recordPayment(id, hospitalId, {
+        amount,
+        paymentMethod: paymentMethod as PaymentMethod,
+        paymentReference,
+        receivedBy,
+        notes,
       });
+
+      res.status(200).json({ success: true, data: updated });
     } catch (error) {
       next(error);
     }
   }
 
-  static async cancelInvoice(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async cancelInvoice(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = (req as any).user.hospitalId as string;
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
       const id = req.params.id as string;
+
       const { reason } = req.body;
 
-      const cancelledInvoice = await BillingService.cancelInvoice(hospitalId, id, reason);
+      const updated = await billingService.cancelInvoice(id, hospitalId, reason);
 
-      res.status(200).json({
-        success: true,
-        message: 'Invoice cancelled successfully',
-        data: cancelledInvoice,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+      if (!updated) {
+        res.status(404).json({ success: false, message: 'Invoice not found or cannot be cancelled' });
+        return;
+      }
 
-  static async getRevenueSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const hospitalId = (req as any).user.hospitalId as string;
-      const summary = await BillingService.getRevenueSummary(hospitalId);
-
-      res.status(200).json({
-        success: true,
-        data: summary,
-      });
+      res.status(200).json({ success: true, data: updated });
     } catch (error) {
       next(error);
     }
   }
 }
+
+export const billingController = new BillingController();

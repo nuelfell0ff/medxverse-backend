@@ -1,15 +1,16 @@
 import { Router } from 'express';
-import { RadiologyController } from './radiology.controller.js';
-import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
+import { radiologyController } from './radiology.controller.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
 router.use(authenticate);
 
-router.post('/requests', authorize('HOSPITAL', 'ADMIN', 'DOCTOR'), RadiologyController.createImagingRequest);
-router.get('/requests', authorize('HOSPITAL', 'ADMIN', 'RADIOLOGIST', 'DOCTOR'), RadiologyController.getImagingRequests);
-router.get('/requests/:id', authorize('HOSPITAL', 'ADMIN', 'RADIOLOGIST', 'DOCTOR'), RadiologyController.getImagingRequestById);
-router.patch('/requests/:id/status', authorize('HOSPITAL', 'ADMIN', 'RADIOLOGIST'), RadiologyController.updateStatus);
-router.post('/requests/:id/report', authorize('HOSPITAL', 'ADMIN', 'RADIOLOGIST'), RadiologyController.submitReport);
+router.post('/', (req, res, next) => radiologyController.createOrder(req, res, next));
+router.get('/', (req, res, next) => radiologyController.getOrders(req, res, next));
+router.get('/:id', (req, res, next) => radiologyController.getOrderById(req, res, next));
+router.patch('/:id/pacs', (req, res, next) => radiologyController.updatePacsData(req, res, next));
+router.patch('/:id/report', (req, res, next) => radiologyController.completeReport(req, res, next));
+router.patch('/:id/cancel', (req, res, next) => radiologyController.cancelOrder(req, res, next));
 
 export default router;
