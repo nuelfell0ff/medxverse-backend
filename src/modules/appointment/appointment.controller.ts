@@ -1,6 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { PatientService } from './patient.service.js';
-import { CreatePatientDTO, AddVitalsDTO, GetPatientsQueryDTO } from './patient.types.js';
+import { AppointmentService } from './appointment.service.js';
+import {
+  CreateAppointmentDTO,
+  UpdateAppointmentStatusDTO,
+  GetAppointmentsQueryDTO,
+} from './appointment.types.js';
 
 interface AuthenticatedRequest<Params = Record<string, string>, ResBody = any, ReqBody = any, ReqQuery = any>
   extends Request<Params, ResBody, ReqBody, ReqQuery> {
@@ -10,18 +14,18 @@ interface AuthenticatedRequest<Params = Record<string, string>, ResBody = any, R
   };
 }
 
-export class PatientController {
-  static async register(req: Request, res: Response, next: NextFunction): Promise<void> {
+export class AppointmentController {
+  static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as AuthenticatedRequest<{}, any, CreatePatientDTO>;
+      const authReq = req as AuthenticatedRequest<{}, any, CreateAppointmentDTO>;
       const user = authReq.user!;
       const hospitalId = user.hospitalId || user.id;
 
-      const patient = await PatientService.registerPatient(hospitalId, authReq.body);
+      const appointment = await AppointmentService.createAppointment(hospitalId, authReq.body);
 
       res.status(201).json({
         success: true,
-        data: patient,
+        data: appointment,
       });
     } catch (error: unknown) {
       next(error);
@@ -30,11 +34,11 @@ export class PatientController {
 
   static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as AuthenticatedRequest<{}, any, any, GetPatientsQueryDTO>;
+      const authReq = req as AuthenticatedRequest<{}, any, any, GetAppointmentsQueryDTO>;
       const user = authReq.user!;
       const hospitalId = user.hospitalId || user.id;
 
-      const result = await PatientService.getPatients(hospitalId, authReq.query);
+      const result = await AppointmentService.getAppointments(hospitalId, authReq.query);
 
       res.status(200).json({
         success: true,
@@ -50,35 +54,35 @@ export class PatientController {
       const authReq = req as unknown as AuthenticatedRequest<{ id: string }>;
       const user = authReq.user!;
       const hospitalId = user.hospitalId || user.id;
-      const patientId = req.params.id;
+      const appointmentId = req.params.id;
 
-      const patient = await PatientService.getPatientById(hospitalId, patientId);
+      const appointment = await AppointmentService.getAppointmentById(hospitalId, appointmentId);
 
       res.status(200).json({
         success: true,
-        data: patient,
+        data: appointment,
       });
     } catch (error: unknown) {
       next(error);
     }
   }
 
-  static async recordVitals(
-    req: Request<{ id: string }, any, AddVitalsDTO>,
+  static async updateStatus(
+    req: Request<{ id: string }, any, UpdateAppointmentStatusDTO>,
     res: Response,
     next: NextFunction
   ): Promise<void> {
     try {
-      const authReq = req as unknown as AuthenticatedRequest<{ id: string }, any, AddVitalsDTO>;
+      const authReq = req as unknown as AuthenticatedRequest<{ id: string }, any, UpdateAppointmentStatusDTO>;
       const user = authReq.user!;
       const hospitalId = user.hospitalId || user.id;
-      const patientId = req.params.id;
+      const appointmentId = req.params.id;
 
-      const patient = await PatientService.addVitals(hospitalId, patientId, user.id, authReq.body);
+      const updated = await AppointmentService.updateStatus(hospitalId, appointmentId, authReq.body);
 
       res.status(200).json({
         success: true,
-        data: patient,
+        data: updated,
       });
     } catch (error: unknown) {
       next(error);

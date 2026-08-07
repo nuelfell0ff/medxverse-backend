@@ -6,25 +6,50 @@ export enum Gender {
   OTHER = 'OTHER',
 }
 
-export enum BloodGroup {
-  A_POSITIVE = 'A+',
-  A_NEGATIVE = 'A-',
-  B_POSITIVE = 'B+',
-  B_NEGATIVE = 'B-',
-  AB_POSITIVE = 'AB+',
-  AB_NEGATIVE = 'AB-',
-  O_POSITIVE = 'O+',
-  O_NEGATIVE = 'O-',
+export enum AllergySeverity {
+  MILD = 'MILD',
+  MODERATE = 'MODERATE',
+  SEVERE = 'SEVERE',
 }
 
-export enum PatientCategory {
-  SELF_PAY = 'SELF_PAY',
-  HMO = 'HMO',
+export enum MedicalHistoryStatus {
+  ACTIVE = 'ACTIVE',
+  RESOLVED = 'RESOLVED',
+  CHRONIC = 'CHRONIC',
+}
+
+export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-';
+export type Genotype = 'AA' | 'AS' | 'SS' | 'AC';
+
+export interface IVitals {
+  temperature?: number;
+  systolicBp?: number;
+  diastolicBp?: number;
+  pulseRate?: number;
+  respiratoryRate?: number;
+  spo2?: number;
+  weight?: number;
+  height?: number;
+  recordedBy: Types.ObjectId;
+  recordedAt: Date;
+}
+
+export interface IAllergy {
+  allergen: string;
+  reaction: string;
+  severity: AllergySeverity;
+}
+
+export interface IMedicalHistory {
+  condition: string;
+  diagnosedDate?: Date;
+  status: MedicalHistoryStatus;
+  notes?: string;
 }
 
 export interface IPatient {
   hospitalId: Types.ObjectId;
-  mrn: string; // Medical Record Number (e.g., STN-PAT-00001)
+  mrn: string;
   firstName: string;
   lastName: string;
   dateOfBirth: Date;
@@ -33,15 +58,14 @@ export interface IPatient {
   email?: string;
   address?: string;
   bloodGroup?: BloodGroup;
-  genotype?: string;
-  allergies?: string[];
-
-  // HMO Coverage Details
-  category: PatientCategory;
-  hmoId?: Types.ObjectId; // References an Account of type HMO
-  hmoPolicyNumber?: string;
-
-  isActive: boolean;
+  genotype?: Genotype;
+  policyNumber?: string;
+  hmoId?: Types.ObjectId;
+  vitalsHistory: IVitals[];
+  allergies: IAllergy[];
+  medicalHistory: IMedicalHistory[];
+  isFlagged: boolean;
+  flagReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -59,13 +83,24 @@ export interface CreatePatientDTO {
   email?: string;
   address?: string;
   bloodGroup?: BloodGroup;
-  genotype?: string;
-  allergies?: string[];
-  category: PatientCategory;
+  genotype?: Genotype;
+  policyNumber?: string;
   hmoId?: string;
-  hmoPolicyNumber?: string;
 }
 
-export interface UpdatePatientDTO extends Partial<CreatePatientDTO> {
-  isActive?: boolean;
+export interface AddVitalsDTO {
+  temperature?: number;
+  systolicBp?: number;
+  diastolicBp?: number;
+  pulseRate?: number;
+  respiratoryRate?: number;
+  spo2?: number;
+  weight?: number;
+  height?: number;
+}
+
+export interface GetPatientsQueryDTO {
+  search?: string;
+  page?: string;
+  limit?: string;
 }

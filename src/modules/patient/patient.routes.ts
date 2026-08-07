@@ -1,17 +1,14 @@
 import { Router } from 'express';
 import { PatientController } from './patient.controller.js';
-import { protect, restrictTo } from '../../middlewares/auth.middleware.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
-router.use(protect, restrictTo('HOSPITAL'));
+router.use(authenticate);
 
-router.route('/')
-  .post(PatientController.createPatient)
-  .get(PatientController.getPatients);
-
-router.route('/:id')
-  .get(PatientController.getPatientById)
-  .patch(PatientController.updatePatient);
+router.post('/', PatientController.register);
+router.get('/', PatientController.list);
+router.get('/:id', PatientController.getById);
+router.post('/:id/vitals', PatientController.recordVitals);
 
 export default router;
