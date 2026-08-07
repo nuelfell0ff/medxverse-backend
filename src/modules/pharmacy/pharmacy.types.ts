@@ -1,126 +1,116 @@
 import { Document, Types } from 'mongoose';
 
-export enum MedicationCategory {
-  TABLET = 'TABLET',
-  CAPSULE = 'CAPSULE',
-  SYRUP = 'SYRUP',
-  INJECTION = 'INJECTION',
-  CREAM = 'CREAM',
-  DROPS = 'DROPS',
-  INHALER = 'INHALER',
+export enum DrugCategory {
+  ANTIBIOTICS = 'ANTIBIOTICS',
+  ANALGESICS = 'ANALGESICS',
+  ANTIHYPERTENSIVES = 'ANTIHYPERTENSIVES',
+  ANTIDIABETICS = 'ANTIDIABETICS',
+  VITAMINS = 'VITAMINS',
+  ICU_CRITICAL = 'ICU_CRITICAL',
   OTHER = 'OTHER',
 }
 
-export enum PrescriptionStatus {
+export enum UnitOfMeasure {
+  TABLET = 'TABLET',
+  CAPSULE = 'CAPSULE',
+  VIAL = 'VIAL',
+  AMPOULE = 'AMPOULE',
+  BOTTLE = 'BOTTLE',
+  PACK = 'PACK',
+  PIECE = 'PIECE',
+}
+
+export enum DispenseStatus {
   PENDING = 'PENDING',
-  PARTIALLY_DISPENSED = 'PARTIALLY_DISPENSED',
   DISPENSED = 'DISPENSED',
+  PARTIALLY_DISPENSED = 'PARTIALLY_DISPENSED',
   CANCELLED = 'CANCELLED',
 }
 
-export interface IStockBatch {
+export interface IInventoryItem {
+  hospitalId: Types.ObjectId;
+  name: string;
+  genericName?: string;
+  category: DrugCategory;
   batchNumber: string;
-  quantity: number;
   unitPrice: number;
+  quantityInStock: number;
+  reorderLevel: number;
+  unitOfMeasure: UnitOfMeasure;
   expiryDate: Date;
-  receivedDate: Date;
-}
-
-export interface IMedication {
-  hospitalId: Types.ObjectId;
-  name: string;
-  genericName?: string;
-  category: MedicationCategory;
-  unit: string; // e.g., 'tablets', 'bottles', 'vials', 'sachets'
-  minReorderLevel: number;
-  batches: IStockBatch[];
-  totalQuantity: number;
-  sellingPricePerUnit: number;
-  requiresPrescription: boolean;
+  isLowStock: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface IMedicationDocument extends IMedication, Document {
+export interface IInventoryItemDocument extends IInventoryItem, Document {
   _id: Types.ObjectId;
 }
 
-export interface IPrescriptionItem {
-  medicationId: Types.ObjectId;
-  medicationName: string;
-  dosage: string; // e.g. "500mg"
-  frequency: string; // e.g. "TDS (3x daily)"
-  duration: string; // e.g. "5 days"
-  quantityPrescribed: number;
-  quantityDispensed: number;
-  unitPrice: number;
-  isDispensed: boolean;
-}
-
-export interface IPrescription {
-  hospitalId: Types.ObjectId;
-  prescriptionNumber: string;
-  patientId: Types.ObjectId;
-  doctorId: Types.ObjectId;
-  ipdAdmissionId?: Types.ObjectId; // Optional link to IPD stay
-  items: IPrescriptionItem[];
-  status: PrescriptionStatus;
-  notes?: string;
-  dispensedBy?: Types.ObjectId; // Staff ID (Pharmacist)
-  dispensedAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface IPrescriptionDocument extends IPrescription, Document {
-  _id: Types.ObjectId;
-}
-
-// --- DTOs ---
-
-export interface CreateMedicationDTO {
+export interface CreateInventoryItemDTO {
   name: string;
   genericName?: string;
-  category: MedicationCategory;
-  unit: string;
-  minReorderLevel?: number;
-  sellingPricePerUnit: number;
-  requiresPrescription?: boolean;
-  initialStock?: {
-    batchNumber: string;
-    quantity: number;
-    unitPrice: number;
-    expiryDate: string;
-  };
-}
-
-export interface AddStockBatchDTO {
+  category: DrugCategory;
   batchNumber: string;
-  quantity: number;
   unitPrice: number;
+  quantityInStock: number;
+  reorderLevel?: number;
+  unitOfMeasure: UnitOfMeasure;
   expiryDate: string;
 }
 
-export interface CreatePrescriptionItemDTO {
-  medicationId: string;
-  dosage: string;
-  frequency: string;
-  duration: string;
-  quantityPrescribed: number;
+export interface UpdateStockDTO {
+  quantityChange: number; // Positive to add stock, negative to adjust down
+  reason?: string;
 }
 
-export interface CreatePrescriptionDTO {
+export interface IDispenseItem {
+  inventoryItemId: Types.ObjectId;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
+export interface IDispenseItemDTO {
+  inventoryItemId: string;
+  quantity: number;
+}
+
+export interface IDispenseRecord {
+  hospitalId: Types.ObjectId;
+  patientId: Types.ObjectId;
+  consultationId?: Types.ObjectId;
+  dispensedBy: Types.ObjectId;
+  items: IDispenseItem[];
+  totalAmount: number;
+  status: DispenseStatus;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IDispenseRecordDocument extends IDispenseRecord, Document {
+  _id: Types.ObjectId;
+}
+
+export interface CreateDispenseRecordDTO {
   patientId: string;
-  doctorId: string;
-  ipdAdmissionId?: string;
-  items: CreatePrescriptionItemDTO[];
+  consultationId?: string;
+  items: IDispenseItemDTO[];
   notes?: string;
 }
 
-export interface DispensePrescriptionDTO {
-  items: {
-    medicationId: string;
-    quantityToDispense: number;
-  }[];
-  dispensedById: string;
+export interface GetInventoryQueryDTO {
+  search?: string;
+  category?: DrugCategory;
+  isLowStock?: string;
+  page?: string;
+  limit?: string;
+}
+
+export interface GetDispenseQueryDTO {
+  patientId?: string;
+  status?: DispenseStatus;
+  page?: string;
+  limit?: string;
 }

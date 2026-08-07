@@ -1,145 +1,127 @@
-import { Response } from 'express';
-import { AuthRequest } from '../../middlewares/auth.middleware.js';
+import { Request, Response, NextFunction } from 'express';
 import { PharmacyService } from './pharmacy.service.js';
-import { PrescriptionStatus } from './pharmacy.types.js';
+import {
+  CreateInventoryItemDTO,
+  UpdateStockDTO,
+  CreateDispenseRecordDTO,
+  GetInventoryQueryDTO,
+  GetDispenseQueryDTO,
+} from './pharmacy.types.js';
+
+interface AuthenticatedRequest<Params = Record<string, string>, ResBody = any, ReqBody = any, ReqQuery = any>
+  extends Request<Params, ResBody, ReqBody, ReqQuery> {
+  user?: {
+    id: string;
+    hospitalId?: string;
+  };
+}
 
 export class PharmacyController {
-  // --- MEDICATIONS ---
-
-  public static async createMedication(req: AuthRequest, res: Response): Promise<void> {
+  static async createItem(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      const authReq = req as AuthenticatedRequest<{}, any, CreateInventoryItemDTO>;
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
 
-      const medication = await PharmacyService.createMedication(hospitalId, req.body);
+      const item = await PharmacyService.createInventoryItem(hospitalId, authReq.body);
+
       res.status(201).json({
         success: true,
-        message: 'Medication added to inventory successfully',
-        data: medication,
+        data: item,
       });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
+    } catch (error: unknown) {
+      next(error);
     }
   }
 
-  public static async getMedications(req: AuthRequest, res: Response): Promise<void> {
+  static async listInventory(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      const authReq = req as AuthenticatedRequest<{}, any, any, GetInventoryQueryDTO>;
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
 
-      const { search, category, lowStock, page, limit } = req.query;
-
-      const result = await PharmacyService.getMedications(hospitalId, {
-        search: search ? String(search) : undefined,
-        category: category ? String(category) : undefined,
-        lowStock: lowStock === 'true',
-        page: page ? Number(page) : 1,
-        limit: limit ? Number(limit) : 20,
-      });
+      const result = await PharmacyService.getInventory(hospitalId, authReq.query);
 
       res.status(200).json({
         success: true,
-        data: result.medications,
-        pagination: result.pagination,
+        ...result,
       });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: error.message });
+    } catch (error: unknown) {
+      next(error);
     }
   }
 
-  public static async addStockBatch(req: AuthRequest, res: Response): Promise<void> {
+  static async getItemById(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      const authReq = req as unknown as AuthenticatedRequest<{ id: string }>;
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
+      const itemId = req.params.id;
 
-      const id = req.params.id as string;
-      const medication = await PharmacyService.addStockBatch(id, hospitalId, req.body);
+      const item = await PharmacyService.getInventoryItemById(hospitalId, itemId);
 
       res.status(200).json({
         success: true,
-        message: 'Stock batch added successfully',
-        data: medication,
+        data: item,
       });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
+    } catch (error: unknown) {
+      next(error);
     }
   }
 
-  // --- PRESCRIPTIONS ---
-
-  public static async createPrescription(req: AuthRequest, res: Response): Promise<void> {
+  static async adjustStock(
+    req: Request<{ id: string }, any, UpdateStockDTO>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
     try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      const authReq = req as unknown as AuthenticatedRequest<{ id: string }, any, UpdateStockDTO>;
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
+      const itemId = req.params.id;
 
-      const prescription = await PharmacyService.createPrescription(hospitalId, req.body);
+      const updated = await PharmacyService.updateStock(hospitalId, itemId, authReq.body);
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error: unknown) {
+      next(error);
+    }
+  }
+
+  static async dispenseDrugs(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest<{}, any, CreateDispenseRecordDTO>;
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
+
+      const record = await PharmacyService.createDispenseRecord(hospitalId, user.id, authReq.body);
+
       res.status(201).json({
         success: true,
-        message: 'Prescription issued successfully',
-        data: prescription,
+        data: record,
       });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
+    } catch (error: unknown) {
+      next(error);
     }
   }
 
-  public static async getPrescriptions(req: AuthRequest, res: Response): Promise<void> {
+  static async listDispenseRecords(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      const authReq = req as AuthenticatedRequest<{}, any, any, GetDispenseQueryDTO>;
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
 
-      const { status, patientId, page, limit } = req.query;
-
-      const result = await PharmacyService.getPrescriptions(hospitalId, {
-        status: status ? (status as PrescriptionStatus) : undefined,
-        patientId: patientId ? String(patientId) : undefined,
-        page: page ? Number(page) : 1,
-        limit: limit ? Number(limit) : 20,
-      });
+      const result = await PharmacyService.getDispenseRecords(hospitalId, authReq.query);
 
       res.status(200).json({
         success: true,
-        data: result.prescriptions,
-        pagination: result.pagination,
+        ...result,
       });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: error.message });
-    }
-  }
-
-  public static async dispensePrescription(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
-
-      const id = req.params.id as string;
-      const prescription = await PharmacyService.dispensePrescription(id, hospitalId, req.body);
-
-      res.status(200).json({
-        success: true,
-        message: 'Prescription items dispensed successfully',
-        data: prescription,
-      });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
+    } catch (error: unknown) {
+      next(error);
     }
   }
 }

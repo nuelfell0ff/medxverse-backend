@@ -1,23 +1,19 @@
 import { Router } from 'express';
 import { PharmacyController } from './pharmacy.controller.js';
-import { protect, restrictTo } from '../../middlewares/auth.middleware.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
-router.use(protect, restrictTo('HOSPITAL'));
+router.use(authenticate);
 
-// Inventory Routes
-router.route('/medications')
-  .post(PharmacyController.createMedication)
-  .get(PharmacyController.getMedications);
+// Inventory Management
+router.post('/inventory', PharmacyController.createItem);
+router.get('/inventory', PharmacyController.listInventory);
+router.get('/inventory/:id', PharmacyController.getItemById);
+router.patch('/inventory/:id/stock', PharmacyController.adjustStock);
 
-router.post('/medications/:id/batches', PharmacyController.addStockBatch);
-
-// Prescription Routes
-router.route('/prescriptions')
-  .post(PharmacyController.createPrescription)
-  .get(PharmacyController.getPrescriptions);
-
-router.post('/prescriptions/:id/dispense', PharmacyController.dispensePrescription);
+// Dispensing Management
+router.post('/dispense', PharmacyController.dispenseDrugs);
+router.get('/dispense', PharmacyController.listDispenseRecords);
 
 export default router;

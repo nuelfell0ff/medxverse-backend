@@ -1,20 +1,78 @@
 import { Router } from 'express';
 import { IpdController } from './ipd.controller.js';
-import { protect, restrictTo } from '../../middlewares/auth.middleware.js';
+import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
-router.use(protect, restrictTo('HOSPITAL'));
+router.use(authenticate);
 
-router.route('/')
-  .post(IpdController.admitPatient)
-  .get(IpdController.getAdmissions);
+// Ward Routes
+router.post(
+  '/wards',
+  authorize('ADMIN', 'NURSE_MANAGER'),
+  IpdController.createWard
+);
 
-router.route('/:id')
-  .get(IpdController.getAdmissionById)
-  .patch(IpdController.updateAdmission);
+router.get(
+  '/wards',
+  authorize('ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'),
+  IpdController.getWards
+);
 
-router.patch('/:id/discharge', IpdController.dischargePatient);
-router.post('/:id/notes', IpdController.addProgressNote);
+// Bed Routes
+router.post(
+  '/beds',
+  authorize('ADMIN', 'NURSE_MANAGER'),
+  IpdController.createBed
+);
+
+router.get(
+  '/wards/:wardId/beds',
+  authorize('ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'),
+  IpdController.getBedsByWard
+);
+
+router.patch(
+  '/beds/:bedId/status',
+  authorize('ADMIN', 'NURSE', 'NURSE_MANAGER'),
+  IpdController.updateBedStatus
+);
+
+// Admission Routes
+router.post(
+  '/admissions',
+  authorize('ADMIN', 'DOCTOR', 'NURSE'),
+  IpdController.admitPatient
+);
+
+router.get(
+  '/admissions',
+  authorize('ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'),
+  IpdController.getAdmissions
+);
+
+router.get(
+  '/admissions/:id',
+  authorize('ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'),
+  IpdController.getAdmissionById
+);
+
+router.patch(
+  '/admissions/:id/transfer',
+  authorize('ADMIN', 'DOCTOR', 'NURSE'),
+  IpdController.transferBed
+);
+
+router.patch(
+  '/admissions/:id/discharge',
+  authorize('ADMIN', 'DOCTOR'),
+  IpdController.dischargePatient
+);
+
+router.post(
+  '/admissions/:id/notes',
+  authorize('ADMIN', 'DOCTOR', 'NURSE'),
+  IpdController.addProgressNote
+);
 
 export default router;

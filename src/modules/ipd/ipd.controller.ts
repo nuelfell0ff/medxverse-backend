@@ -1,155 +1,190 @@
-import { Response } from 'express';
-import { AuthRequest } from '../../middlewares/auth.middleware.js';
+import { Request, Response, NextFunction } from 'express';
 import { IpdService } from './ipd.service.js';
-import { IpdStatus } from './ipd.types.js';
+import { IIpdQueryFilters, BedStatus } from './ipd.types.js';
 
 export class IpdController {
-  public static async admitPatient(req: AuthRequest, res: Response): Promise<void> {
+  // Ward Handlers
+  static async createWard(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      const hospitalId = (req as any).user.hospitalId as string;
+      const ward = await IpdService.createWard(hospitalId, req.body);
 
-      const admission = await IpdService.admitPatient(hospitalId, req.body);
       res.status(201).json({
         success: true,
-        message: 'Patient admitted into IPD successfully',
-        data: admission,
+        message: 'Ward created successfully',
+        data: ward,
       });
-    } catch (error: any) {
-      res.status(400).json({
-        success: false,
-        message: error.message || 'Failed to admit patient',
-      });
+    } catch (error) {
+      next(error);
     }
   }
 
-  public static async getAdmissions(req: AuthRequest, res: Response): Promise<void> {
+  static async getWards(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
+      const hospitalId = (req as any).user.hospitalId as string;
+      const wards = await IpdService.getWards(hospitalId);
 
-      const { status, ward, doctorId, patientId, page, limit } = req.query;
-
-      const result = await IpdService.getAdmissions(hospitalId, {
-        status: status ? (status as IpdStatus) : undefined,
-        ward: ward ? String(ward) : undefined,
-        doctorId: doctorId ? String(doctorId) : undefined,
-        patientId: patientId ? String(patientId) : undefined,
-        page: page ? Number(page) : 1,
-        limit: limit ? Number(limit) : 20,
+      res.status(200).json({
+        success: true,
+        data: wards,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Bed Handlers
+  static async createBed(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const bed = await IpdService.createBed(hospitalId, req.body);
+
+      res.status(201).json({
+        success: true,
+        message: 'Bed created successfully',
+        data: bed,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getBedsByWard(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const wardId = req.params.wardId as string;
+
+      const beds = await IpdService.getBedsByWard(hospitalId, wardId);
+
+      res.status(200).json({
+        success: true,
+        data: beds,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async updateBedStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const bedId = req.params.bedId as string;
+      const { status } = req.body as { status: BedStatus };
+
+      const updatedBed = await IpdService.updateBedStatus(hospitalId, bedId, status);
+
+      res.status(200).json({
+        success: true,
+        message: 'Bed status updated',
+        data: updatedBed,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Admission Handlers
+  static async admitPatient(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const userId = (req as any).user._id as string;
+
+      const admission = await IpdService.admitPatient(hospitalId, userId, req.body);
+
+      res.status(201).json({
+        success: true,
+        message: 'Patient admitted successfully',
+        data: admission,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async transferBed(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const id = req.params.id as string;
+
+      const updatedAdmission = await IpdService.transferBed(hospitalId, id, req.body);
+
+      res.status(200).json({
+        success: true,
+        message: 'Patient transferred successfully',
+        data: updatedAdmission,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async dischargePatient(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const userId = (req as any).user._id as string;
+      const id = req.params.id as string;
+
+      const dischargedAdmission = await IpdService.dischargePatient(hospitalId, id, userId, req.body);
+
+      res.status(200).json({
+        success: true,
+        message: 'Patient discharged successfully',
+        data: dischargedAdmission,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async addProgressNote(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const userId = (req as any).user._id as string;
+      const id = req.params.id as string;
+      const { note } = req.body as { note: string };
+
+      const updatedAdmission = await IpdService.addProgressNote(hospitalId, id, userId, note);
+
+      res.status(200).json({
+        success: true,
+        message: 'Progress note added successfully',
+        data: updatedAdmission,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getAdmissions(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const filters = req.query as unknown as IIpdQueryFilters;
+
+      const result = await IpdService.getAdmissions(hospitalId, filters);
 
       res.status(200).json({
         success: true,
         data: result.admissions,
         pagination: result.pagination,
       });
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to fetch IPD admissions',
-      });
+    } catch (error) {
+      next(error);
     }
   }
 
-  public static async getAdmissionById(req: AuthRequest, res: Response): Promise<void> {
+  static async getAdmissionById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
-
+      const hospitalId = (req as any).user.hospitalId as string;
       const id = req.params.id as string;
-      const admission = await IpdService.getAdmissionById(id, hospitalId);
+
+      const admission = await IpdService.getAdmissionById(hospitalId, id);
 
       res.status(200).json({
         success: true,
         data: admission,
       });
-    } catch (error: any) {
-      res.status(404).json({
-        success: false,
-        message: error.message || 'IPD admission not found',
-      });
-    }
-  }
-
-  public static async dischargePatient(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
-
-      const id = req.params.id as string;
-      const admission = await IpdService.dischargePatient(id, hospitalId, req.body);
-
-      res.status(200).json({
-        success: true,
-        message: 'Patient discharged successfully',
-        data: admission,
-      });
-    } catch (error: any) {
-      res.status(400).json({
-        success: false,
-        message: error.message || 'Failed to discharge patient',
-      });
-    }
-  }
-
-  public static async addProgressNote(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
-
-      const id = req.params.id as string;
-      const admission = await IpdService.addProgressNote(id, hospitalId, req.body);
-
-      res.status(200).json({
-        success: true,
-        message: 'Progress note added successfully',
-        data: admission,
-      });
-    } catch (error: any) {
-      res.status(400).json({
-        success: false,
-        message: error.message || 'Failed to add progress note',
-      });
-    }
-  }
-
-  public static async updateAdmission(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const hospitalId = req.account?.accountId;
-      if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
-
-      const id = req.params.id as string;
-      const admission = await IpdService.updateAdmission(id, hospitalId, req.body);
-
-      res.status(200).json({
-        success: true,
-        message: 'Admission details updated successfully',
-        data: admission,
-      });
-    } catch (error: any) {
-      res.status(400).json({
-        success: false,
-        message: error.message || 'Failed to update admission details',
-      });
+    } catch (error) {
+      next(error);
     }
   }
 }

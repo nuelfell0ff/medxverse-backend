@@ -1,83 +1,125 @@
 import { Document, Types } from 'mongoose';
 
-export enum IpdStatus {
+export enum WardType {
+  GENERAL = 'GENERAL',
+  PRIVATE = 'PRIVATE',
+  ICU = 'ICU',
+  ISOLATION = 'ISOLATION',
+  PEDIATRIC = 'PEDIATRIC',
+  MATERNITY = 'MATERNITY',
+}
+
+export enum BedStatus {
+  AVAILABLE = 'AVAILABLE',
+  OCCUPIED = 'OCCUPIED',
+  RESERVED = 'RESERVED',
+  CLEANING = 'CLEANING',
+  MAINTENANCE = 'MAINTENANCE',
+}
+
+export enum AdmissionStatus {
   ADMITTED = 'ADMITTED',
   DISCHARGED = 'DISCHARGED',
   TRANSFERRED = 'TRANSFERRED',
   CANCELLED = 'CANCELLED',
 }
 
-export enum DischargeStatus {
-  RECOVERED = 'RECOVERED',
-  IMPROVED = 'IMPROVED',
-  REFERRED = 'REFERRED',
-  AGAINST_MEDICAL_ADVICE = 'AGAINST_MEDICAL_ADVICE',
-  DECEASED = 'DECEASED',
+export interface IWard {
+  hospitalId: Types.ObjectId;
+  name: string;
+  type: WardType;
+  capacity: number;
+  description?: string;
+  isOperational: boolean;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
-export interface IProgressNote {
+export interface IWardDocument extends IWard, Document {}
+
+export interface IBed {
+  hospitalId: Types.ObjectId;
+  wardId: Types.ObjectId;
+  bedNumber: string;
+  status: BedStatus;
+  dailyRate: number;
+  notes?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+export interface IBedDocument extends IBed, Document {}
+
+export interface IDailyProgressNote {
   note: string;
-  recordedBy?: string; // Doctor or Nurse name/ID
+  recordedBy: Types.ObjectId;
   createdAt: Date;
 }
 
-export interface IIpdAdmission {
+export interface IInpatientAdmission {
   hospitalId: Types.ObjectId;
   patientId: Types.ObjectId;
-  doctorId: Types.ObjectId; // Attending Doctor from Staff module
+  doctorInChargeId: Types.ObjectId;
+  wardId: Types.ObjectId;
+  bedId: Types.ObjectId;
+  admissionNumber: string;
   admissionDate: Date;
   dischargeDate?: Date;
-  status: IpdStatus;
-  
-  // Bed / Ward allocation
-  ward: string; // e.g. "Male Medical Ward"
-  roomNumber?: string;
-  bedNumber: string;
-
+  status: AdmissionStatus;
   admissionReason: string;
-  initialDiagnosis?: string;
-
-  // Discharge Information
+  diagnosis?: string;
+  estimatedDischargeDate?: Date;
+  progressNotes: IDailyProgressNote[];
   dischargeSummary?: string;
-  dischargeStatus?: DischargeStatus;
-
-  progressNotes?: IProgressNote[];
-
-  createdAt: Date;
-  updatedAt: Date;
+  admittedBy: Types.ObjectId;
+  dischargedBy?: Types.ObjectId;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
-export interface IIpdDocument extends IIpdAdmission, Document {
-  _id: Types.ObjectId;
+export interface IInpatientAdmissionDocument extends IInpatientAdmission, Document {}
+
+export interface ICreateWardDTO {
+  name: string;
+  type: WardType;
+  capacity: number;
+  description?: string;
 }
 
-export interface CreateIpdAdmissionDTO {
-  patientId: string;
-  doctorId: string;
-  ward: string;
-  roomNumber?: string;
+export interface ICreateBedDTO {
+  wardId: string;
   bedNumber: string;
+  dailyRate: number;
+  notes?: string;
+}
+
+export interface IAdmitPatientDTO {
+  patientId: string;
+  doctorInChargeId: string;
+  wardId: string;
+  bedId: string;
   admissionReason: string;
-  initialDiagnosis?: string;
-  admissionDate?: string;
+  diagnosis?: string;
+  estimatedDischargeDate?: Date;
 }
 
-export interface DischargePatientDTO {
+export interface ITransferBedDTO {
+  newWardId: string;
+  newBedId: string;
+  reason?: string;
+}
+
+export interface IDischargePatientDTO {
   dischargeSummary: string;
-  dischargeStatus: DischargeStatus;
-  dischargeDate?: string;
 }
 
-export interface AddProgressNoteDTO {
-  note: string;
-  recordedBy?: string;
-}
-
-export interface UpdateIpdAdmissionDTO {
-  doctorId?: string;
-  ward?: string;
-  roomNumber?: string;
-  bedNumber?: string;
-  admissionReason?: string;
-  initialDiagnosis?: string;
+export interface IIpdQueryFilters {
+  patientId?: string;
+  wardId?: string;
+  doctorInChargeId?: string;
+  status?: AdmissionStatus;
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  limit?: number;
 }

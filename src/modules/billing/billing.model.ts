@@ -1,55 +1,84 @@
 import { Schema, model } from 'mongoose';
-import { IInvoice, IPaymentRecord } from './billing.types.js';
+import {
+  IBillingInvoice,
+  IBillingInvoiceDocument,
+  InvoiceStatus,
+  PaymentMethod,
+  ItemCategory,
+} from './billing.types.js';
 
-const invoiceItemSchema = new Schema({
-  serviceName: { type: String, required: true },
-  code: { type: String },
-  unitPrice: { type: Number, required: true },
-  quantity: { type: Number, required: true, default: 1 },
-  totalPrice: { type: Number, required: true },
-});
-
-const invoiceSchema = new Schema<IInvoice>(
+const InvoiceItemSchema = new Schema(
   {
-    hospitalId: { type: Schema.Types.ObjectId, required: true, ref: 'Hospital', index: true },
-    patientId: { type: Schema.Types.ObjectId, required: true, ref: 'Patient', index: true },
-    items: [invoiceItemSchema],
-    paymentCategory: {
+    description: { type: String, required: true, trim: true },
+    category: {
       type: String,
-      enum: ['CASH', 'HMO', 'INSURANCE'],
-      required: true,
+      enum: Object.values(ItemCategory),
+      default: ItemCategory.OTHER,
     },
-    hmoId: { type: Schema.Types.ObjectId, ref: 'HmoProvider' },
-    subtotal: { type: Number, required: true },
-    discount: { type: Number, default: 0 },
-    totalAmount: { type: Number, required: true },
-    amountPaid: { type: Number, default: 0 },
-    paymentStatus: {
-      type: String,
-      enum: ['UNPAID', 'PARTIALLY_PAID', 'PAID', 'REFUNDED'],
-      default: 'UNPAID',
-      index: true,
-    },
+    quantity: { type: Number, required: true, min: 1 },
+    unitPrice: { type: Number, required: true, min: 0 },
+    totalPrice: { type: Number, required: true, min: 0 },
   },
-  { timestamps: true }
+  { _id: false }
 );
 
-const paymentRecordSchema = new Schema<IPaymentRecord>(
+const PaymentRecordSchema = new Schema(
   {
-    hospitalId: { type: Schema.Types.ObjectId, required: true, ref: 'Hospital', index: true },
-    invoiceId: { type: Schema.Types.ObjectId, required: true, ref: 'Invoice', index: true },
-    amountPaid: { type: Number, required: true },
+    amount: { type: Number, required: true, min: 0.01 },
     paymentMethod: {
       type: String,
-      enum: ['CASH', 'CARD', 'BANK_TRANSFER', 'HMO_CLAIM'],
+      enum: Object.values(PaymentMethod),
       required: true,
     },
-    reference: { type: String },
-    processedBy: { type: Schema.Types.ObjectId, required: true, ref: 'User' },
-    processedAt: { type: Date, default: Date.now },
+    transactionRef: { type: String, trim: true },
+    paidAt: { type: Date, default: Date.now },
+    paidBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    notes: { type: String, trim: true },
   },
   { timestamps: true }
 );
 
-export const InvoiceModel = model<IInvoice>('Invoice', invoiceSchema);
-export const PaymentRecordModel = model<IPaymentRecord>('PaymentRecord', paymentRecordSchema);
+const BillingInvoiceSchema = new Schema<IBillingInvoiceDocument>(
+  {
+    hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
+    patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
+    invoiceNumber: { type: String, required: true, unique: true, trim: true, index: true },
+    items: [InvoiceItemSchema],
+    subtotal: { type: Number, required: true, default: 0, min: 0 },
+    discount: { type: Number, default: 0, min: 0 },
+    tax: { type: Number, default: 0, min: 0 },
+    totalAmount: { type: Number, required: true, default: 0, min: 0 },
+    amountPaid: { type: Number, required: true, default: 0, min: 0 },
+    balanceDue: { type: Number, required: true, default: 0, min: 0 },
+    status: {
+      type: String,
+      enum: Object.values(InvoiceStatus),
+      default: InvoiceStatus.PENDING,
+      index: true,
+    },
+    dueDate: { type: Date, required: true, index: true },
+    payments: [PaymentRecordSchema],
+    notes: { type: String, trim: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  },
+  { timestamps: true }
+);
+
+BillingInvoiceSchema.pre('save', function (this: IBillingInvoiceDocument, next) {
+  this.subtotal = this.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+  this.totalAmount = Math.max(0, this.subtotal - (this.discount || 0) + (this.tax || 0));
+  this.amountPaid = this.payments.reduce((sum, payment) => sum + payment.amount, 0);
+  this.balanceDue = Math.max(0, this.totalAmount - this.amountPaid);
+
+  if (this.status !== InvoiceStatus.CANCELLED && this.status !== InvoiceStatus.REFUNDED) {
+    if (this.balanceDue === 0 && this.totalAmount > 0) {
+      this.status = InvoiceStatus.PAID;
+    } else if (this.amountPaid > 0 && this.balanceDue > 0) {
+      this.status = InvoiceStatus.PARTIALLY_PAID;
+    } else {
+      this.status = InvoiceStatus.PENDING;
+    }
+  }
+});
+
+export const BillingInvoiceModel = model<IBillingInvoiceDocument>('BillingInvoice', BillingInvoiceSchema);

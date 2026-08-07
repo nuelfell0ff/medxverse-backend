@@ -6,9 +6,40 @@ const router = Router();
 
 router.use(authenticate);
 
-router.post('/invoices', authorize('HOSPITAL', 'ADMIN', 'BILLING_OFFICER'), BillingController.createInvoice);
-router.get('/invoices', authorize('HOSPITAL', 'ADMIN', 'BILLING_OFFICER', 'ACCOUNTANT'), BillingController.getInvoices);
-router.get('/invoices/:id', authorize('HOSPITAL', 'ADMIN', 'BILLING_OFFICER', 'ACCOUNTANT'), BillingController.getInvoiceById);
-router.post('/invoices/:id/payments', authorize('HOSPITAL', 'ADMIN', 'BILLING_OFFICER', 'CASHIER'), BillingController.processPayment);
+router.post(
+  '/',
+  authorize('ADMIN', 'ACCOUNTANT', 'RECEPTIONIST'),
+  BillingController.createInvoice
+);
+
+router.get(
+  '/',
+  authorize('ADMIN', 'ACCOUNTANT', 'DOCTOR', 'RECEPTIONIST'),
+  BillingController.getInvoices
+);
+
+router.get(
+  '/summary',
+  authorize('ADMIN', 'ACCOUNTANT'),
+  BillingController.getRevenueSummary
+);
+
+router.get(
+  '/:id',
+  authorize('ADMIN', 'ACCOUNTANT', 'DOCTOR', 'RECEPTIONIST'),
+  BillingController.getInvoiceById
+);
+
+router.post(
+  '/:id/payments',
+  authorize('ADMIN', 'ACCOUNTANT'),
+  BillingController.recordPayment
+);
+
+router.patch(
+  '/:id/cancel',
+  authorize('ADMIN', 'ACCOUNTANT'),
+  BillingController.cancelInvoice
+);
 
 export default router;

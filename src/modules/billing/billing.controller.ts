@@ -1,54 +1,103 @@
 import { Request, Response, NextFunction } from 'express';
 import { BillingService } from './billing.service.js';
+import { IInvoiceQueryFilters } from './billing.types.js';
 
 export class BillingController {
-  public static async createInvoice(req: Request, res: Response, next: NextFunction) {
+  static async createInvoice(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = (req as any).user.hospitalId;
-      const invoice = await BillingService.createInvoice(hospitalId, req.body);
-      res.status(201).json({ success: true, data: invoice });
+      const hospitalId = (req as any).user.hospitalId as string;
+      const userId = (req as any).user._id as string;
+
+      const invoice = await BillingService.createInvoice(hospitalId, userId, req.body);
+
+      res.status(201).json({
+        success: true,
+        message: 'Invoice created successfully',
+        data: invoice,
+      });
     } catch (error) {
       next(error);
     }
   }
 
-  public static async getInvoices(req: Request, res: Response, next: NextFunction) {
+  static async getInvoices(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = (req as any).user.hospitalId;
-      const filters = {
-        status: req.query.status as string,
-        patientId: req.query.patientId as string,
-        page: req.query.page ? parseInt(req.query.page as string, 10) : undefined,
-        limit: req.query.limit ? parseInt(req.query.limit as string, 10) : undefined,
-      };
+      const hospitalId = (req as any).user.hospitalId as string;
+      const filters = req.query as unknown as IInvoiceQueryFilters;
+
       const result = await BillingService.getInvoices(hospitalId, filters);
-      res.status(200).json({ success: true, ...result });
+
+      res.status(200).json({
+        success: true,
+        data: result.invoices,
+        pagination: result.pagination,
+      });
     } catch (error) {
       next(error);
     }
   }
 
-  public static async getInvoiceById(req: Request, res: Response, next: NextFunction) {
+  static async getInvoiceById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = (req as any).user.hospitalId;
-      const invoice = await BillingService.getInvoiceById(req.params.id as string, hospitalId);
-      res.status(200).json({ success: true, data: invoice });
+      const hospitalId = (req as any).user.hospitalId as string;
+      const id = req.params.id as string;
+
+      const invoice = await BillingService.getInvoiceById(hospitalId, id);
+
+      res.status(200).json({
+        success: true,
+        data: invoice,
+      });
     } catch (error) {
       next(error);
     }
   }
 
-  public static async processPayment(req: Request, res: Response, next: NextFunction) {
+  static async recordPayment(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const hospitalId = (req as any).user.hospitalId;
-      const processedBy = (req as any).user.id;
-      const result = await BillingService.processPayment(
-        req.params.id as string,
-        hospitalId,
-        processedBy,
-        req.body
-      );
-      res.status(200).json({ success: true, data: result });
+      const hospitalId = (req as any).user.hospitalId as string;
+      const userId = (req as any).user._id as string;
+      const id = req.params.id as string;
+
+      const updatedInvoice = await BillingService.recordPayment(hospitalId, id, userId, req.body);
+
+      res.status(200).json({
+        success: true,
+        message: 'Payment recorded successfully',
+        data: updatedInvoice,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async cancelInvoice(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const id = req.params.id as string;
+      const { reason } = req.body;
+
+      const cancelledInvoice = await BillingService.cancelInvoice(hospitalId, id, reason);
+
+      res.status(200).json({
+        success: true,
+        message: 'Invoice cancelled successfully',
+        data: cancelledInvoice,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getRevenueSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const hospitalId = (req as any).user.hospitalId as string;
+      const summary = await BillingService.getRevenueSummary(hospitalId);
+
+      res.status(200).json({
+        success: true,
+        data: summary,
+      });
     } catch (error) {
       next(error);
     }

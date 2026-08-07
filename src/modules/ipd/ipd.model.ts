@@ -1,90 +1,91 @@
-import mongoose, { Schema } from 'mongoose';
-import { IIpdDocument, IpdStatus, DischargeStatus } from './ipd.types.js';
+import { Schema, model } from 'mongoose';
+import {
+  IWard,
+  IWardDocument,
+  IBed,
+  IBedDocument,
+  IInpatientAdmission,
+  IInpatientAdmissionDocument,
+  WardType,
+  BedStatus,
+  AdmissionStatus,
+} from './ipd.types.js';
 
-const ProgressNoteSchema = new Schema(
+const WardSchema = new Schema<IWard>(
   {
-    note: { type: String, required: true, trim: true },
-    recordedBy: { type: String, trim: true },
-    createdAt: { type: Date, default: Date.now },
+    hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
+    name: { type: String, required: true, trim: true },
+    type: {
+      type: String,
+      enum: Object.values(WardType),
+      default: WardType.GENERAL,
+      required: true,
+    },
+    capacity: { type: Number, required: true, min: 1 },
+    description: { type: String, trim: true },
+    isOperational: { type: Boolean, default: true },
   },
-  { _id: true }
+  { timestamps: true }
 );
 
-const IpdAdmissionSchema = new Schema<IIpdDocument>(
+const BedSchema = new Schema<IBed>(
   {
-    hospitalId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Account',
-      required: [true, 'Hospital account ID is required'],
-      index: true,
-    },
-    patientId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Patient',
-      required: [true, 'Patient ID is required'],
-      index: true,
-    },
-    doctorId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Staff',
-      required: [true, 'Attending doctor ID is required'],
-      index: true,
-    },
-    admissionDate: {
-      type: Date,
-      default: Date.now,
-      index: true,
-    },
-    dischargeDate: {
-      type: Date,
-    },
+    hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
+    wardId: { type: Schema.Types.ObjectId, ref: 'Ward', required: true, index: true },
+    bedNumber: { type: String, required: true, trim: true },
     status: {
       type: String,
-      enum: Object.values(IpdStatus),
-      default: IpdStatus.ADMITTED,
+      enum: Object.values(BedStatus),
+      default: BedStatus.AVAILABLE,
       index: true,
     },
-    ward: {
-      type: String,
-      required: [true, 'Ward name/type is required'],
-      trim: true,
-    },
-    roomNumber: {
-      type: String,
-      trim: true,
-    },
-    bedNumber: {
-      type: String,
-      required: [true, 'Bed number is required'],
-      trim: true,
-    },
-    admissionReason: {
-      type: String,
-      required: [true, 'Admission reason is required'],
-      trim: true,
-    },
-    initialDiagnosis: {
-      type: String,
-      trim: true,
-    },
-    dischargeSummary: {
-      type: String,
-      trim: true,
-    },
-    dischargeStatus: {
-      type: String,
-      enum: Object.values(DischargeStatus),
-    },
-    progressNotes: [ProgressNoteSchema],
+    dailyRate: { type: Number, required: true, min: 0 },
+    notes: { type: String, trim: true },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-IpdAdmissionSchema.index({ hospitalId: 1, status: 1 });
-IpdAdmissionSchema.index({ hospitalId: 1, ward: 1, bedNumber: 1 });
+BedSchema.index({ wardId: 1, bedNumber: 1 }, { unique: true });
 
-export const IpdAdmission =
-  mongoose.models.IpdAdmission ||
-  mongoose.model<IIpdDocument>('IpdAdmission', IpdAdmissionSchema);
+const DailyProgressNoteSchema = new Schema(
+  {
+    note: { type: String, required: true, trim: true },
+    recordedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    createdAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+const InpatientAdmissionSchema = new Schema<IInpatientAdmissionDocument>(
+  {
+    hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
+    patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
+    doctorInChargeId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    wardId: { type: Schema.Types.ObjectId, ref: 'Ward', required: true, index: true },
+    bedId: { type: Schema.Types.ObjectId, ref: 'Bed', required: true, index: true },
+    admissionNumber: { type: String, required: true, unique: true, trim: true, index: true },
+    admissionDate: { type: Date, default: Date.now, required: true, index: true },
+    dischargeDate: { type: Date },
+    status: {
+      type: String,
+      enum: Object.values(AdmissionStatus),
+      default: AdmissionStatus.ADMITTED,
+      index: true,
+    },
+    admissionReason: { type: String, required: true, trim: true },
+    diagnosis: { type: String, trim: true },
+    estimatedDischargeDate: { type: Date },
+    progressNotes: [DailyProgressNoteSchema],
+    dischargeSummary: { type: String, trim: true },
+    admittedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    dischargedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  },
+  { timestamps: true }
+);
+
+export const WardModel = model<IWard>('Ward', WardSchema);
+export const BedModel = model<IBed>('Bed', BedSchema);
+export const InpatientAdmissionModel = model<IInpatientAdmissionDocument>(
+  'InpatientAdmission',
+  InpatientAdmissionSchema
+);
