@@ -4,6 +4,7 @@ import {
   AddVitalsDTO,
   GetPatientsQueryDTO,
   IPatientDocument,
+  Gender,
 } from './patient.types.js';
 
 export class PatientService {
@@ -21,11 +22,32 @@ export class PatientService {
       exists = await PatientModel.findOne({ mrn });
     }
 
+    // Clean up dto to prevent Mongoose schema validation / casting failures
+    const sanitizedData: Record<string, any> = { ...dto };
+
+    // 1. Remove empty string values for optional fields
+    Object.keys(sanitizedData).forEach((key) => {
+      if (sanitizedData[key] === '' || sanitizedData[key] === null) {
+        delete sanitizedData[key];
+      }
+    });
+
+    // 2. Ensure gender matches uppercase Enum ('MALE' | 'FEMALE' | 'OTHER')
+    if (sanitizedData.gender) {
+      sanitizedData.gender = sanitizedData.gender.toUpperCase() as Gender;
+    }
+
+    // 3. Ensure dateOfBirth is valid
+    const dob = new Date(sanitizedData.dateOfBirth);
+    if (isNaN(dob.getTime())) {
+      throw new Error('Invalid date of birth provided.');
+    }
+
     const patient = await PatientModel.create({
-      ...dto,
+      ...sanitizedData,
       hospitalId,
       mrn,
-      dateOfBirth: new Date(dto.dateOfBirth),
+      dateOfBirth: dob,
     });
 
     return patient;
