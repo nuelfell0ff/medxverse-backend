@@ -1,0 +1,11 @@
+import { Router } from 'express';
+import { billingController } from './billing.controller.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
+const router = Router();
+router.use(authenticate);
+router.post('/', (req, res, next) => billingController.createInvoice(req, res, next));
+router.get('/', (req, res, next) => billingController.getInvoices(req, res, next));
+router.get('/:id', (req, res, next) => billingController.getInvoiceById(req, res, next));
+router.post('/:id/payments', (req, res, next) => billingController.recordPayment(req, res, next));
+router.patch('/:id/cancel', (req, res, next) => billingController.cancelInvoice(req, res, next));
+export default router;

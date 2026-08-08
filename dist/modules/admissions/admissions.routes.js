@@ -1,0 +1,11 @@
+import { Router } from 'express';
+import { admissionsController } from './admissions.controller.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
+const router = Router();
+router.use(authenticate);
+router.post('/', (req, res, next) => admissionsController.admitPatient(req, res, next));
+router.get('/', (req, res, next) => admissionsController.getAdmissions(req, res, next));
+router.get('/:id', (req, res, next) => admissionsController.getAdmissionById(req, res, next));
+router.patch('/:id/transfer', (req, res, next) => admissionsController.transferBed(req, res, next));
+router.patch('/:id/discharge', (req, res, next) => admissionsController.dischargePatient(req, res, next));
+export default router;

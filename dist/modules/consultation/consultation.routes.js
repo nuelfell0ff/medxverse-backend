@@ -1,0 +1,10 @@
+import { Router } from 'express';
+import { ConsultationController } from './consultation.controller.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
+const router = Router();
+router.use(authenticate);
+router.post('/', ConsultationController.create);
+router.get('/', ConsultationController.list);
+router.get('/:id', ConsultationController.getById);
+router.patch('/:id', ConsultationController.update);
+export default router;

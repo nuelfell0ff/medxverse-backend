@@ -1,0 +1,12 @@
+import { Router } from 'express';
+import { radiologyController } from './radiology.controller.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
+const router = Router();
+router.use(authenticate);
+router.post('/', (req, res, next) => radiologyController.createOrder(req, res, next));
+router.get('/', (req, res, next) => radiologyController.getOrders(req, res, next));
+router.get('/:id', (req, res, next) => radiologyController.getOrderById(req, res, next));
+router.patch('/:id/pacs', (req, res, next) => radiologyController.updatePacsData(req, res, next));
+router.patch('/:id/report', (req, res, next) => radiologyController.completeReport(req, res, next));
+router.patch('/:id/cancel', (req, res, next) => radiologyController.cancelOrder(req, res, next));
+export default router;

@@ -1,0 +1,12 @@
+import { Router } from 'express';
+import { ReportsController } from './reports.controller.js';
+import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
+const router = Router();
+router.use(authenticate);
+router.get('/dashboard-summary', authorize('ADMIN', 'ACCOUNTANT', 'DOCTOR', 'NURSE_MANAGER'), ReportsController.getExecutiveSummary);
+router.get('/revenue', authorize('ADMIN', 'ACCOUNTANT'), ReportsController.getRevenueReport);
+router.get('/bed-occupancy', authorize('ADMIN', 'NURSE_MANAGER', 'DOCTOR'), ReportsController.getBedOccupancyReport);
+router.get('/patient-demographics', authorize('ADMIN', 'DOCTOR', 'RECEPTIONIST'), ReportsController.getPatientDemographics);
+router.post('/saved', authorize('ADMIN', 'ACCOUNTANT'), ReportsController.createSavedReport);
+router.get('/saved', authorize('ADMIN', 'ACCOUNTANT', 'NURSE_MANAGER'), ReportsController.getSavedReports);
+export default router;
