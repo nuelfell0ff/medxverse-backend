@@ -28,6 +28,12 @@ import administrationRoutes from '../modules/administration/administration.route
 import telemedicineRoutes from '../modules/telemedicine/telemedicine.routes.js';
 import settingsRoutes from '../modules/settings/settings.routes.js';
 
+// hms portal
+import preAuthorizationRoutes from '../modules/pre-authorizations/pre-authorizations.routes.js';
+import hmsDashboardRoutes from '../modules/hms-dashboard/hms-dashboard.routes.js';
+import membersRoutes from '../modules/members/members.routes.js';
+import claimsRoutes from '../modules/claims/claims.routes.js';
+
 
 const v1Router = Router();
 
@@ -59,6 +65,12 @@ v1Router.use('/inventory', inventoryRoutes);
 v1Router.use('/administration', administrationRoutes);
 v1Router.use('/telemedicine', telemedicineRoutes);
 v1Router.use('/settings', settingsRoutes);
+
+// hms portal
+v1Router.use('/pre-authorizations', preAuthorizationRoutes);
+v1Router.use('/hms-dashboard', hmsDashboardRoutes);
+v1Router.use('/members', membersRoutes);
+v1Router.use('/claims', claimsRoutes);
 
 
 export default v1Router;
