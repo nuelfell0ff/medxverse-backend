@@ -12,16 +12,35 @@ export class AppointmentService {
     hospitalId: string,
     dto: CreateAppointmentDTO
   ): Promise<IAppointmentDocument> {
+    if (!Types.ObjectId.isValid(hospitalId)) {
+      throw new Error('Invalid Hospital ID provided.');
+    }
+    if (!Types.ObjectId.isValid(dto.patientId)) {
+      throw new Error('Invalid Patient ID provided.');
+    }
+    if (!Types.ObjectId.isValid(dto.doctorId)) {
+      throw new Error('Invalid Doctor ID provided.');
+    }
+
+    const apptDate = new Date(dto.appointmentDate);
+    if (isNaN(apptDate.getTime())) {
+      throw new Error('Invalid appointment date provided.');
+    }
+
+    // Clean up empty optional fields
+    const sanitizedPayload: Record<string, any> = { ...dto };
+    Object.keys(sanitizedPayload).forEach((key) => {
+      if (sanitizedPayload[key] === '' || sanitizedPayload[key] === null) {
+        delete sanitizedPayload[key];
+      }
+    });
+
     const appointment = await AppointmentModel.create({
+      ...sanitizedPayload,
       hospitalId: new Types.ObjectId(hospitalId),
       patientId: new Types.ObjectId(dto.patientId),
       doctorId: new Types.ObjectId(dto.doctorId),
-      appointmentDate: new Date(dto.appointmentDate),
-      startTime: dto.startTime,
-      endTime: dto.endTime,
-      type: dto.type,
-      reason: dto.reason,
-      notes: dto.notes,
+      appointmentDate: apptDate,
     });
 
     return appointment.populate([
@@ -31,17 +50,23 @@ export class AppointmentService {
   }
 
   static async getAppointments(hospitalId: string, query: GetAppointmentsQueryDTO) {
+    if (!Types.ObjectId.isValid(hospitalId)) {
+      throw new Error('Invalid Hospital ID provided.');
+    }
+
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const filter: Record<string, unknown> = { hospitalId };
+    const filter: Record<string, unknown> = {
+      hospitalId: new Types.ObjectId(hospitalId),
+    };
 
-    if (query.patientId) {
+    if (query.patientId && Types.ObjectId.isValid(query.patientId)) {
       filter.patientId = new Types.ObjectId(query.patientId);
     }
 
-    if (query.doctorId) {
+    if (query.doctorId && Types.ObjectId.isValid(query.doctorId)) {
       filter.doctorId = new Types.ObjectId(query.doctorId);
     }
 
@@ -50,13 +75,16 @@ export class AppointmentService {
     }
 
     if (query.date) {
-      const startOfDay = new Date(query.date);
-      startOfDay.setHours(0, 0, 0, 0);
+      const dateObj = new Date(query.date);
+      if (!isNaN(dateObj.getTime())) {
+        const startOfDay = new Date(dateObj);
+        startOfDay.setHours(0, 0, 0, 0);
 
-      const endOfDay = new Date(query.date);
-      endOfDay.setHours(23, 59, 59, 999);
+        const endOfDay = new Date(dateObj);
+        endOfDay.setHours(23, 59, 59, 999);
 
-      filter.appointmentDate = { $gte: startOfDay, $lte: endOfDay };
+        filter.appointmentDate = { $gte: startOfDay, $lte: endOfDay };
+      }
     }
 
     const [appointments, total] = await Promise.all([
@@ -82,6 +110,12 @@ export class AppointmentService {
     hospitalId: string,
     appointmentId: string
   ): Promise<IAppointmentDocument> {
+    if (!Types.ObjectId.isValid(hospitalId) || !Types.ObjectId.isValid(appointmentId)) {
+      const error = new Error('Invalid record ID provided.') as Error & { statusCode?: number };
+      error.statusCode = 400;
+      throw error;
+    }
+
     const appointment = await AppointmentModel.findOne({
       _id: appointmentId,
       hospitalId,
@@ -107,7 +141,7 @@ export class AppointmentService {
     const appointment = await this.getAppointmentById(hospitalId, appointmentId);
 
     appointment.status = dto.status;
-    if (dto.notes) {
+    if (dto.notes !== undefined) {
       appointment.notes = dto.notes;
     }
 
