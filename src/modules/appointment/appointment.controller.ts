@@ -9,8 +9,10 @@ import {
 interface AuthenticatedRequest<Params = Record<string, string>, ResBody = any, ReqBody = any, ReqQuery = any>
   extends Request<Params, ResBody, ReqBody, ReqQuery> {
   user?: {
-    id: string;
+    id?: string;
+    accountId?: string;
     hospitalId?: string;
+    _id?: string;
   };
 }
 
@@ -18,8 +20,16 @@ export class AppointmentController {
   static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest<{}, any, CreateAppointmentDTO>;
-      const user = authReq.user!;
-      const hospitalId = user.hospitalId || user.id;
+      const user = authReq.user;
+      const hospitalId = user?.hospitalId || user?.accountId || user?.id || user?._id;
+
+      if (!hospitalId) {
+        res.status(400).json({
+          success: false,
+          message: 'Hospital ID not found in authentication context.',
+        });
+        return;
+      }
 
       const appointment = await AppointmentService.createAppointment(hospitalId, authReq.body);
 
@@ -35,8 +45,16 @@ export class AppointmentController {
   static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest<{}, any, any, GetAppointmentsQueryDTO>;
-      const user = authReq.user!;
-      const hospitalId = user.hospitalId || user.id;
+      const user = authReq.user;
+      const hospitalId = user?.hospitalId || user?.accountId || user?.id || user?._id;
+
+      if (!hospitalId) {
+        res.status(400).json({
+          success: false,
+          message: 'Hospital ID not found in authentication context.',
+        });
+        return;
+      }
 
       const result = await AppointmentService.getAppointments(hospitalId, authReq.query);
 
@@ -52,9 +70,17 @@ export class AppointmentController {
   static async getById(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as unknown as AuthenticatedRequest<{ id: string }>;
-      const user = authReq.user!;
-      const hospitalId = user.hospitalId || user.id;
+      const user = authReq.user;
+      const hospitalId = user?.hospitalId || user?.accountId || user?.id || user?._id;
       const appointmentId = req.params.id;
+
+      if (!hospitalId) {
+        res.status(400).json({
+          success: false,
+          message: 'Hospital ID not found in authentication context.',
+        });
+        return;
+      }
 
       const appointment = await AppointmentService.getAppointmentById(hospitalId, appointmentId);
 
@@ -74,9 +100,17 @@ export class AppointmentController {
   ): Promise<void> {
     try {
       const authReq = req as unknown as AuthenticatedRequest<{ id: string }, any, UpdateAppointmentStatusDTO>;
-      const user = authReq.user!;
-      const hospitalId = user.hospitalId || user.id;
+      const user = authReq.user;
+      const hospitalId = user?.hospitalId || user?.accountId || user?.id || user?._id;
       const appointmentId = req.params.id;
+
+      if (!hospitalId) {
+        res.status(400).json({
+          success: false,
+          message: 'Hospital ID not found in authentication context.',
+        });
+        return;
+      }
 
       const updated = await AppointmentService.updateStatus(hospitalId, appointmentId, authReq.body);
 
