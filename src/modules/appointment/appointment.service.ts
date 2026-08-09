@@ -27,10 +27,10 @@ export class AppointmentService {
       throw new Error('Invalid appointment date provided.');
     }
 
-    // Clean up empty optional fields
+    // Clean up empty/null optional fields
     const sanitizedPayload: Record<string, any> = { ...dto };
     Object.keys(sanitizedPayload).forEach((key) => {
-      if (sanitizedPayload[key] === '' || sanitizedPayload[key] === null) {
+      if (sanitizedPayload[key] === '' || sanitizedPayload[key] === null || sanitizedPayload[key] === undefined) {
         delete sanitizedPayload[key];
       }
     });
@@ -54,8 +54,8 @@ export class AppointmentService {
       throw new Error('Invalid Hospital ID provided.');
     }
 
-    const page = Number(query.page) || 1;
-    const limit = Number(query.limit) || 10;
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.max(Number(query.limit) || 10, 1);
     const skip = (page - 1) * limit;
 
     const filter: Record<string, unknown> = {
@@ -117,8 +117,8 @@ export class AppointmentService {
     }
 
     const appointment = await AppointmentModel.findOne({
-      _id: appointmentId,
-      hospitalId,
+      _id: new Types.ObjectId(appointmentId),
+      hospitalId: new Types.ObjectId(hospitalId),
     }).populate([
       { path: 'patientId', select: 'firstName lastName mrn phone gender dateOfBirth' },
       { path: 'doctorId', select: 'firstName lastName email department' },
