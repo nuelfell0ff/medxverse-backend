@@ -27,10 +27,14 @@ export class AppointmentService {
       throw new Error('Invalid appointment date provided.');
     }
 
-    // Clean up empty/null optional fields
+    // Clean up empty or null optional fields
     const sanitizedPayload: Record<string, any> = { ...dto };
     Object.keys(sanitizedPayload).forEach((key) => {
-      if (sanitizedPayload[key] === '' || sanitizedPayload[key] === null || sanitizedPayload[key] === undefined) {
+      if (
+        sanitizedPayload[key] === '' ||
+        sanitizedPayload[key] === null ||
+        sanitizedPayload[key] === undefined
+      ) {
         delete sanitizedPayload[key];
       }
     });
@@ -45,7 +49,7 @@ export class AppointmentService {
 
     return appointment.populate([
       { path: 'patientId', select: 'firstName lastName mrn phone' },
-      { path: 'doctorId', select: 'firstName lastName email department' },
+      { path: 'doctorId', select: 'firstName lastName email department role' },
     ]);
   }
 
@@ -90,7 +94,7 @@ export class AppointmentService {
     const [appointments, total] = await Promise.all([
       AppointmentModel.find(filter)
         .populate('patientId', 'firstName lastName mrn phone')
-        .populate('doctorId', 'firstName lastName email department')
+        .populate('doctorId', 'firstName lastName email department role')
         .sort({ appointmentDate: 1, startTime: 1 })
         .skip(skip)
         .limit(limit),
@@ -121,7 +125,7 @@ export class AppointmentService {
       hospitalId: new Types.ObjectId(hospitalId),
     }).populate([
       { path: 'patientId', select: 'firstName lastName mrn phone gender dateOfBirth' },
-      { path: 'doctorId', select: 'firstName lastName email department' },
+      { path: 'doctorId', select: 'firstName lastName email department role' },
     ]);
 
     if (!appointment) {
