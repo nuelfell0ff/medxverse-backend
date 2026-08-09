@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { AppointmentController } from './appointment.controller.js';
-import { authenticate } from '../../middlewares/auth.middleware.js'; // Adjust path to match your folder structure
+import { authenticate } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
-// Protect all appointment endpoints (decodes JWT & attaches hospitalId to req)
+// Protect all appointment endpoints with auth middleware
 router.use(authenticate);
 
 router.post('/', AppointmentController.create);
