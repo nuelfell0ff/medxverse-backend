@@ -9,7 +9,8 @@ const AppointmentSchema = new Schema<IAppointmentDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-    // Changed ref from 'User' to 'Account' to match your auth model
+    // ⚠️ Verify 'Account' is the correct model name where doctor firstName, lastName, department exist.
+    // If doctors are in a Staff model, change 'Account' to 'Staff'.
     doctorId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     appointmentDate: { type: Date, required: true, index: true },
     startTime: { type: String, required: true },
