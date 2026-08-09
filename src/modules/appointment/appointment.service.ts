@@ -27,7 +27,6 @@ export class AppointmentService {
       throw new Error('Invalid appointment date provided.');
     }
 
-    // Clean up empty or null optional fields
     const sanitizedPayload: Record<string, any> = { ...dto };
     Object.keys(sanitizedPayload).forEach((key) => {
       if (
@@ -47,10 +46,12 @@ export class AppointmentService {
       appointmentDate: apptDate,
     });
 
-    return appointment.populate([
-      { path: 'patientId', select: 'firstName lastName mrn phone' },
-      { path: 'doctorId', select: 'firstName lastName email department role' },
-    ]);
+    return (
+      await appointment.populate([
+        { path: 'patientId', select: 'firstName lastName mrn phone' },
+        { path: 'doctorId', select: 'firstName lastName email department role' },
+      ])
+    ).toObject();
   }
 
   static async getAppointments(hospitalId: string, query: GetAppointmentsQueryDTO) {
@@ -97,7 +98,8 @@ export class AppointmentService {
         .populate('doctorId', 'firstName lastName email department role')
         .sort({ appointmentDate: 1, startTime: 1 })
         .skip(skip)
-        .limit(limit),
+        .limit(limit)
+        .lean(), // 👈 Ensures clean JSON output
       AppointmentModel.countDocuments(filter),
     ]);
 
@@ -123,10 +125,12 @@ export class AppointmentService {
     const appointment = await AppointmentModel.findOne({
       _id: new Types.ObjectId(appointmentId),
       hospitalId: new Types.ObjectId(hospitalId),
-    }).populate([
-      { path: 'patientId', select: 'firstName lastName mrn phone gender dateOfBirth' },
-      { path: 'doctorId', select: 'firstName lastName email department role' },
-    ]);
+    })
+      .populate([
+        { path: 'patientId', select: 'firstName lastName mrn phone gender dateOfBirth' },
+        { path: 'doctorId', select: 'firstName lastName email department role' },
+      ])
+      .lean();
 
     if (!appointment) {
       const error = new Error('Appointment record not found.') as Error & { statusCode?: number };
@@ -134,7 +138,7 @@ export class AppointmentService {
       throw error;
     }
 
-    return appointment;
+    return appointment as unknown as IAppointmentDocument;
   }
 
   static async updateStatus(
@@ -142,14 +146,35 @@ export class AppointmentService {
     appointmentId: string,
     dto: UpdateAppointmentStatusDTO
   ): Promise<IAppointmentDocument> {
-    const appointment = await this.getAppointmentById(hospitalId, appointmentId);
-
-    appointment.status = dto.status;
-    if (dto.notes !== undefined) {
-      appointment.notes = dto.notes;
+    if (!Types.ObjectId.isValid(hospitalId) || !Types.ObjectId.isValid(appointmentId)) {
+      const error = new Error('Invalid record ID provided.') as Error & { statusCode?: number };
+      error.statusCode = 400;
+      throw error;
     }
 
-    await appointment.save();
-    return appointment;
+    const appointment = await AppointmentModel.findOneAndUpdate(
+      {
+        _id: new Types.ObjectId(appointmentId),
+        hospitalId: new Types.ObjectId(hospitalId),
+      },
+      {
+        $set: {
+          status: dto.status,
+          ...(dto.notes !== undefined && { notes: dto.notes }),
+        },
+      },
+      { new: true }
+    )
+      .populate('patientId', 'firstName lastName mrn phone')
+      .populate('doctorId', 'firstName lastName email department role')
+      .lean();
+
+    if (!appointment) {
+      const error = new Error('Appointment record not found.') as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+
+    return appointment as unknown as IAppointmentDocument;
   }
 }
