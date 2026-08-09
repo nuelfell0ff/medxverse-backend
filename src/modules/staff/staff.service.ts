@@ -3,7 +3,7 @@ import { CreateStaffDTO, UpdateStaffDTO, StaffRole } from './staff.types.js';
 
 export class StaffService {
   /**
-   * Create a new staff member for a specific hospital
+   * Create a new staff member for a hospital
    */
   public static async createStaff(hospitalId: string, dto: CreateStaffDTO) {
     const staff = await Staff.create({
@@ -14,7 +14,7 @@ export class StaffService {
   }
 
   /**
-   * Fetch hospital staff with optional role, search query, and active status filters
+   * Fetch hospital staff with optional filters (role, search term, active status)
    */
   public static async getHospitalStaff(
     hospitalId: string,
@@ -27,11 +27,9 @@ export class StaffService {
       query.role = filters.role;
     }
 
-    // Default to active staff unless explicitly requested otherwise
+    // Only filter by active status if explicitly passed (true or false)
     if (typeof filters.isActive === 'boolean') {
       query.isActive = filters.isActive;
-    } else {
-      query.isActive = true;
     }
 
     // Search across name, department, and license number
@@ -49,7 +47,7 @@ export class StaffService {
   }
 
   /**
-   * Get a single staff member by ID
+   * Fetch a single staff member by ID
    */
   public static async getStaffById(staffId: string, hospitalId: string) {
     const staff = await Staff.findOne({ _id: staffId, hospitalId }).lean();
@@ -81,7 +79,7 @@ export class StaffService {
   }
 
   /**
-   * Toggle active/inactive status of a staff member
+   * Toggle active/inactive status for a staff member
    */
   public static async toggleStaffStatus(staffId: string, hospitalId: string) {
     const staff = await Staff.findOne({ _id: staffId, hospitalId });
