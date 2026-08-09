@@ -30,4 +30,4 @@ const AppointmentSchema = new Schema<IAppointmentDocument>(
   { timestamps: true }
 );
 
-export const AppointmentModel = model<IAppointmentDocument>('Appointment', AppointmentSchema);
+export const AppointmentModel = model<IAppointmentDocument>('Appointment', AppointmentSchema);      
