@@ -2,6 +2,9 @@ import { Staff } from './staff.model.js';
 import { CreateStaffDTO, UpdateStaffDTO, StaffRole } from './staff.types.js';
 
 export class StaffService {
+  /**
+   * Create a new staff member for a specific hospital
+   */
   public static async createStaff(hospitalId: string, dto: CreateStaffDTO) {
     const staff = await Staff.create({
       ...dto,
@@ -10,40 +13,55 @@ export class StaffService {
     return staff;
   }
 
+  /**
+   * Fetch hospital staff with optional role, search query, and active status filters
+   */
   public static async getHospitalStaff(
     hospitalId: string,
     filters: { role?: StaffRole; search?: string; isActive?: boolean }
   ) {
     const query: any = { hospitalId };
 
+    // Filter by role if provided
     if (filters.role) {
       query.role = filters.role;
     }
 
+    // Default to active staff unless explicitly requested otherwise
     if (typeof filters.isActive === 'boolean') {
       query.isActive = filters.isActive;
+    } else {
+      query.isActive = true;
     }
 
-    if (filters.search) {
+    // Search across name, department, and license number
+    if (filters.search && filters.search.trim() !== '') {
+      const searchTerm = filters.search.trim();
       query.$or = [
-        { firstName: { $regex: filters.search, $options: 'i' } },
-        { lastName: { $regex: filters.search, $options: 'i' } },
-        { department: { $regex: filters.search, $options: 'i' } },
-        { licenseNumber: { $regex: filters.search, $options: 'i' } },
+        { firstName: { $regex: searchTerm, $options: 'i' } },
+        { lastName: { $regex: searchTerm, $options: 'i' } },
+        { department: { $regex: searchTerm, $options: 'i' } },
+        { licenseNumber: { $regex: searchTerm, $options: 'i' } },
       ];
     }
 
-    return Staff.find(query).sort({ lastName: 1, firstName: 1 });
+    return Staff.find(query).sort({ lastName: 1, firstName: 1 }).lean();
   }
 
+  /**
+   * Get a single staff member by ID
+   */
   public static async getStaffById(staffId: string, hospitalId: string) {
-    const staff = await Staff.findOne({ _id: staffId, hospitalId });
+    const staff = await Staff.findOne({ _id: staffId, hospitalId }).lean();
     if (!staff) {
       throw new Error('Staff member not found');
     }
     return staff;
   }
 
+  /**
+   * Update staff member details
+   */
   public static async updateStaff(
     staffId: string,
     hospitalId: string,
@@ -62,6 +80,9 @@ export class StaffService {
     return staff;
   }
 
+  /**
+   * Toggle active/inactive status of a staff member
+   */
   public static async toggleStaffStatus(staffId: string, hospitalId: string) {
     const staff = await Staff.findOne({ _id: staffId, hospitalId });
     if (!staff) {
