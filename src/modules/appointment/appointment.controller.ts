@@ -17,12 +17,15 @@ interface AuthenticatedRequest<Params = Record<string, string>, ResBody = any, R
 }
 
 export class AppointmentController {
+  private static getHospitalId(req: Request): string | null {
+    const authReq = req as AuthenticatedRequest;
+    const user = authReq.user;
+    return user?.hospitalId || user?.accountId || user?.id || user?._id || null;
+  }
+
   static async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as AuthenticatedRequest<{}, any, CreateAppointmentDTO>;
-      const user = authReq.user;
-      const hospitalId = user?.hospitalId || user?.accountId || user?.id || user?._id;
-
+      const hospitalId = AppointmentController.getHospitalId(req);
       if (!hospitalId) {
         res.status(400).json({
           success: false,
@@ -31,7 +34,7 @@ export class AppointmentController {
         return;
       }
 
-      const appointment = await AppointmentService.createAppointment(hospitalId, authReq.body);
+      const appointment = await AppointmentService.createAppointment(hospitalId, req.body as CreateAppointmentDTO);
 
       res.status(201).json({
         success: true,
@@ -44,10 +47,7 @@ export class AppointmentController {
 
   static async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as AuthenticatedRequest<{}, any, any, GetAppointmentsQueryDTO>;
-      const user = authReq.user;
-      const hospitalId = user?.hospitalId || user?.accountId || user?.id || user?._id;
-
+      const hospitalId = AppointmentController.getHospitalId(req);
       if (!hospitalId) {
         res.status(400).json({
           success: false,
@@ -56,7 +56,8 @@ export class AppointmentController {
         return;
       }
 
-      const result = await AppointmentService.getAppointments(hospitalId, authReq.query);
+      const query = req.query as GetAppointmentsQueryDTO;
+      const result = await AppointmentService.getAppointments(hospitalId, query);
 
       res.status(200).json({
         success: true,
@@ -69,9 +70,7 @@ export class AppointmentController {
 
   static async getById(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as unknown as AuthenticatedRequest<{ id: string }>;
-      const user = authReq.user;
-      const hospitalId = user?.hospitalId || user?.accountId || user?.id || user?._id;
+      const hospitalId = AppointmentController.getHospitalId(req);
       const appointmentId = req.params.id;
 
       if (!hospitalId) {
@@ -99,9 +98,7 @@ export class AppointmentController {
     next: NextFunction
   ): Promise<void> {
     try {
-      const authReq = req as unknown as AuthenticatedRequest<{ id: string }, any, UpdateAppointmentStatusDTO>;
-      const user = authReq.user;
-      const hospitalId = user?.hospitalId || user?.accountId || user?.id || user?._id;
+      const hospitalId = AppointmentController.getHospitalId(req);
       const appointmentId = req.params.id;
 
       if (!hospitalId) {
@@ -112,7 +109,7 @@ export class AppointmentController {
         return;
       }
 
-      const updated = await AppointmentService.updateStatus(hospitalId, appointmentId, authReq.body);
+      const updated = await AppointmentService.updateStatus(hospitalId, appointmentId, req.body);
 
       res.status(200).json({
         success: true,
