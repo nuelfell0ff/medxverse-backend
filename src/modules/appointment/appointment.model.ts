@@ -9,7 +9,8 @@ const AppointmentSchema = new Schema<IAppointmentDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-    doctorId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    // Changed ref from 'User' to 'Account' to match your auth model
+    doctorId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     appointmentDate: { type: Date, required: true, index: true },
     startTime: { type: String, required: true },
     endTime: { type: String },
@@ -30,4 +31,4 @@ const AppointmentSchema = new Schema<IAppointmentDocument>(
   { timestamps: true }
 );
 
-export const AppointmentModel = model<IAppointmentDocument>('Appointment', AppointmentSchema);      
+export const AppointmentModel = model<IAppointmentDocument>('Appointment', AppointmentSchema);
