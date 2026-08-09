@@ -4,17 +4,40 @@ import { protect, restrictTo } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
-// Protect all staff routes & ensure only HOSPITAL accounts can manage staff
-router.use(protect, restrictTo('HOSPITAL'));
+// Require authentication for all staff routes
+router.use(protect);
 
-router.route('/')
-  .post(StaffController.createStaff)
-  .get(StaffController.getStaff);
+// GET / - Read staff list (accessible to Hospital admins, Receptionists, Doctors, and Nurses for lookups)
+// POST / - Create staff (restricted to Hospital account admins)
+router
+  .route('/')
+  .get(
+    restrictTo('HOSPITAL', 'ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE'),
+    StaffController.getStaff
+  )
+  .post(
+    restrictTo('HOSPITAL', 'ADMIN'),
+    StaffController.createStaff
+  );
 
-router.route('/:id')
-  .get(StaffController.getStaffById)
-  .patch(StaffController.updateStaff);
+// GET /:id - Read single staff detail
+// PATCH /:id - Update staff details (restricted to Hospital admins)
+router
+  .route('/:id')
+  .get(
+    restrictTo('HOSPITAL', 'ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE'),
+    StaffController.getStaffById
+  )
+  .patch(
+    restrictTo('HOSPITAL', 'ADMIN'),
+    StaffController.updateStaff
+  );
 
-router.patch('/:id/toggle-status', StaffController.toggleStaffStatus);
+// Toggle active/inactive status (restricted to Hospital admins)
+router.patch(
+  '/:id/toggle-status',
+  restrictTo('HOSPITAL', 'ADMIN'),
+  StaffController.toggleStaffStatus
+);
 
 export default router;
