@@ -119,4 +119,4 @@ export class AppointmentController {
       next(error);
     }
   }
-}
+}  
