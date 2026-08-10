@@ -33,21 +33,33 @@ export class OutpatientService {
 
     const [encounters, total] = await Promise.all([
       OutpatientModel.find(filter)
-        .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
-        .populate('doctorId', 'firstName lastName role')
+        .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+        .populate('doctorId', 'firstName lastName role department')
         .sort({ queuedAt: 1 })
         .skip(skip)
         .limit(limit)
+        .lean()
         .exec(),
       OutpatientModel.countDocuments(filter),
     ]);
 
     return {
-      encounters,
+      encounters: encounters as unknown as IOutpatientDocument[],
       total,
       page,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  public async getEncounterById(
+    encounterId: string,
+    hospitalId: string
+  ): Promise<IOutpatientDocument | null> {
+    return OutpatientModel.findOne({ _id: encounterId, hospitalId })
+      .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+      .populate('doctorId', 'firstName lastName role department')
+      .lean()
+      .exec() as unknown as IOutpatientDocument | null;
   }
 
   public async recordVitals(
@@ -70,7 +82,11 @@ export class OutpatientService {
         },
       },
       { new: true }
-    ).exec();
+    )
+      .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+      .populate('doctorId', 'firstName lastName role department')
+      .lean()
+      .exec() as unknown as IOutpatientDocument | null;
   }
 
   public async startConsultation(
@@ -88,7 +104,11 @@ export class OutpatientService {
         },
       },
       { new: true }
-    ).exec();
+    )
+      .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+      .populate('doctorId', 'firstName lastName role department')
+      .lean()
+      .exec() as unknown as IOutpatientDocument | null;
   }
 
   public async completeConsultation(
@@ -107,7 +127,11 @@ export class OutpatientService {
         },
       },
       { new: true }
-    ).exec();
+    )
+      .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+      .populate('doctorId', 'firstName lastName role department')
+      .lean()
+      .exec() as unknown as IOutpatientDocument | null;
   }
 }
 
