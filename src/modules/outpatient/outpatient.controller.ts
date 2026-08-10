@@ -58,6 +58,25 @@ export class OutpatientController {
     }
   }
 
+  public async getEncounterById(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
+      const encounterId = req.params.id as string;
+
+      const encounter = await outpatientService.getEncounterById(encounterId, hospitalId);
+
+      if (!encounter) {
+        res.status(404).json({ success: false, message: 'Encounter not found' });
+        return;
+      }
+
+      res.status(200).json({ success: true, data: encounter });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   public async recordVitals(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
