@@ -65,6 +65,7 @@ export interface UpdateVitalsInput {
   nursingNotes?: string;
 }
 
+
 export interface CompleteConsultationInput {
   consultationNotes: string;
   diagnoses?: string[];
