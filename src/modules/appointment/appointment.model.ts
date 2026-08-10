@@ -1,4 +1,4 @@
-import { Schema, model } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 import {
   IAppointmentDocument,
   AppointmentStatus,
@@ -9,9 +9,8 @@ const AppointmentSchema = new Schema<IAppointmentDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-    // ⚠️ Verify 'Account' is the correct model name where doctor firstName, lastName, department exist.
-    // If doctors are in a Staff model, change 'Account' to 'Staff'.
-    doctorId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
+    // ✅ Point ref to 'Staff' so Mongoose populates doctor details from the Staff collection
+    doctorId: { type: Schema.Types.ObjectId, ref: 'Staff', required: true, index: true },
     appointmentDate: { type: Date, required: true, index: true },
     startTime: { type: String, required: true },
     endTime: { type: String },
@@ -32,4 +31,6 @@ const AppointmentSchema = new Schema<IAppointmentDocument>(
   { timestamps: true }
 );
 
-export const AppointmentModel = model<IAppointmentDocument>('Appointment', AppointmentSchema);
+export const AppointmentModel =
+  mongoose.models.Appointment ||
+  mongoose.model<IAppointmentDocument>('Appointment', AppointmentSchema);
