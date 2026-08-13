@@ -14,18 +14,46 @@ export class OutpatientController {
   public async createEncounter(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
+      // Fallback check for common auth payload variations
+      const hospitalId = authReq.user?.hospitalId || (authReq.user as any)?.hospital;
+
+      if (!hospitalId) {
+        res.status(400).json({ 
+          success: false, 
+          message: 'Validation Error: hospitalId is missing from user authentication token.' 
+        });
+        return;
+      }
 
       const { patientId, doctorId, departmentId, triagePriority, chiefComplaint } = req.body;
 
-      const encounter = await outpatientService.createEncounter({
+      if (!patientId) {
+        res.status(400).json({ success: false, message: 'Validation Error: patientId is required.' });
+        return;
+      }
+
+      if (!chiefComplaint || typeof chiefComplaint !== 'string' || !chiefComplaint.trim()) {
+        res.status(400).json({ success: false, message: 'Validation Error: chiefComplaint is required.' });
+        return;
+      }
+
+      // Build input payload and ONLY include optional ObjectIds if they are valid non-empty strings
+      const createInput: any = {
         hospitalId,
         patientId,
-        doctorId,
-        departmentId,
-        triagePriority: triagePriority as TriagePriority,
-        chiefComplaint,
-      });
+        chiefComplaint: chiefComplaint.trim(),
+        triagePriority: triagePriority || TriagePriority.STANDARD,
+      };
+
+      if (doctorId && typeof doctorId === 'string' && doctorId.trim() !== '') {
+        createInput.doctorId = doctorId;
+      }
+
+      if (departmentId && typeof departmentId === 'string' && departmentId.trim() !== '') {
+        createInput.departmentId = departmentId;
+      }
+
+      const encounter = await outpatientService.createEncounter(createInput);
 
       res.status(201).json({ success: true, data: encounter });
     } catch (error) {
@@ -36,7 +64,7 @@ export class OutpatientController {
   public async getQueue(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
+      const hospitalId = authReq.user?.hospitalId || (authReq.user as any)?.hospital;
 
       const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
@@ -61,7 +89,7 @@ export class OutpatientController {
   public async getEncounterById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
+      const hospitalId = authReq.user?.hospitalId || (authReq.user as any)?.hospital;
       const encounterId = req.params.id as string;
 
       const encounter = await outpatientService.getEncounterById(encounterId, hospitalId);
@@ -80,7 +108,7 @@ export class OutpatientController {
   public async recordVitals(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
+      const hospitalId = authReq.user?.hospitalId || (authReq.user as any)?.hospital;
       const encounterId = req.params.id as string;
 
       const { vitalSigns, nursingNotes } = req.body;
@@ -104,8 +132,8 @@ export class OutpatientController {
   public async startConsultation(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const doctorId = authReq.user._id;
+      const hospitalId = authReq.user?.hospitalId || (authReq.user as any)?.hospital;
+      const doctorId = authReq.user?._id;
       const encounterId = req.params.id as string;
 
       const updated = await outpatientService.startConsultation(encounterId, hospitalId, doctorId);
@@ -124,7 +152,7 @@ export class OutpatientController {
   public async completeConsultation(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
+      const hospitalId = authReq.user?.hospitalId || (authReq.user as any)?.hospital;
       const encounterId = req.params.id as string;
 
       const { consultationNotes, diagnoses } = req.body;
