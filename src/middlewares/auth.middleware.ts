@@ -9,7 +9,16 @@ export interface AuthRequest extends Request {
     email: string;
     role?: string;
   };
-  user?: any;
+  user?: {
+    _id: string;
+    hospitalId: string;
+    accountId?: string;
+    accountType?: string;
+    name?: string;
+    email?: string;
+    role?: string;
+    [key: string]: unknown;
+  };
 }
 
 export const authenticateAccount = (
@@ -33,14 +42,27 @@ export const authenticateAccount = (
     ) as any;
 
     req.account = decoded;
-    req.user = decoded; // Attach to req.user for controllers expecting req.user
+
+    // Resolve hospitalId and _id regardless of JWT payload property naming
+    const resolvedHospitalId =
+      decoded.hospitalId || decoded.accountId || decoded.hospital || decoded._id || decoded.id;
+    const resolvedUserId = decoded._id || decoded.id || decoded.accountId;
+
+    // Attach normalized req.user so downstream controllers find hospitalId and _id
+    req.user = {
+      ...decoded,
+      _id: resolvedUserId,
+      hospitalId: resolvedHospitalId,
+      hospital: resolvedHospitalId,
+    };
+
     next();
   } catch (error) {
     res.status(401).json({ success: false, message: 'Invalid or expired token.' });
   }
 };
 
-// Restrict access based on AccountType or User Role (e.g., restrictTo('HOSPITAL', 'ADMIN', 'DOCTOR', 'LAB_TECHNICIAN'))
+// Restrict access based on AccountType or User Role
 export const restrictTo = (...allowedRoles: string[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
     const role = req.user?.role || req.account?.accountType;
