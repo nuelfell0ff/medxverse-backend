@@ -8,7 +8,7 @@ import {
 
 const SurgicalTeamMemberSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
     role: {
       type: String,
       enum: ['PRIMARY_SURGEON', 'ASSISTING_SURGEON', 'ANAESTHETIST', 'SCRUB_NURSE', 'CIRCULATING_NURSE'],
@@ -36,7 +36,7 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-    leadSurgeonId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    leadSurgeonId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     theatreId: { type: String, required: true, index: true },
     procedureName: { type: String, required: true, trim: true },
     icdCode: { type: String, trim: true },
