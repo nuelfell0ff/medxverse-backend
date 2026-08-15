@@ -52,7 +52,7 @@ const DispenseRecordSchema = new Schema<IDispenseRecordDocument>(
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
     consultationId: { type: Schema.Types.ObjectId, ref: 'Consultation', index: true },
-    dispensedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    dispensedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true }, // ✅ Updated to 'Account'
     items: { type: [DispenseItemSchema], required: true },
     totalAmount: { type: Number, required: true, min: 0 },
     status: {
