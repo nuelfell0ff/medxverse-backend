@@ -7,11 +7,24 @@ import v1Router from './routes/index.js';
 
 const app: Application = express();
 
+// Allowed origins
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://medxverse-hms.vercel.app',
+];
+
 // Middleware Setup
 app.use(
   cors({
-    origin: 'http://localhost:3000', 'https://medxverse-hms.vercel.app', // Explicit frontend origin
-    credentials: true,               // Allow cookies / authorization headers
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, or Postman)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true, // Allow cookies / authorization headers
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
