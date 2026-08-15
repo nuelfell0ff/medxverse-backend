@@ -10,7 +10,7 @@ const app: Application = express();
 // Middleware Setup
 app.use(
   cors({
-    origin: 'http://localhost:3000', // Explicit frontend origin
+    origin: 'http://localhost:3000', 'https://medxverse-hms.vercel.app', // Explicit frontend origin
     credentials: true,               // Allow cookies / authorization headers
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
