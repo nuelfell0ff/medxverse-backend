@@ -104,14 +104,21 @@ export class SurgeryService {
     const existingCase = await SurgeryCaseModel.findOne({ _id: caseId, hospitalId });
     if (!existingCase) return null;
 
-    const preOp = existingCase.preOpAssessment || {};
+    const preOp = (existingCase.preOpAssessment
+      ? (existingCase.preOpAssessment as Record<string, any>).toObject?.() || existingCase.preOpAssessment
+      : {}) as Record<string, any>;
 
     if (input.asaClassification) preOp.asaClassification = input.asaClassification;
     if (input.mallampatiScore) preOp.mallampatiScore = input.mallampatiScore;
     if (input.vteRiskScore) preOp.vteRiskScore = input.vteRiskScore;
     if (input.infectionScreeningNotes) preOp.infectionScreeningNotes = input.infectionScreeningNotes;
     if (input.pregnancyStatus) preOp.pregnancyStatus = input.pregnancyStatus;
-    if (input.preOpVitals) preOp.preOpVitals = { ...preOp.preOpVitals, ...input.preOpVitals };
+    if (input.preOpVitals) {
+      const existingVitals = (preOp.preOpVitals
+        ? (preOp.preOpVitals as Record<string, any>).toObject?.() || preOp.preOpVitals
+        : {}) as Record<string, any>;
+      preOp.preOpVitals = { ...existingVitals, ...input.preOpVitals };
+    }
 
     if (input.clearedForSurgery !== undefined) {
       preOp.clearedForSurgery = input.clearedForSurgery;
@@ -160,7 +167,7 @@ export class SurgeryService {
     };
 
     const stageData = {
-      ...input.data,
+      ...(input.data as Record<string, any>),
       completed: true,
       completedAt: new Date(),
       completedBy: new Types.ObjectId(input.completedBy),
@@ -218,7 +225,11 @@ export class SurgeryService {
     const existingCase = await SurgeryCaseModel.findOne({ _id: caseId, hospitalId });
     if (!existingCase) return null;
 
-    const updatedDocs = { ...(existingCase.intraopDocs || {}), ...input };
+    const existingDocs = (existingCase.intraopDocs
+      ? (existingCase.intraopDocs as Record<string, any>).toObject?.() || existingCase.intraopDocs
+      : {}) as Record<string, any>;
+
+    const updatedDocs: Record<string, any> = { ...existingDocs, ...(input as Record<string, any>) };
     delete updatedDocs.consumablesUsed;
     delete updatedDocs.equipmentChecklist;
 
@@ -245,9 +256,16 @@ export class SurgeryService {
     if (!existingCase) return null;
 
     const now = new Date();
+
+    const existingDocs = (existingCase.intraopDocs
+      ? (existingCase.intraopDocs as Record<string, any>).toObject?.() || existingCase.intraopDocs
+      : {}) as Record<string, any>;
+
+    const inputDocs = (input.intraopDocs || {}) as Record<string, any>;
+
     const intraopDocs = {
-      ...(existingCase.intraopDocs || {}),
-      ...(input.intraopDocs || {}),
+      ...existingDocs,
+      ...inputDocs,
       closureTime: now,
     };
 
@@ -285,4 +303,4 @@ export class SurgeryService {
 }
 
 export const surgeryService = new SurgeryService();
-                           
+      
