@@ -1,278 +1,217 @@
 import { Types } from 'mongoose';
-
 import { SurgeryCaseModel } from './surgery.model.js';
-
 import {
-  AddMedicationInput,
-  AddVitalsLogInput,
-  CompleteSurgeryInput,
   CreateSurgeryCaseInput,
   GetSurgeryCasesQuery,
   ISurgeryCaseDocument,
-  MedicationTiming,
-  RescheduleSurgeryInput,
-  SurgeryPriority,
   SurgeryStatus,
-  SurgicalRole,
-  UpdateAnesthesiaInput,
-  UpdateConsentInput,
-  UpdateIntraopInput,
   UpdatePreOpInput,
-  UpdateRecoveryInput,
+  UpdateConsentInput,
   UpdateWHOChecklistInput,
+  AddVitalsLogInput,
+  UpdateIntraopInput,
+  CompleteSurgeryInput,
+  UpdateAnesthesiaInput,
+  PriorityLevel,
+  SurgicalRole,
+  UrgencyLevel,
 } from './surgery.types.js';
 
 export class SurgeryService {
-  /**
-   * ============================================================
-   * INTERNAL HELPERS
-   * ============================================================
-   */
+  private readonly activeStatuses = [
+    SurgeryStatus.SCHEDULED,
+    SurgeryStatus.PRE_OP_PREPARATION,
+    SurgeryStatus.IN_PROGRESS,
+  ];
 
-  private validateObjectId(
-    value: string,
-    fieldName: string
-  ): void {
-    if (!Types.ObjectId.isValid(value)) {
-      throw new Error(`Invalid ${fieldName}.`);
-    }
-  }
-
-  private validateScheduleTimes(
-    start: Date,
-    end: Date
-  ): void {
-    if (
-      Number.isNaN(start.getTime()) ||
-      Number.isNaN(end.getTime())
-    ) {
-      throw new Error(
-        'Invalid scheduled start or end time.'
-      );
+  private validateTimeRange(start: Date, end: Date): void {
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new Error('Invalid surgery date/time.');
     }
 
     if (end <= start) {
-      throw new Error(
-        'Scheduled end time must be after scheduled start time.'
-      );
-    }
-
-    if (start < new Date()) {
-      throw new Error(
-        'Scheduled start time cannot be in the past.'
-      );
+      throw new Error('Scheduled end time must be after scheduled start time.');
     }
   }
 
-  private async checkTheatreConflict(
+  private calculateDuration(start: Date, end: Date): number {
+    return Math.ceil((end.getTime() - start.getTime()) / 60000);
+  }
+
+  private async checkConflicts(
     hospitalId: string,
     theatreId: string,
     start: Date,
     end: Date,
-    excludeCaseId?: string
+    excludeCaseId?: string,
+    leadSurgeonId?: string,
+    surgicalTeam?: CreateSurgeryCaseInput['surgicalTeam']
   ): Promise<void> {
-    const query: Record<string, unknown> = {
+    const baseFilter: Record<string, unknown> = {
       hospitalId,
-      theatreId,
-
-      status: {
-        $in: [
-          SurgeryStatus.SCHEDULED,
-          SurgeryStatus.PRE_OP_PREPARATION,
-          SurgeryStatus.READY_FOR_SURGERY,
-          SurgeryStatus.IN_PROGRESS,
-          SurgeryStatus.RECOVERY,
-        ],
-      },
-
-      scheduledStartTime: {
-        $lt: end,
-      },
-
-      scheduledEndTime: {
-        $gt: start,
-      },
+      status: { $in: this.activeStatuses },
+      $or: [
+        {
+          scheduledStartTime: { $lt: end },
+          scheduledEndTime: { $gt: start },
+        },
+      ],
     };
 
-    if (
-      excludeCaseId &&
-      Types.ObjectId.isValid(excludeCaseId)
-    ) {
-      query._id = {
-        $ne: excludeCaseId,
-      };
+    if (excludeCaseId) {
+      baseFilter._id = { $ne: excludeCaseId };
     }
 
-    const conflict =
-      await SurgeryCaseModel.findOne(query);
+    const theatreConflict = await SurgeryCaseModel.findOne({
+      ...baseFilter,
+      theatreId,
+    });
 
-    if (conflict) {
+    if (theatreConflict) {
       throw new Error(
-        `Operating Theatre ${theatreId} is already booked during this time period.`
+        `Operating Theatre ${theatreId} is already booked for this time slot.`
       );
+    }
+
+    if (leadSurgeonId) {
+      const surgeonConflict = await SurgeryCaseModel.findOne({
+        ...baseFilter,
+        leadSurgeonId,
+      });
+
+      if (surgeonConflict) {
+        throw new Error('The lead surgeon is already assigned to another surgery during this time.');
+      }
+    }
+
+    const teamIds =
+      surgicalTeam
+        ?.map((member) => member.userId)
+        .filter(Boolean) || [];
+
+    if (teamIds.length) {
+      const teamConflict = await SurgeryCaseModel.findOne({
+        ...baseFilter,
+        'surgicalTeam.userId': {
+          $in: teamIds.map((id) => new Types.ObjectId(id)),
+        },
+      });
+
+      if (teamConflict) {
+        throw new Error('One or more surgical team members are already assigned during this time.');
+      }
     }
   }
-
-  private validateSurgicalTeam(
-    surgicalTeam: CreateSurgeryCaseInput['surgicalTeam']
-  ): void {
-    if (!surgicalTeam?.length) {
-      return;
-    }
-
-    const users = new Set<string>();
-
-    for (const member of surgicalTeam) {
-      if (!Types.ObjectId.isValid(member.userId)) {
-        throw new Error(
-          `Invalid surgical team member ID: ${member.userId}`
-        );
-      }
-
-      if (users.has(member.userId)) {
-        throw new Error(
-          'A surgical team member cannot be assigned more than once.'
-        );
-      }
-
-      users.add(member.userId);
-    }
-
-    const primarySurgeons =
-      surgicalTeam.filter(
-        (member) =>
-          member.role === SurgicalRole.PRIMARY_SURGEON
-      );
-
-    if (primarySurgeons.length > 1) {
-      throw new Error(
-        'Only one primary surgeon can be assigned to a surgical case.'
-      );
-    }
-  }
-
-  /**
-   * ============================================================
-   * SCHEDULE SURGERY
-   * ============================================================
-   */
 
   public async scheduleCase(
     input: CreateSurgeryCaseInput
   ): Promise<ISurgeryCaseDocument> {
-    this.validateObjectId(
+    const start = new Date(input.scheduledStartTime);
+    const end = new Date(input.scheduledEndTime);
+
+    this.validateTimeRange(start, end);
+
+    await this.checkConflicts(
       input.hospitalId,
-      'hospital ID'
-    );
-
-    this.validateObjectId(
-      input.patientId,
-      'patient ID'
-    );
-
-    this.validateObjectId(
+      input.theatreId,
+      start,
+      end,
+      undefined,
       input.leadSurgeonId,
-      'lead surgeon ID'
-    );
-
-    if (!input.theatreId?.trim()) {
-      throw new Error(
-        'Operating theatre is required.'
-      );
-    }
-
-    if (!input.procedureName?.trim()) {
-      throw new Error(
-        'Procedure name is required.'
-      );
-    }
-
-    this.validateScheduleTimes(
-      input.scheduledStartTime,
-      input.scheduledEndTime
-    );
-
-    this.validateSurgicalTeam(
       input.surgicalTeam
     );
 
-    await this.checkTheatreConflict(
-      input.hospitalId,
-      input.theatreId,
-      input.scheduledStartTime,
-      input.scheduledEndTime
+    const surgicalTeam = (input.surgicalTeam || []).map((member) => ({
+      userId: new Types.ObjectId(member.userId),
+      role: member.role,
+      credentialVerified: member.credentialVerified ?? false,
+      available: member.available ?? true,
+      notes: member.notes,
+    }));
+
+    const leadAlreadyAssigned = surgicalTeam.some(
+      (member) =>
+        member.userId.toString() === input.leadSurgeonId &&
+        member.role === SurgicalRole.PRIMARY_SURGEON
     );
 
-    const surgicalTeam =
-      (input.surgicalTeam || []).map((member) => ({
-        userId: new Types.ObjectId(member.userId),
-        role: member.role,
-        credentialVerified:
-          member.credentialVerified ?? false,
-        assignedAt: new Date(),
-        notes: member.notes,
-      }));
-
-    const duration =
-      input.estimatedDurationMinutes ||
-      Math.round(
-        (input.scheduledEndTime.getTime() -
-          input.scheduledStartTime.getTime()) /
-          60000
-      );
-
-    const surgeryCase =
-      await SurgeryCaseModel.create({
-        hospitalId: new Types.ObjectId(
-          input.hospitalId
-        ),
-
-        patientId: new Types.ObjectId(
-          input.patientId
-        ),
-
-        leadSurgeonId: new Types.ObjectId(
-          input.leadSurgeonId
-        ),
-
-        theatreId: input.theatreId.trim(),
-
-        procedureName:
-          input.procedureName.trim(),
-
-        icdCode: input.icdCode?.trim(),
-
-        urgency:
-          input.urgency ?? 'ELECTIVE',
-
-        priority:
-          input.priority ??
-          SurgeryPriority.ROUTINE,
-
-        status: SurgeryStatus.SCHEDULED,
-
-        scheduledStartTime:
-          input.scheduledStartTime,
-
-        scheduledEndTime:
-          input.scheduledEndTime,
-
-        estimatedDurationMinutes: duration,
-
-        anesthesiaType:
-          input.anesthesiaType,
-
-        surgicalTeam,
+    if (!leadAlreadyAssigned) {
+      surgicalTeam.unshift({
+        userId: new Types.ObjectId(input.leadSurgeonId),
+        role: SurgicalRole.PRIMARY_SURGEON,
+        credentialVerified: false,
+        available: true,
       });
+    }
 
-    return surgeryCase;
+    const estimatedDurationMinutes =
+      input.estimatedDurationMinutes ||
+      this.calculateDuration(start, end);
+
+    return SurgeryCaseModel.create({
+      ...input,
+      hospitalId: new Types.ObjectId(input.hospitalId),
+      patientId: new Types.ObjectId(input.patientId),
+      leadSurgeonId: new Types.ObjectId(input.leadSurgeonId),
+      scheduledStartTime: start,
+      scheduledEndTime: end,
+      estimatedDurationMinutes,
+      urgency: input.urgency || UrgencyLevel.ELECTIVE,
+      priority: input.priority || PriorityLevel.NORMAL,
+      surgicalTeam,
+      status: SurgeryStatus.SCHEDULED,
+    });
   }
 
-  /**
-   * ============================================================
-   * GET CASES
-   * ============================================================
-   */
+  public async rescheduleCase(
+    caseId: string,
+    hospitalId: string,
+    startTime: Date,
+    endTime: Date
+  ): Promise<ISurgeryCaseDocument | null> {
+    this.validateTimeRange(startTime, endTime);
+
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    });
+
+    if (!existingCase) return null;
+
+    if (
+      [SurgeryStatus.IN_PROGRESS, SurgeryStatus.COMPLETED].includes(
+        existingCase.status
+      )
+    ) {
+      throw new Error('This surgery cannot be rescheduled.');
+    }
+
+    await this.checkConflicts(
+      hospitalId,
+      existingCase.theatreId,
+      startTime,
+      endTime,
+      caseId,
+      existingCase.leadSurgeonId.toString(),
+      existingCase.surgicalTeam.map((member) => ({
+        userId: member.userId.toString(),
+        role: member.role,
+      }))
+    );
+
+    return SurgeryCaseModel.findOneAndUpdate(
+      { _id: caseId, hospitalId },
+      {
+        $set: {
+          scheduledStartTime: startTime,
+          scheduledEndTime: endTime,
+          estimatedDurationMinutes: this.calculateDuration(startTime, endTime),
+          status: SurgeryStatus.SCHEDULED,
+        },
+      },
+      { new: true }
+    ).exec();
+  }
 
   public async getCases(
     hospitalId: string,
@@ -283,55 +222,24 @@ export class SurgeryService {
     page: number;
     totalPages: number;
   }> {
-    const page = Math.max(
-      1,
-      query.page || 1
-    );
-
-    const limit = Math.min(
-      50,
-      Math.max(1, query.limit || 20)
-    );
-
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(100, Math.max(1, query.limit || 20));
     const skip = (page - 1) * limit;
 
     const filter: Record<string, unknown> = {
       hospitalId,
     };
 
-    if (query.status) {
-      filter.status = query.status;
-    }
-
-    if (query.urgency) {
-      filter.urgency = query.urgency;
-    }
-
-    if (query.priority) {
-      filter.priority = query.priority;
-    }
-
-    if (query.theatreId) {
-      filter.theatreId = query.theatreId;
-    }
-
-    if (query.leadSurgeonId) {
-      filter.leadSurgeonId =
-        query.leadSurgeonId;
-    }
-
-    if (query.patientId) {
-      filter.patientId = query.patientId;
-    }
+    if (query.status) filter.status = query.status;
+    if (query.urgency) filter.urgency = query.urgency;
+    if (query.priority) filter.priority = query.priority;
+    if (query.theatreId) filter.theatreId = query.theatreId;
+    if (query.leadSurgeonId) filter.leadSurgeonId = query.leadSurgeonId;
+    if (query.patientId) filter.patientId = query.patientId;
 
     if (query.date) {
-      const startOfDay = new Date(
-        `${query.date}T00:00:00`
-      );
-
-      const endOfDay = new Date(
-        `${query.date}T23:59:59.999`
-      );
+      const startOfDay = new Date(`${query.date}T00:00:00.000`);
+      const endOfDay = new Date(`${query.date}T23:59:59.999`);
 
       filter.scheduledStartTime = {
         $gte: startOfDay,
@@ -339,75 +247,43 @@ export class SurgeryService {
       };
     }
 
-    if (query.fromDate || query.toDate) {
-      const dateFilter: Record<string, Date> = {};
+    const [cases, total] = await Promise.all([
+      SurgeryCaseModel.find(filter)
+        .populate(
+          'patientId',
+          'firstName lastName mrn gender dateOfBirth'
+        )
+        .populate(
+          'leadSurgeonId',
+          'firstName lastName role'
+        )
+        .populate(
+          'surgicalTeam.userId',
+          'firstName lastName role'
+        )
+        .sort({
+          scheduledStartTime: 1,
+          priority: -1,
+        })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
 
-      if (query.fromDate) {
-        dateFilter.$gte =
-          new Date(query.fromDate);
-      }
-
-      if (query.toDate) {
-        dateFilter.$lte =
-          new Date(query.toDate);
-      }
-
-      filter.scheduledStartTime =
-        dateFilter;
-    }
-
-    const [cases, total] =
-      await Promise.all([
-        SurgeryCaseModel.find(filter)
-          .populate(
-            'patientId',
-            'firstName lastName mrn gender dateOfBirth'
-          )
-          .populate(
-            'leadSurgeonId',
-            'firstName lastName role'
-          )
-          .populate(
-            'surgicalTeam.userId',
-            'firstName lastName role'
-          )
-          .sort({
-            scheduledStartTime: 1,
-          })
-          .skip(skip)
-          .limit(limit)
-          .exec(),
-
-        SurgeryCaseModel.countDocuments(
-          filter
-        ),
-      ]);
+      SurgeryCaseModel.countDocuments(filter),
+    ]);
 
     return {
       cases,
       total,
       page,
-      totalPages: Math.ceil(
-        total / limit
-      ),
+      totalPages: Math.ceil(total / limit),
     };
   }
-
-  /**
-   * ============================================================
-   * GET CASE
-   * ============================================================
-   */
 
   public async getCaseById(
     caseId: string,
     hospitalId: string
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
     return SurgeryCaseModel.findOne({
       _id: caseId,
       hospitalId,
@@ -424,682 +300,153 @@ export class SurgeryService {
         'surgicalTeam.userId',
         'firstName lastName role'
       )
-      .populate(
-        'preOpAssessment.clearedBy',
-        'firstName lastName role'
-      )
       .exec();
   }
-
-  /**
-   * ============================================================
-   * PRE-OP ASSESSMENT
-   * ============================================================
-   */
 
   public async updatePreOpAssessment(
     caseId: string,
     hospitalId: string,
     input: UpdatePreOpInput
   ): Promise<ISurgeryCaseDocument | null> {
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    });
 
-    if (!existingCase) {
-      return null;
-    }
+    if (!existingCase) return null;
 
-    const existing =
-      existingCase.preOpAssessment
-        ? (
-            existingCase.preOpAssessment as any
-          ).toObject?.() ||
-          existingCase.preOpAssessment
-        : {};
+    const current = existingCase.preOpAssessment
+      ? existingCase.preOpAssessment.toObject()
+      : {};
 
-    const updated = {
-      ...existing,
+    const preOp = {
+      ...current,
       ...input,
-
       preOpVitals: {
-        ...(existing.preOpVitals || {}),
+        ...(current.preOpVitals || {}),
         ...(input.preOpVitals || {}),
       },
-
       optimizationChecklist: {
-        ...(existing.optimizationChecklist ||
-          {}),
-        ...(input.optimizationChecklist ||
-          {}),
+        ...(current.optimizationChecklist || {}),
+        ...(input.optimizationChecklist || {}),
       },
     };
 
-    if (input.clearedForSurgery) {
-      updated.clearedAt = new Date();
-      updated.clearedBy =
-        existingCase.updatedBy;
+    if (input.clearedForSurgery === true) {
+      preOp.clearedAt = new Date();
     }
 
-    const updatedCase =
-      await SurgeryCaseModel.findOneAndUpdate(
-        {
-          _id: caseId,
-          hospitalId,
+    return SurgeryCaseModel.findOneAndUpdate(
+      { _id: caseId, hospitalId },
+      {
+        $set: {
+          preOpAssessment: preOp,
+          status: SurgeryStatus.PRE_OP_PREPARATION,
         },
-        {
-          $set: {
-            preOpAssessment: updated,
-            status:
-              input.clearedForSurgery
-                ? SurgeryStatus.READY_FOR_SURGERY
-                : SurgeryStatus.PRE_OP_PREPARATION,
-          },
-        },
-        {
-          new: true,
-        }
-      ).exec();
-
-    return updatedCase;
+      },
+      { new: true }
+    ).exec();
   }
-
-  /**
-   * ============================================================
-   * CONSENT
-   * ============================================================
-   */
 
   public async updateConsent(
     caseId: string,
     hospitalId: string,
-    input: UpdateConsentInput,
-    recordedBy: string
+    input: UpdateConsentInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      recordedBy,
-      'recorded by ID'
-    );
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    });
 
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
+    if (!existingCase) return null;
 
-    if (!existingCase) {
-      return null;
-    }
+    const current = existingCase.consent
+      ? existingCase.consent.toObject()
+      : {
+          procedureConsent: false,
+          anesthesiaConsent: false,
+          bloodTransfusionConsent: false,
+          highRiskConsent: false,
+          additionalProcedureConsent: false,
+          signedByPatient: false,
+          currentVersion: 0,
+          history: [],
+        };
 
-    const previousVersion =
-      existingCase.consent
-        ?.currentVersion || 0;
+    const version = (current.currentVersion || 0) + 1;
 
-    const newVersion =
-      previousVersion + 1;
-
-    const signedAt =
-      input.signedByPatient
-        ? new Date()
-        : undefined;
-
-    const version = {
-      version: newVersion,
-
-      procedureConsent:
-        input.procedureConsent,
-
-      anesthesiaConsent:
-        input.anesthesiaConsent,
-
-      bloodTransfusionConsent:
-        input.bloodTransfusionConsent,
-
-      highRiskConsent:
-        input.highRiskConsent ?? false,
-
-      additionalProcedureConsent:
-        input.additionalProcedureConsent ??
-        false,
-
-      signedByPatient:
-        input.signedByPatient,
-
-      patientSignatureUrl:
-        input.patientSignatureUrl,
-
-      witnessName:
-        input.witnessName,
-
-      witnessSignatureUrl:
-        input.witnessSignatureUrl,
-
-      signedAt,
-
-      recordedBy:
-        new Types.ObjectId(recordedBy),
-
-      notes: input.notes,
+    const consent = {
+      ...current,
+      ...input,
+      currentVersion: version,
+      signedAt: new Date(),
     };
 
-    const updated =
-      await SurgeryCaseModel.findOneAndUpdate(
-        {
-          _id: caseId,
-          hospitalId,
-        },
-        {
-          $set: {
-            consent: {
-              ...input,
-              highRiskConsent:
-                input.highRiskConsent ??
-                false,
+    consent.history = [
+      ...(current.history || []),
+      {
+        type: input.type || 'PROCEDURE',
+        obtained: true,
+        signedByPatient: input.signedByPatient,
+        witnessName: input.witnessName,
+        witnessId: input.witnessId
+          ? new Types.ObjectId(input.witnessId)
+          : undefined,
+        digitalSignatureUrl: input.digitalSignatureUrl,
+        version,
+        signedAt: new Date(),
+        notes: input.notes,
+      },
+    ];
 
-              additionalProcedureConsent:
-                input.additionalProcedureConsent ??
-                false,
+    delete (consent as Record<string, unknown>).type;
 
-              signedAt,
-
-              currentVersion:
-                newVersion,
-
-              versionHistory: [
-                ...(existingCase.consent
-                  ?.versionHistory || []),
-                version,
-              ],
-            },
-          },
-        },
-        {
-          new: true,
-        }
-      ).exec();
-
-    return updated;
+    return SurgeryCaseModel.findOneAndUpdate(
+      { _id: caseId, hospitalId },
+      { $set: { consent } },
+      { new: true }
+    ).exec();
   }
-
-  /**
-   * ============================================================
-   * WHO CHECKLIST
-   * ============================================================
-   */
 
   public async updateWHOChecklist(
     caseId: string,
     hospitalId: string,
-    input: UpdateWHOChecklistInput
+    input: UpdateWHOChecklistInput,
+    completedBy: string
   ): Promise<ISurgeryCaseDocument | null> {
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    });
 
-    if (!existingCase) {
-      return null;
-    }
+    if (!existingCase) return null;
 
-    if (
-      ![
-        'signIn',
-        'timeOut',
-        'signOut',
-      ].includes(input.stage)
-    ) {
-      throw new Error(
-        'Invalid WHO checklist stage.'
-      );
-    }
+    const checklist = existingCase.whoChecklist.toObject();
 
-    const stageData = {
+    checklist[input.stage] = {
+      ...checklist[input.stage],
       ...input.data,
-
       completed: true,
-
       completedAt: new Date(),
-
-      completedBy:
-        new Types.ObjectId(
-          input.completedBy
-        ),
+      completedBy: new Types.ObjectId(completedBy),
     };
 
     return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-      },
+      { _id: caseId, hospitalId },
       {
         $set: {
-          [`whoChecklist.${input.stage}`]:
-            stageData,
+          whoChecklist: checklist,
         },
       },
-      {
-        new: true,
-      }
+      { new: true }
     ).exec();
   }
-
-  /**
-   * ============================================================
-   * VITALS
-   * ============================================================
-   */
 
   public async addVitalsLog(
     caseId: string,
     hospitalId: string,
     input: AddVitalsLogInput
   ): Promise<ISurgeryCaseDocument | null> {
-    const timestamp =
-      input.timestamp
-        ? new Date(input.timestamp)
-        : new Date();
-
-    if (
-      Number.isNaN(timestamp.getTime())
-    ) {
-      throw new Error(
-        'Invalid vitals timestamp.'
-      );
-    }
-
-    return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-      },
-      {
-        $push: {
-          vitalsTimeline: {
-            ...input,
-            timestamp,
-          },
-        },
-      },
-      {
-        new: true,
-      }
-    ).exec();
-  }
-
-  /**
-   * ============================================================
-   * START SURGERY
-   * ============================================================
-   */
-
-  public async startSurgery(
-    caseId: string,
-    hospitalId: string
-  ): Promise<ISurgeryCaseDocument | null> {
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
-
-    if (!existingCase) {
-      return null;
-    }
-
-    if (
-      ![
-        SurgeryStatus.SCHEDULED,
-        SurgeryStatus.PRE_OP_PREPARATION,
-        SurgeryStatus.READY_FOR_SURGERY,
-      ].includes(existingCase.status)
-    ) {
-      throw new Error(
-        `Surgery cannot be started while case status is ${existingCase.status}.`
-      );
-    }
-
-    if (
-      !existingCase.preOpAssessment
-        ?.clearedForSurgery
-    ) {
-      throw new Error(
-        'Patient has not been cleared for surgery.'
-      );
-    }
-
-    const consent =
-      existingCase.consent;
-
-    if (
-      !consent?.procedureConsent ||
-      !consent.anesthesiaConsent ||
-      !consent.signedByPatient
-    ) {
-      throw new Error(
-        'Required surgical consent has not been completed.'
-      );
-    }
-
-    const now = new Date();
-
-    return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-      },
-      {
-        $set: {
-          status:
-            SurgeryStatus.IN_PROGRESS,
-
-          actualStartTime: now,
-
-          'intraopDocs.procedureStartTime':
-            now,
-        },
-      },
-      {
-        new: true,
-      }
-    ).exec();
-  }
-
-  /**
-   * ============================================================
-   * INTRAOPERATIVE DOCUMENTATION
-   * ============================================================
-   */
-
-  public async updateIntraopDocs(
-    caseId: string,
-    hospitalId: string,
-    input: UpdateIntraopInput
-  ): Promise<ISurgeryCaseDocument | null> {
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
-
-    if (!existingCase) {
-      return null;
-    }
-
-    const existingDocs =
-      existingCase.intraopDocs
-        ? (
-            existingCase.intraopDocs as any
-          ).toObject?.() ||
-          existingCase.intraopDocs
-        : {};
-
-    const {
-      consumablesUsed,
-      equipmentChecklist,
-      ...documentation
-    } = input;
-
-    const intraopDocs = {
-      ...existingDocs,
-      ...documentation,
-    };
-
-    const update: Record<string, any> = {
-      $set: {
-        intraopDocs,
-      },
-    };
-
-    if (consumablesUsed) {
-      update.$set.consumablesUsed =
-        consumablesUsed;
-    }
-
-    if (equipmentChecklist) {
-      update.$set.equipmentChecklist =
-        equipmentChecklist;
-    }
-
-    return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-      },
-      update,
-      {
-        new: true,
-      }
-    ).exec();
-  }
-
-  /**
-   * ============================================================
-   * ANAESTHESIA RECORD
-   * ============================================================
-   */
-
-  public async updateAnesthesiaRecord(
-    caseId: string,
-    hospitalId: string,
-    input: UpdateAnesthesiaInput
-  ): Promise<ISurgeryCaseDocument | null> {
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
-
-    if (!existingCase) {
-      return null;
-    }
-
-    const existing =
-      existingCase.anesthesiaRecord
-        ? (
-            existingCase.anesthesiaRecord as any
-          ).toObject?.() ||
-          existingCase.anesthesiaRecord
-        : {};
-
-    const anesthesiaRecord = {
-      ...existing,
-      ...input,
-    };
-
-    return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-      },
-      {
-        $set: {
-          anesthesiaRecord,
-        },
-      },
-      {
-        new: true,
-      }
-    ).exec();
-  }
-
-  /**
-   * ============================================================
-   * MEDICATION
-   * ============================================================
-   */
-
-  public async addMedication(
-    caseId: string,
-    hospitalId: string,
-    input: AddMedicationInput,
-    administeredBy?: string
-  ): Promise<ISurgeryCaseDocument | null> {
-    const medication = {
-      ...input,
-
-      administered:
-        input.administered ?? false,
-
-      administeredAt:
-        input.administered
-          ? input.administeredAt ||
-            new Date()
-          : undefined,
-
-      administeredBy:
-        input.administered &&
-        administeredBy &&
-        Types.ObjectId.isValid(
-          administeredBy
-        )
-          ? new Types.ObjectId(
-              administeredBy
-            )
-          : undefined,
-    };
-
-    const target =
-      input.timing ===
-      MedicationTiming.PRE_OPERATIVE
-        ? 'preOpMedications'
-        : 'intraOpMedications';
-
-    return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-      },
-      {
-        $push: {
-          [target]: medication,
-        },
-      },
-      {
-        new: true,
-      }
-    ).exec();
-  }
-
-  /**
-   * ============================================================
-   * RECOVERY
-   * ============================================================
-   */
-
-  public async updateRecovery(
-    caseId: string,
-    hospitalId: string,
-    input: UpdateRecoveryInput
-  ): Promise<ISurgeryCaseDocument | null> {
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
-
-    if (!existingCase) {
-      return null;
-    }
-
-    const existing =
-      existingCase.recoveryAssessment
-        ? (
-            existingCase.recoveryAssessment as any
-          ).toObject?.() ||
-          existingCase.recoveryAssessment
-        : {};
-
-    const recoveryAssessment = {
-      ...existing,
-      ...input,
-    };
-
-    return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-      },
-      {
-        $set: {
-          recoveryAssessment,
-          status:
-            SurgeryStatus.RECOVERY,
-        },
-      },
-      {
-        new: true,
-      }
-    ).exec();
-  }
-
-  /**
-   * ============================================================
-   * COMPLETE SURGERY
-   * ============================================================
-   */
-
-  public async completeSurgery(
-    caseId: string,
-    hospitalId: string,
-    input: CompleteSurgeryInput
-  ): Promise<ISurgeryCaseDocument | null> {
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
-
-    if (!existingCase) {
-      return null;
-    }
-
-    if (
-      existingCase.status !==
-      SurgeryStatus.IN_PROGRESS
-    ) {
-      throw new Error(
-        'Only an in-progress surgery can be completed.'
-      );
-    }
-
-    const who =
-      existingCase.whoChecklist;
-
-    if (!who.signOut.completed) {
-      throw new Error(
-        'WHO Sign Out checklist must be completed before surgery can be completed.'
-      );
-    }
-
-    const now = new Date();
-
-    const existingDocs =
-      existingCase.intraopDocs
-        ? (
-            existingCase.intraopDocs as any
-          ).toObject?.() ||
-          existingCase.intraopDocs
-        : {};
-
-    const inputDocs =
-      input.intraopDocs || {};
-
-    const intraopDocs = {
-      ...existingDocs,
-      ...inputDocs,
-
-      procedureEndTime:
-        inputDocs.procedureEndTime ||
-        now,
-
-      closureTime:
-        inputDocs.closureTime ||
-        now,
-    };
-
     return SurgeryCaseModel.findOneAndUpdate(
       {
         _id: caseId,
@@ -1107,223 +454,371 @@ export class SurgeryService {
         status: SurgeryStatus.IN_PROGRESS,
       },
       {
-        $set: {
-          status:
-            SurgeryStatus.COMPLETED,
-
-          actualEndTime: now,
-
-          intraopDocs,
-
-          anesthesiaRecord:
-            input.anesthesiaRecord,
-
-          postOpNotes:
-            input.postOpNotes,
-
-          recoveryAssessment:
-            input.recoveryAssessment,
+        $push: {
+          vitalsTimeline: {
+            ...input,
+            timestamp: new Date(),
+          },
         },
       },
-      {
-        new: true,
-      }
+      { new: true }
     ).exec();
   }
 
-  /**
-   * ============================================================
-   * CANCEL
-   * ============================================================
-   */
+  public async updateAnesthesia(
+    caseId: string,
+    hospitalId: string,
+    input: UpdateAnesthesiaInput
+  ): Promise<ISurgeryCaseDocument | null> {
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    });
+
+    if (!existingCase) return null;
+
+    const current = existingCase.anesthesiaRecord
+      ? existingCase.anesthesiaRecord.toObject()
+      : {};
+
+    return SurgeryCaseModel.findOneAndUpdate(
+      { _id: caseId, hospitalId },
+      {
+        $set: {
+          anesthesiaRecord: {
+            ...current,
+            ...input,
+          },
+        },
+      },
+      { new: true }
+    ).exec();
+  }
+
+  public async updateIntraopDocs(
+    caseId: string,
+    hospitalId: string,
+    input: UpdateIntraopInput
+  ): Promise<ISurgeryCaseDocument | null> {
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    });
+
+    if (!existingCase) return null;
+
+    const currentDocs = existingCase.intraopDocs
+      ? existingCase.intraopDocs.toObject()
+      : {};
+
+    const update: Record<string, unknown> = {
+      intraopDocs: {
+        ...currentDocs,
+        ...input,
+      },
+    };
+
+    if (input.consumablesUsed !== undefined) {
+      update.consumablesUsed = input.consumablesUsed;
+    }
+
+    if (input.equipmentChecklist !== undefined) {
+      update.equipmentChecklist = input.equipmentChecklist;
+    }
+
+    if (input.instrumentChecklist !== undefined) {
+      update.instrumentChecklist = input.instrumentChecklist;
+    }
+
+    if (input.implantsUsed !== undefined) {
+      update.implantsUsed = input.implantsUsed;
+    }
+
+    delete (update.intraopDocs as Record<string, unknown>)
+      .consumablesUsed;
+
+    delete (update.intraopDocs as Record<string, unknown>)
+      .equipmentChecklist;
+
+    delete (update.intraopDocs as Record<string, unknown>)
+      .instrumentChecklist;
+
+    return SurgeryCaseModel.findOneAndUpdate(
+      { _id: caseId, hospitalId },
+      { $set: update },
+      { new: true }
+    ).exec();
+  }
+
+  public async startSurgery(
+    caseId: string,
+    hospitalId: string
+  ): Promise<ISurgeryCaseDocument | null> {
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    });
+
+    if (!existingCase) return null;
+
+    if (
+      ![
+        SurgeryStatus.SCHEDULED,
+        SurgeryStatus.PRE_OP_PREPARATION,
+      ].includes(existingCase.status)
+    ) {
+      throw new Error('This surgery cannot be started from its current status.');
+    }
+
+    const now = new Date();
+
+    return SurgeryCaseModel.findOneAndUpdate(
+      { _id: caseId, hospitalId },
+      {
+        $set: {
+          status: SurgeryStatus.IN_PROGRESS,
+          actualStartTime: now,
+          'intraopDocs.procedureStartTime': now,
+        },
+      },
+      { new: true }
+    ).exec();
+  }
+
+  public async completeSurgery(
+    caseId: string,
+    hospitalId: string,
+    input: CompleteSurgeryInput
+  ): Promise<ISurgeryCaseDocument | null> {
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+      status: SurgeryStatus.IN_PROGRESS,
+    });
+
+    if (!existingCase) return null;
+
+    const now = new Date();
+
+    const existingDocs = existingCase.intraopDocs
+      ? existingCase.intraopDocs.toObject()
+      : {};
+
+    const intraopDocs = {
+      ...existingDocs,
+      ...(input.intraopDocs || {}),
+      procedureEndTime: now,
+      closureTime: input.intraopDocs?.closureTime || now,
+    };
+
+    const update: Record<string, unknown> = {
+      status: SurgeryStatus.COMPLETED,
+      actualEndTime: now,
+      intraopDocs,
+      postOpNotes: input.postOpNotes,
+    };
+
+    if (input.anesthesiaRecord) {
+      update.anesthesiaRecord = {
+        ...(existingCase.anesthesiaRecord?.toObject() || {}),
+        ...input.anesthesiaRecord,
+      };
+    }
+
+    return SurgeryCaseModel.findOneAndUpdate(
+      {
+        _id: caseId,
+        hospitalId,
+        status: SurgeryStatus.IN_PROGRESS,
+      },
+      { $set: update },
+      { new: true }
+    ).exec();
+  }
 
   public async cancelCase(
     caseId: string,
     hospitalId: string,
     cancellationReason: string
   ): Promise<ISurgeryCaseDocument | null> {
-    if (!cancellationReason?.trim()) {
-      throw new Error(
-        'Cancellation reason is required.'
-      );
-    }
-
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
-
-    if (!existingCase) {
-      return null;
-    }
-
-    if (
-      [
-        SurgeryStatus.COMPLETED,
-        SurgeryStatus.IN_PROGRESS,
-      ].includes(existingCase.status)
-    ) {
-      throw new Error(
-        'This surgery cannot be cancelled in its current status.'
-      );
-    }
-
     return SurgeryCaseModel.findOneAndUpdate(
       {
         _id: caseId,
         hospitalId,
-      },
-      {
-        $set: {
-          status:
-            SurgeryStatus.CANCELLED,
-
-          cancellationReason:
-            cancellationReason.trim(),
-        },
-      },
-      {
-        new: true,
-      }
-    ).exec();
-  }
-
-  /**
-   * ============================================================
-   * RESCHEDULE
-   * ============================================================
-   */
-
-  public async rescheduleCase(
-    caseId: string,
-    hospitalId: string,
-    input: RescheduleSurgeryInput,
-    rescheduledBy: string
-  ): Promise<ISurgeryCaseDocument | null> {
-    this.validateScheduleTimes(
-      input.scheduledStartTime,
-      input.scheduledEndTime
-    );
-
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
-
-    if (!existingCase) {
-      return null;
-    }
-
-    if (
-      [
-        SurgeryStatus.COMPLETED,
-        SurgeryStatus.CANCELLED,
-        SurgeryStatus.IN_PROGRESS,
-      ].includes(existingCase.status)
-    ) {
-      throw new Error(
-        'This surgery cannot be rescheduled in its current status.'
-      );
-    }
-
-    await this.checkTheatreConflict(
-      hospitalId,
-      existingCase.theatreId,
-      input.scheduledStartTime,
-      input.scheduledEndTime,
-      caseId
-    );
-
-    return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-      },
-      {
-        $set: {
-          scheduledStartTime:
-            input.scheduledStartTime,
-
-          scheduledEndTime:
-            input.scheduledEndTime,
-
-          estimatedDurationMinutes:
-            Math.round(
-              (input.scheduledEndTime.getTime() -
-                input.scheduledStartTime.getTime()) /
-                60000
-            ),
-
-          status:
-            SurgeryStatus.SCHEDULED,
-
-          rescheduledFrom:
-            existingCase.scheduledStartTime,
-
-          rescheduledAt: new Date(),
-
-          rescheduledBy:
-            new Types.ObjectId(
-              rescheduledBy
-            ),
-
-          postponedReason:
-            input.reason,
-        },
-      },
-      {
-        new: true,
-      }
-    ).exec();
-  }
-
-  /**
-   * ============================================================
-   * POSTPONE
-   * ============================================================
-   */
-
-  public async postponeCase(
-    caseId: string,
-    hospitalId: string,
-    reason: string
-  ): Promise<ISurgeryCaseDocument | null> {
-    if (!reason?.trim()) {
-      throw new Error(
-        'Postponement reason is required.'
-      );
-    }
-
-    return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-
         status: {
-          $in: [
-            SurgeryStatus.SCHEDULED,
-            SurgeryStatus.PRE_OP_PREPARATION,
-            SurgeryStatus.READY_FOR_SURGERY,
+          $nin: [
+            SurgeryStatus.COMPLETED,
+            SurgeryStatus.CANCELLED,
           ],
         },
       },
       {
         $set: {
-          status:
-            SurgeryStatus.POSTPONED,
+          status: SurgeryStatus.CANCELLED,
+          cancellationReason,
+        },
+      },
+      { new: true }
+    ).exec();
+  }
 
-          postponedReason:
-            reason.trim(),
+  public async postponeCase(
+    caseId: string,
+    hospitalId: string,
+    postponementReason: string
+  ): Promise<ISurgeryCaseDocument | null> {
+    return SurgeryCaseModel.findOneAndUpdate(
+      {
+        _id: caseId,
+        hospitalId,
+        status: {
+          $in: [
+            SurgeryStatus.SCHEDULED,
+            SurgeryStatus.PRE_OP_PREPARATION,
+          ],
         },
       },
       {
-        new: true,
-      }
+        $set: {
+          status: SurgeryStatus.POSTPONED,
+          postponementReason,
+        },
+      },
+      { new: true }
     ).exec();
+  }
+
+  public async assignTeamMember(
+    caseId: string,
+    hospitalId: string,
+    userId: string,
+    role: SurgicalRole,
+    credentialVerified = false
+  ): Promise<ISurgeryCaseDocument | null> {
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    });
+
+    if (!existingCase) return null;
+
+    const alreadyAssigned = existingCase.surgicalTeam.some(
+      (member) =>
+        member.userId.toString() === userId &&
+        member.role === role
+    );
+
+    if (alreadyAssigned) {
+      throw new Error('This team member is already assigned.');
+    }
+
+    return SurgeryCaseModel.findOneAndUpdate(
+      { _id: caseId, hospitalId },
+      {
+        $push: {
+          surgicalTeam: {
+            userId: new Types.ObjectId(userId),
+            role,
+            credentialVerified,
+            available: true,
+          },
+        },
+      },
+      { new: true }
+    ).exec();
+  }
+
+  public async getTheatreSchedule(
+    hospitalId: string,
+    theatreId: string,
+    date: string
+  ): Promise<ISurgeryCaseDocument[]> {
+    const start = new Date(`${date}T00:00:00.000`);
+    const end = new Date(`${date}T23:59:59.999`);
+
+    return SurgeryCaseModel.find({
+      hospitalId,
+      theatreId,
+      scheduledStartTime: {
+        $gte: start,
+        $lte: end,
+      },
+      status: {
+        $nin: [
+          SurgeryStatus.CANCELLED,
+          SurgeryStatus.POSTPONED,
+        ],
+      },
+    })
+      .sort({
+        scheduledStartTime: 1,
+        priority: -1,
+      })
+      .populate('patientId', 'firstName lastName mrn')
+      .populate('leadSurgeonId', 'firstName lastName role')
+      .populate('surgicalTeam.userId', 'firstName lastName role')
+      .exec();
+  }
+
+  public async getUtilization(
+    hospitalId: string,
+    theatreId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<{
+    scheduledMinutes: number;
+    availableMinutes: number;
+    utilizationPercentage: number;
+  }> {
+    const cases = await SurgeryCaseModel.find({
+      hospitalId,
+      theatreId,
+      status: {
+        $nin: [
+          SurgeryStatus.CANCELLED,
+          SurgeryStatus.POSTPONED,
+        ],
+      },
+      scheduledStartTime: {
+        $lt: endDate,
+      },
+      scheduledEndTime: {
+        $gt: startDate,
+      },
+    });
+
+    const scheduledMinutes = cases.reduce((total, item) => {
+      const start = Math.max(
+        item.scheduledStartTime.getTime(),
+        startDate.getTime()
+      );
+
+      const end = Math.min(
+        item.scheduledEndTime.getTime(),
+        endDate.getTime()
+      );
+
+      return total + Math.max(0, Math.ceil((end - start) / 60000));
+    }, 0);
+
+    const availableMinutes = Math.max(
+      0,
+      Math.ceil(
+        (endDate.getTime() - startDate.getTime()) / 60000
+      )
+    );
+
+    return {
+      scheduledMinutes,
+      availableMinutes,
+      utilizationPercentage:
+        availableMinutes === 0
+          ? 0
+          : Number(
+              ((scheduledMinutes / availableMinutes) * 100).toFixed(2)
+            ),
+    };
   }
 }
 
-export const surgeryService =
-  new SurgeryService();
+export const surgeryService = new SurgeryService();
