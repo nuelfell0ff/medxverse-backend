@@ -97,20 +97,78 @@ export class SurgeryController {
     }
   }
 
-  public async updateChecklist(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async updatePreOp(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
       const hospitalId = authReq.user.hospitalId;
       const id = req.params.id as string;
 
-      const { signInCompleted, timeOutCompleted, signOutCompleted, notes } = req.body;
-
-      const updated = await surgeryService.updateChecklist(id, hospitalId, {
-        signInCompleted,
-        timeOutCompleted,
-        signOutCompleted,
-        notes,
+      const updated = await surgeryService.updatePreOpAssessment(id, hospitalId, {
+        ...req.body,
+        clearedBy: authReq.user._id,
       });
+
+      if (!updated) {
+        res.status(404).json({ success: false, message: 'Surgical case not found' });
+        return;
+      }
+
+      res.status(200).json({ success: true, data: updated });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateConsent(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
+      const id = req.params.id as string;
+
+      const updated = await surgeryService.updateConsent(id, hospitalId, req.body);
+
+      if (!updated) {
+        res.status(404).json({ success: false, message: 'Surgical case not found' });
+        return;
+      }
+
+      res.status(200).json({ success: true, data: updated });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateWHOChecklist(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
+      const id = req.params.id as string;
+      const { stage, data } = req.body;
+
+      const updated = await surgeryService.updateWHOChecklist(id, hospitalId, {
+        stage,
+        completedBy: authReq.user._id,
+        data,
+      });
+
+      if (!updated) {
+        res.status(404).json({ success: false, message: 'Surgical case not found' });
+        return;
+      }
+
+      res.status(200).json({ success: true, data: updated });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async addVitalsLog(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
+      const id = req.params.id as string;
+
+      const updated = await surgeryService.addVitalsLog(id, hospitalId, req.body);
 
       if (!updated) {
         res.status(404).json({ success: false, message: 'Surgical case not found' });
@@ -132,7 +190,26 @@ export class SurgeryController {
       const updated = await surgeryService.startSurgery(id, hospitalId);
 
       if (!updated) {
-        res.status(404).json({ success: false, message: 'Surgical case not found or not in scheduled state' });
+        res.status(404).json({ success: false, message: 'Surgical case not found or not ready for surgery' });
+        return;
+      }
+
+      res.status(200).json({ success: true, data: updated });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateIntraopDocs(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const hospitalId = authReq.user.hospitalId;
+      const id = req.params.id as string;
+
+      const updated = await surgeryService.updateIntraopDocs(id, hospitalId, req.body);
+
+      if (!updated) {
+        res.status(404).json({ success: false, message: 'Surgical case not found' });
         return;
       }
 
@@ -148,12 +225,12 @@ export class SurgeryController {
       const hospitalId = authReq.user.hospitalId;
       const id = req.params.id as string;
 
-      const { anesthesiaNotes, operationNotes, postOpNotes } = req.body;
+      const { anesthesiaNotes, postOpNotes, intraopDocs } = req.body;
 
       const updated = await surgeryService.completeSurgery(id, hospitalId, {
         anesthesiaNotes,
-        operationNotes,
         postOpNotes,
+        intraopDocs,
       });
 
       if (!updated) {
@@ -190,3 +267,4 @@ export class SurgeryController {
 }
 
 export const surgeryController = new SurgeryController();
+        
