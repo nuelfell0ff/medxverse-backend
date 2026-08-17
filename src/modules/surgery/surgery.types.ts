@@ -1,15 +1,8 @@
 import { Document, Types } from 'mongoose';
 
-/**
- * ============================================================
- * SURGERY STATUS
- * ============================================================
- */
-
 export enum SurgeryStatus {
   SCHEDULED = 'SCHEDULED',
   PRE_OP_PREPARATION = 'PRE_OP_PREPARATION',
-  READY_FOR_SURGERY = 'READY_FOR_SURGERY',
   IN_PROGRESS = 'IN_PROGRESS',
   RECOVERY = 'RECOVERY',
   COMPLETED = 'COMPLETED',
@@ -17,30 +10,18 @@ export enum SurgeryStatus {
   POSTPONED = 'POSTPONED',
 }
 
-/**
- * ============================================================
- * URGENCY / PRIORITY
- * ============================================================
- */
-
 export enum UrgencyLevel {
   ELECTIVE = 'ELECTIVE',
   URGENT = 'URGENT',
   EMERGENCY = 'EMERGENCY',
 }
 
-export enum SurgeryPriority {
+export enum PriorityLevel {
   LOW = 'LOW',
-  ROUTINE = 'ROUTINE',
+  NORMAL = 'NORMAL',
   HIGH = 'HIGH',
   CRITICAL = 'CRITICAL',
 }
-
-/**
- * ============================================================
- * ANAESTHESIA
- * ============================================================
- */
 
 export enum AnesthesiaType {
   GENERAL = 'GENERAL',
@@ -52,12 +33,6 @@ export enum AnesthesiaType {
   COMBINED = 'COMBINED',
 }
 
-/**
- * ============================================================
- * SURGICAL TEAM
- * ============================================================
- */
-
 export enum SurgicalRole {
   PRIMARY_SURGEON = 'PRIMARY_SURGEON',
   ASSISTING_SURGEON = 'ASSISTING_SURGEON',
@@ -66,12 +41,6 @@ export enum SurgicalRole {
   CIRCULATING_NURSE = 'CIRCULATING_NURSE',
   THEATRE_TECHNICIAN = 'THEATRE_TECHNICIAN',
 }
-
-/**
- * ============================================================
- * ASA CLASSIFICATION
- * ============================================================
- */
 
 export enum ASAClassification {
   ASA_1 = 'ASA_1',
@@ -83,144 +52,84 @@ export enum ASAClassification {
   ASA_E = 'ASA_E',
 }
 
-/**
- * ============================================================
- * STERILIZATION
- * ============================================================
- */
-
 export enum SterilizationStatus {
   STERILE = 'STERILE',
   PENDING = 'PENDING',
   EXPIRED = 'EXPIRED',
 }
 
-/**
- * ============================================================
- * MEDICATION
- * ============================================================
- */
-
-export enum MedicationTiming {
-  PRE_OPERATIVE = 'PRE_OPERATIVE',
-  INTRAOPERATIVE = 'INTRAOPERATIVE',
-  POST_OPERATIVE = 'POST_OPERATIVE',
+export enum MedicationStatus {
+  ORDERED = 'ORDERED',
+  ADMINISTERED = 'ADMINISTERED',
+  HELD = 'HELD',
+  CANCELLED = 'CANCELLED',
 }
 
-export interface ISurgeryMedication {
-  medicationName: string;
-  dose?: string;
-  route?: string;
-  frequency?: string;
-  timing: MedicationTiming;
-  administered: boolean;
-  administeredAt?: Date;
-  administeredBy?: Types.ObjectId;
-  notes?: string;
+export enum ConsentType {
+  PROCEDURE = 'PROCEDURE',
+  ANESTHESIA = 'ANESTHESIA',
+  BLOOD_TRANSFUSION = 'BLOOD_TRANSFUSION',
+  HIGH_RISK = 'HIGH_RISK',
+  ADDITIONAL_PROCEDURE = 'ADDITIONAL_PROCEDURE',
 }
-
-/**
- * ============================================================
- * SURGICAL TEAM
- * ============================================================
- */
 
 export interface ISurgicalTeamMember {
   userId: Types.ObjectId;
   role: SurgicalRole;
   credentialVerified: boolean;
-  assignedAt?: Date;
+  available?: boolean;
   notes?: string;
 }
 
-/**
- * ============================================================
- * PRE-OPERATIVE ASSESSMENT
- * ============================================================
- */
+export interface IPreOpVitals {
+  bpSystolic?: number;
+  bpDiastolic?: number;
+  heartRate?: number;
+  tempCelsius?: number;
+  spO2?: number;
+  respiratoryRate?: number;
+}
 
 export interface IPreOpAssessment {
   diagnosis?: string;
-  indicationForSurgery?: string;
-
+  surgicalIndication?: string;
   surgicalHistory?: string;
   medicalHistory?: string;
-
   allergies?: string[];
   currentMedications?: string[];
-
   laboratoryResults?: string;
   imagingResults?: string;
-
-  anaestheticAssessment?: string;
-
+  anestheticAssessment?: string;
   asaClassification?: ASAClassification;
-
-  mallampatiScore?:
-    | 'CLASS_I'
-    | 'CLASS_II'
-    | 'CLASS_III'
-    | 'CLASS_IV';
-
+  mallampatiScore?: 'CLASS_I' | 'CLASS_II' | 'CLASS_III' | 'CLASS_IV';
   vteRiskScore?: string;
-
-  infectionScreeningNotes?: string;
-
-  pregnancyStatus?:
-    | 'NOT_APPLICABLE'
-    | 'NEGATIVE'
-    | 'POSITIVE';
-
-  preOpVitals?: {
-    bpSystolic?: number;
-    bpDiastolic?: number;
-    heartRate?: number;
-    respiratoryRate?: number;
-    tempCelsius?: number;
-    spO2?: number;
-  };
-
+  infectionScreening?: string;
+  pregnancyStatus?: 'NOT_APPLICABLE' | 'NEGATIVE' | 'POSITIVE' | 'UNKNOWN';
+  preOpVitals?: IPreOpVitals;
   optimizationChecklist?: {
     fastingConfirmed?: boolean;
     labsReviewed?: boolean;
     imagingReviewed?: boolean;
-    bloodAvailable?: boolean;
     medicationsReviewed?: boolean;
     allergiesReviewed?: boolean;
-    infectionScreeningCompleted?: boolean;
-    anaesthesiaAssessmentCompleted?: boolean;
+    bloodAvailable?: boolean;
+    anesthesiaReviewed?: boolean;
+    patientIdentified?: boolean;
   };
-
   clearedForSurgery?: boolean;
   clearedAt?: Date;
   clearedBy?: Types.ObjectId;
-
-  notes?: string;
 }
 
-/**
- * ============================================================
- * CONSENT
- * ============================================================
- */
-
-export interface ISurgicalConsentVersion {
-  version: number;
-  procedureConsent: boolean;
-  anesthesiaConsent: boolean;
-  bloodTransfusionConsent: boolean;
-  highRiskConsent: boolean;
-  additionalProcedureConsent?: boolean;
-
-  signedByPatient: boolean;
-
-  patientSignatureUrl?: string;
+export interface IConsentRecord {
+  type: ConsentType;
+  obtained: boolean;
+  signedByPatient?: boolean;
   witnessName?: string;
-  witnessSignatureUrl?: string;
-
+  witnessId?: Types.ObjectId;
+  digitalSignatureUrl?: string;
+  version: number;
   signedAt?: Date;
-  recordedBy?: Types.ObjectId;
-
   notes?: string;
 }
 
@@ -230,139 +139,112 @@ export interface ISurgicalConsent {
   bloodTransfusionConsent: boolean;
   highRiskConsent: boolean;
   additionalProcedureConsent: boolean;
-
   signedByPatient: boolean;
-
-  patientSignatureUrl?: string;
   witnessName?: string;
-  witnessSignatureUrl?: string;
-
+  witnessId?: Types.ObjectId;
+  digitalSignatureUrl?: string;
   signedAt?: Date;
-
   currentVersion: number;
-  versionHistory: ISurgicalConsentVersion[];
-
-  notes?: string;
+  history: IConsentRecord[];
 }
 
-/**
- * ============================================================
- * EQUIPMENT
- * ============================================================
- */
+export interface IPreOpMedication {
+  medicationName: string;
+  dose?: string;
+  route?: string;
+  scheduledTime?: Date;
+  administeredAt?: Date;
+  administeredBy?: Types.ObjectId;
+  status: MedicationStatus;
+  indication?: string;
+  notes?: string;
+}
 
 export interface IEquipmentItem {
-  itemId?: string;
   itemName: string;
-
-  required: boolean;
-
-  available: boolean;
-
+  category?: string;
+  quantity?: number;
   sterileStatus: SterilizationStatus;
-
   maintenanceOk: boolean;
-
-  sterilizationBatchId?: string;
-
+  sterilizationBatch?: string;
+  expiryDate?: Date;
+  required?: boolean;
+  available?: boolean;
   notes?: string;
 }
 
-/**
- * ============================================================
- * CONSUMABLES
- * ============================================================
- */
+export interface IInstrumentItem {
+  instrumentName: string;
+  quantityRequired?: number;
+  quantityAvailable?: number;
+  sterileStatus: SterilizationStatus;
+  sterilizationBatch?: string;
+  countBefore?: number;
+  countAfter?: number;
+  notes?: string;
+}
+
+export interface IImplantItem {
+  name: string;
+  manufacturer?: string;
+  model?: string;
+  serialNumber?: string;
+  lotNumber?: string;
+  expiryDate?: Date;
+  quantity?: number;
+}
 
 export interface IConsumableItem {
-  itemId?: string;
   itemName: string;
-
-  quantityRequired?: number;
+  category?: string;
   quantityUsed: number;
-
   unitCost?: number;
-
   lotNumber?: string;
-
   expiryDate?: Date;
-
-  stockDeducted?: boolean;
-
-  notes?: string;
 }
-
-/**
- * ============================================================
- * WHO SURGICAL SAFETY CHECKLIST
- * ============================================================
- */
 
 export interface IWHOSignIn {
   completed: boolean;
   completedAt?: Date;
   completedBy?: Types.ObjectId;
-
   patientIdentityConfirmed?: boolean;
   procedureConfirmed?: boolean;
-  siteConfirmed?: boolean;
-
+  siteMarked?: boolean;
   consentVerified?: boolean;
-
   anesthesiaSafetyChecked?: boolean;
   pulseOximeterOn?: boolean;
-
-  allergiesChecked?: boolean;
+  allergiesConfirmed?: boolean;
   airwayRisk?: boolean;
   bloodLossRiskOver500ml?: boolean;
-
-  notes?: string;
 }
 
 export interface IWHOTimeOut {
   completed: boolean;
   completedAt?: Date;
   completedBy?: Types.ObjectId;
-
   patientConfirmed?: boolean;
   procedureConfirmed?: boolean;
   surgicalSiteConfirmed?: boolean;
-
   teamIntroduced?: boolean;
-
-  antibioticProphylaxisGiven?: boolean;
-
-  imagingAvailable?: boolean;
-
+  antibioticProphylaxisConfirmed?: boolean;
+  imagingDisplayed?: boolean;
   criticalConcernsSurgeon?: string;
   criticalConcernsAnaesthetist?: string;
   criticalConcernsNursing?: string;
-
-  notes?: string;
 }
 
 export interface IWHOSignOut {
   completed: boolean;
   completedAt?: Date;
   completedBy?: Types.ObjectId;
-
-  procedurePerformed?: string;
-
+  procedureRecorded?: string;
   instrumentCount?: number;
   spongeCount?: number;
   needleCount?: number;
-
   countsCorrect?: boolean;
-
-  specimenCollected?: boolean;
   specimenLabeled?: boolean;
-
   equipmentIssuesNoted?: string;
-
-  postOperativePlan?: string;
-  recoveryPlan?: string;
-
-  notes?: string;
+  postOpRecoveryPlan?: string;
 }
 
 export interface IWHOChecklist {
@@ -371,536 +253,250 @@ export interface IWHOChecklist {
   signOut: IWHOSignOut;
 }
 
-/**
- * ============================================================
- * INTRAOPERATIVE VITALS
- * ============================================================
- */
-
 export interface IIntraopVitalsLog {
   timestamp: Date;
-
   bpSystolic?: number;
   bpDiastolic?: number;
-
   heartRate?: number;
   spO2?: number;
   respRate?: number;
   tempCelsius?: number;
-
   etCO2?: number;
   ecgRhythm?: string;
-
-  oxygenFlow?: string;
+  oxygenFlow?: number;
   ventilationMode?: string;
-
+  anesthesiaEvent?: string;
   notes?: string;
 }
 
-/**
- * ============================================================
- * ANAESTHESIA RECORD
- * ============================================================
- */
+export interface IAnesthesiaDrug {
+  medicationName: string;
+  dose?: string;
+  route?: string;
+  administeredAt?: Date;
+  administeredBy?: Types.ObjectId;
+  notes?: string;
+}
 
 export interface IAnesthesiaRecord {
-  preAnaestheticAssessment?: string;
-
+  preAnestheticAssessment?: string;
   anesthesiaType?: AnesthesiaType;
-
   airwayManagement?: string;
-
   airwayDevice?: string;
-
-  inductionDetails?: string;
-
-  maintenanceDetails?: string;
-
-  anestheticDrugs?: ISurgeryMedication[];
-
-  monitoring?: string;
-
-  oxygenVentilationData?: string;
-
-  fluidsAdministeredMl?: number;
-
+  drugs: IAnesthesiaDrug[];
+  oxygenVentilation?: string;
+  fluidBalanceMl?: number;
   bloodLossMl?: number;
-
-  bloodProducts?: string;
-
   complications?: string;
-
   recoveryAssessment?: string;
-
   notes?: string;
 }
-
-/**
- * ============================================================
- * SPECIMENS
- * ============================================================
- */
-
-export interface ISpecimen {
-  specimenType: string;
-  description?: string;
-
-  containerLabel?: string;
-
-  sentToLaboratory?: boolean;
-  sentAt?: Date;
-
-  notes?: string;
-}
-
-/**
- * ============================================================
- * INTRAOPERATIVE DOCUMENTATION
- * ============================================================
- */
 
 export interface IIntraopDocumentation {
   procedureStartTime?: Date;
   procedureEndTime?: Date;
-
   incisionTime?: Date;
   closureTime?: Date;
-
   operativeDiagnosis?: string;
   postOperativeDiagnosis?: string;
-
   procedurePerformed?: string;
-
   surgicalFindings?: string;
   techniqueNotes?: string;
-
-  estimatedBloodLossMl?: number;
-
+  eblMl?: number;
   fluidsAdministeredMl?: number;
-
   bloodProductsAdministered?: string;
-
   drainsInserted?: string;
-
-  implantsUsed?: string;
-
-  specimens?: ISpecimen[];
-
+  implantsUsed?: IImplantItem[];
+  specimensCollected?: string;
   complications?: string;
-
   surgeonNotes?: string;
-
-  notes?: string;
 }
-
-/**
- * ============================================================
- * RECOVERY
- * ============================================================
- */
-
-export interface IRecoveryAssessment {
-  arrivalTime?: Date;
-
-  consciousnessLevel?: string;
-
-  airwayStatus?: string;
-
-  breathingStatus?: string;
-
-  circulationStatus?: string;
-
-  painScore?: number;
-
-  nauseaVomiting?: boolean;
-
-  recoveryNotes?: string;
-
-  dischargedFromRecovery?: boolean;
-
-  dischargedAt?: Date;
-
-  dischargedBy?: Types.ObjectId;
-}
-
-/**
- * ============================================================
- * SURGERY CASE
- * ============================================================
- */
 
 export interface ISurgeryCase {
   hospitalId: Types.ObjectId;
-
   patientId: Types.ObjectId;
 
-  leadSurgeonId: Types.ObjectId;
+  procedureName: string;
+  icdCode?: string;
 
   theatreId: string;
 
-  procedureName: string;
-
-  icdCode?: string;
-
   urgency: UrgencyLevel;
-
-  priority: SurgeryPriority;
+  priority: PriorityLevel;
 
   status: SurgeryStatus;
 
   scheduledStartTime: Date;
   scheduledEndTime: Date;
-
-  estimatedDurationMinutes?: number;
+  estimatedDurationMinutes: number;
 
   actualStartTime?: Date;
   actualEndTime?: Date;
 
-  anesthesiaType: AnesthesiaType;
+  leadSurgeonId: Types.ObjectId;
 
   surgicalTeam: ISurgicalTeamMember[];
+
+  anesthesiaType: AnesthesiaType;
 
   preOpAssessment?: IPreOpAssessment;
 
   consent?: ISurgicalConsent;
 
-  preOpMedications: ISurgeryMedication[];
-
-  intraOpMedications: ISurgeryMedication[];
+  preOpMedications: IPreOpMedication[];
 
   equipmentChecklist: IEquipmentItem[];
+  instrumentChecklist: IInstrumentItem[];
 
   consumablesUsed: IConsumableItem[];
+  implantsUsed: IImplantItem[];
 
   whoChecklist: IWHOChecklist;
 
   vitalsTimeline: IIntraopVitalsLog[];
 
-  intraopDocs?: IIntraopDocumentation;
-
   anesthesiaRecord?: IAnesthesiaRecord;
 
-  recoveryAssessment?: IRecoveryAssessment;
+  intraopDocs?: IIntraopDocumentation;
+
+  postOpNotes?: string;
 
   cancellationReason?: string;
+  postponementReason?: string;
 
-  postponedReason?: string;
-
-  rescheduledFrom?: Date;
-
-  rescheduledAt?: Date;
-
-  rescheduledBy?: Types.ObjectId;
-
-  createdBy?: Types.ObjectId;
-
-  updatedBy?: Types.ObjectId;
-}
-
-export interface ISurgeryCaseDocument
-  extends ISurgeryCase,
-    Document {
   createdAt: Date;
   updatedAt: Date;
 }
 
-/**
- * ============================================================
- * CREATE
- * ============================================================
- */
+export interface ISurgeryCaseDocument extends ISurgeryCase, Document {}
 
 export interface CreateSurgeryCaseInput {
   hospitalId: string;
-
   patientId: string;
-
   leadSurgeonId: string;
-
   theatreId: string;
-
   procedureName: string;
-
   icdCode?: string;
-
   urgency?: UrgencyLevel;
-
-  priority?: SurgeryPriority;
-
+  priority?: PriorityLevel;
   scheduledStartTime: Date;
-
   scheduledEndTime: Date;
-
   estimatedDurationMinutes?: number;
-
   anesthesiaType: AnesthesiaType;
-
   surgicalTeam?: {
     userId: string;
     role: SurgicalRole;
     credentialVerified?: boolean;
+    available?: boolean;
     notes?: string;
   }[];
 }
 
-/**
- * ============================================================
- * PRE-OP
- * ============================================================
- */
-
 export interface UpdatePreOpInput {
   diagnosis?: string;
-  indicationForSurgery?: string;
-
+  surgicalIndication?: string;
   surgicalHistory?: string;
   medicalHistory?: string;
-
   allergies?: string[];
   currentMedications?: string[];
-
   laboratoryResults?: string;
   imagingResults?: string;
-
-  anaestheticAssessment?: string;
-
+  anestheticAssessment?: string;
   asaClassification?: ASAClassification;
-
-  mallampatiScore?:
-    | 'CLASS_I'
-    | 'CLASS_II'
-    | 'CLASS_III'
-    | 'CLASS_IV';
-
+  mallampatiScore?: 'CLASS_I' | 'CLASS_II' | 'CLASS_III' | 'CLASS_IV';
   vteRiskScore?: string;
-
-  infectionScreeningNotes?: string;
-
-  pregnancyStatus?:
-    | 'NOT_APPLICABLE'
-    | 'NEGATIVE'
-    | 'POSITIVE';
-
-  preOpVitals?: IPreOpAssessment['preOpVitals'];
-
+  infectionScreening?: string;
+  pregnancyStatus?: 'NOT_APPLICABLE' | 'NEGATIVE' | 'POSITIVE' | 'UNKNOWN';
+  preOpVitals?: IPreOpVitals;
   optimizationChecklist?: IPreOpAssessment['optimizationChecklist'];
-
   clearedForSurgery?: boolean;
-
-  notes?: string;
 }
-
-/**
- * ============================================================
- * CONSENT
- * ============================================================
- */
 
 export interface UpdateConsentInput {
-  procedureConsent: boolean;
-  anesthesiaConsent: boolean;
-  bloodTransfusionConsent: boolean;
-
+  type?: ConsentType;
+  procedureConsent?: boolean;
+  anesthesiaConsent?: boolean;
+  bloodTransfusionConsent?: boolean;
   highRiskConsent?: boolean;
-
   additionalProcedureConsent?: boolean;
-
-  signedByPatient: boolean;
-
-  patientSignatureUrl?: string;
-
+  signedByPatient?: boolean;
   witnessName?: string;
-
-  witnessSignatureUrl?: string;
-
+  witnessId?: string;
+  digitalSignatureUrl?: string;
   notes?: string;
 }
-
-/**
- * ============================================================
- * WHO CHECKLIST
- * ============================================================
- */
 
 export interface UpdateWHOChecklistInput {
   stage: 'signIn' | 'timeOut' | 'signOut';
-
-  completedBy: string;
-
   data: Record<string, unknown>;
 }
 
-/**
- * ============================================================
- * VITALS
- * ============================================================
- */
-
 export interface AddVitalsLogInput {
-  timestamp?: Date;
-
   bpSystolic?: number;
   bpDiastolic?: number;
-
   heartRate?: number;
-
   spO2?: number;
-
   respRate?: number;
-
   tempCelsius?: number;
-
   etCO2?: number;
-
   ecgRhythm?: string;
-
-  oxygenFlow?: string;
-
+  oxygenFlow?: number;
   ventilationMode?: string;
-
+  anesthesiaEvent?: string;
   notes?: string;
 }
-
-/**
- * ============================================================
- * INTRA-OP
- * ============================================================
- */
 
 export interface UpdateIntraopInput {
   procedureStartTime?: Date;
   procedureEndTime?: Date;
-
   incisionTime?: Date;
   closureTime?: Date;
-
   operativeDiagnosis?: string;
   postOperativeDiagnosis?: string;
-
   procedurePerformed?: string;
-
   surgicalFindings?: string;
   techniqueNotes?: string;
-
-  estimatedBloodLossMl?: number;
-
+  eblMl?: number;
   fluidsAdministeredMl?: number;
-
   bloodProductsAdministered?: string;
-
   drainsInserted?: string;
-
-  implantsUsed?: string;
-
-  specimens?: ISpecimen[];
-
+  implantsUsed?: IImplantItem[];
+  specimensCollected?: string;
   complications?: string;
-
   surgeonNotes?: string;
-
-  notes?: string;
-
   consumablesUsed?: IConsumableItem[];
-
   equipmentChecklist?: IEquipmentItem[];
+  instrumentChecklist?: IInstrumentItem[];
 }
 
-/**
- * ============================================================
- * ANAESTHESIA
- * ============================================================
- */
-
-export interface UpdateAnesthesiaInput
-  extends Partial<IAnesthesiaRecord> {
+export interface UpdateAnesthesiaInput {
+  preAnestheticAssessment?: string;
   anesthesiaType?: AnesthesiaType;
-}
-
-/**
- * ============================================================
- * MEDICATION
- * ============================================================
- */
-
-export interface AddMedicationInput {
-  medicationName: string;
-
-  dose?: string;
-  route?: string;
-  frequency?: string;
-
-  timing: MedicationTiming;
-
-  administered?: boolean;
-
-  administeredAt?: Date;
-
+  airwayManagement?: string;
+  airwayDevice?: string;
+  drugs?: IAnesthesiaDrug[];
+  oxygenVentilation?: string;
+  fluidBalanceMl?: number;
+  bloodLossMl?: number;
+  complications?: string;
+  recoveryAssessment?: string;
   notes?: string;
 }
-
-/**
- * ============================================================
- * RECOVERY
- * ============================================================
- */
-
-export interface UpdateRecoveryInput
-  extends Partial<IRecoveryAssessment> {}
-
-/**
- * ============================================================
- * RESCHEDULING
- * ============================================================
- */
-
-export interface RescheduleSurgeryInput {
-  scheduledStartTime: Date;
-  scheduledEndTime: Date;
-
-  reason?: string;
-}
-
-/**
- * ============================================================
- * COMPLETE
- * ============================================================
- */
 
 export interface CompleteSurgeryInput {
-  anesthesiaRecord?: IAnesthesiaRecord;
-
+  anesthesiaRecord?: UpdateAnesthesiaInput;
   postOpNotes?: string;
-
   intraopDocs?: UpdateIntraopInput;
-
-  recoveryAssessment?: IRecoveryAssessment;
 }
-
-/**
- * ============================================================
- * QUERY
- * ============================================================
- */
 
 export interface GetSurgeryCasesQuery {
   page?: number;
   limit?: number;
-
   status?: SurgeryStatus;
-
   urgency?: UrgencyLevel;
-
-  priority?: SurgeryPriority;
-
+  priority?: PriorityLevel;
   theatreId?: string;
-
   leadSurgeonId?: string;
-
   patientId?: string;
-
   date?: string;
-
-  fromDate?: string;
-
-  toDate?: string;
 }
