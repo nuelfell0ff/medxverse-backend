@@ -38,11 +38,12 @@ export class SurgeryService {
       notes: member.notes,
     }));
 
-    return SurgeryCaseModel.create({
-      ...input,
+    const caseData = Object.assign({}, input, {
       surgicalTeam,
       status: SurgeryStatus.SCHEDULED,
     });
+
+    return SurgeryCaseModel.create(caseData);
   }
 
   public async getCases(
@@ -104,9 +105,9 @@ export class SurgeryService {
     const existingCase = await SurgeryCaseModel.findOne({ _id: caseId, hospitalId });
     if (!existingCase) return null;
 
-    const preOp = (existingCase.preOpAssessment
-      ? (existingCase.preOpAssessment as Record<string, any>).toObject?.() || existingCase.preOpAssessment
-      : {}) as Record<string, any>;
+    const preOp = existingCase.preOpAssessment
+      ? Object.assign({}, (existingCase.preOpAssessment as any).toObject?.() || existingCase.preOpAssessment)
+      : {};
 
     if (input.asaClassification) preOp.asaClassification = input.asaClassification;
     if (input.mallampatiScore) preOp.mallampatiScore = input.mallampatiScore;
@@ -114,10 +115,10 @@ export class SurgeryService {
     if (input.infectionScreeningNotes) preOp.infectionScreeningNotes = input.infectionScreeningNotes;
     if (input.pregnancyStatus) preOp.pregnancyStatus = input.pregnancyStatus;
     if (input.preOpVitals) {
-      const existingVitals = (preOp.preOpVitals
-        ? (preOp.preOpVitals as Record<string, any>).toObject?.() || preOp.preOpVitals
-        : {}) as Record<string, any>;
-      preOp.preOpVitals = { ...existingVitals, ...input.preOpVitals };
+      const existingVitals = preOp.preOpVitals
+        ? Object.assign({}, (preOp.preOpVitals as any).toObject?.() || preOp.preOpVitals)
+        : {};
+      preOp.preOpVitals = Object.assign({}, existingVitals, input.preOpVitals);
     }
 
     if (input.clearedForSurgery !== undefined) {
@@ -140,10 +141,7 @@ export class SurgeryService {
     hospitalId: string,
     input: UpdateConsentInput
   ): Promise<ISurgeryCaseDocument | null> {
-    const consent = {
-      ...input,
-      signedAt: new Date(),
-    };
+    const consent = Object.assign({}, input, { signedAt: new Date() });
 
     return SurgeryCaseModel.findOneAndUpdate(
       { _id: caseId, hospitalId },
@@ -166,12 +164,11 @@ export class SurgeryService {
       signOut: { completed: false },
     };
 
-    const stageData = {
-      ...(input.data as Record<string, any>),
+    const stageData = Object.assign({}, input.data, {
       completed: true,
       completedAt: new Date(),
       completedBy: new Types.ObjectId(input.completedBy),
-    };
+    });
 
     checklist[input.stage] = stageData as unknown as typeof checklist[typeof input.stage];
 
@@ -187,10 +184,7 @@ export class SurgeryService {
     hospitalId: string,
     input: AddVitalsLogInput
   ): Promise<ISurgeryCaseDocument | null> {
-    const vitalsLog = {
-      ...input,
-      timestamp: new Date(),
-    };
+    const vitalsLog = Object.assign({}, input, { timestamp: new Date() });
 
     return SurgeryCaseModel.findOneAndUpdate(
       { _id: caseId, hospitalId },
@@ -225,11 +219,11 @@ export class SurgeryService {
     const existingCase = await SurgeryCaseModel.findOne({ _id: caseId, hospitalId });
     if (!existingCase) return null;
 
-    const existingDocs = (existingCase.intraopDocs
-      ? (existingCase.intraopDocs as Record<string, any>).toObject?.() || existingCase.intraopDocs
-      : {}) as Record<string, any>;
+    const existingDocs = existingCase.intraopDocs
+      ? Object.assign({}, (existingCase.intraopDocs as any).toObject?.() || existingCase.intraopDocs)
+      : {};
 
-    const updatedDocs: Record<string, any> = { ...existingDocs, ...(input as Record<string, any>) };
+    const updatedDocs: Record<string, any> = Object.assign({}, existingDocs, input);
     delete updatedDocs.consumablesUsed;
     delete updatedDocs.equipmentChecklist;
 
@@ -238,10 +232,14 @@ export class SurgeryService {
     };
 
     if (input.consumablesUsed) {
-      updateQuery.$set = { ...updateQuery.$set, consumablesUsed: input.consumablesUsed };
+      updateQuery.$set = Object.assign({}, updateQuery.$set as object, {
+        consumablesUsed: input.consumablesUsed,
+      });
     }
     if (input.equipmentChecklist) {
-      updateQuery.$set = { ...updateQuery.$set, equipmentChecklist: input.equipmentChecklist };
+      updateQuery.$set = Object.assign({}, updateQuery.$set as object, {
+        equipmentChecklist: input.equipmentChecklist,
+      });
     }
 
     return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, updateQuery, { new: true }).exec();
@@ -257,17 +255,15 @@ export class SurgeryService {
 
     const now = new Date();
 
-    const existingDocs = (existingCase.intraopDocs
-      ? (existingCase.intraopDocs as Record<string, any>).toObject?.() || existingCase.intraopDocs
-      : {}) as Record<string, any>;
+    const existingDocs = existingCase.intraopDocs
+      ? Object.assign({}, (existingCase.intraopDocs as any).toObject?.() || existingCase.intraopDocs)
+      : {};
 
-    const inputDocs = (input.intraopDocs || {}) as Record<string, any>;
+    const inputDocs = input.intraopDocs ? Object.assign({}, input.intraopDocs) : {};
 
-    const intraopDocs = {
-      ...existingDocs,
-      ...inputDocs,
+    const intraopDocs = Object.assign({}, existingDocs, inputDocs, {
       closureTime: now,
-    };
+    });
 
     return SurgeryCaseModel.findOneAndUpdate(
       { _id: caseId, hospitalId, status: SurgeryStatus.IN_PROGRESS },
@@ -303,4 +299,3 @@ export class SurgeryService {
 }
 
 export const surgeryService = new SurgeryService();
-      
