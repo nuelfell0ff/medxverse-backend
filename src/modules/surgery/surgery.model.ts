@@ -1,107 +1,55 @@
 import { Schema, model } from 'mongoose';
-
 import {
   ISurgeryCaseDocument,
   SurgeryStatus,
   UrgencyLevel,
-  SurgeryPriority,
+  PriorityLevel,
   AnesthesiaType,
   SurgicalRole,
   ASAClassification,
   SterilizationStatus,
-  MedicationTiming,
+  MedicationStatus,
+  ConsentType,
 } from './surgery.types.js';
-
-/**
- * ============================================================
- * SURGICAL TEAM
- * ============================================================
- */
 
 const SurgicalTeamMemberSchema = new Schema(
   {
-    userId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Account',
-      required: true,
-    },
-
+    userId: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
     role: {
       type: String,
       enum: Object.values(SurgicalRole),
       required: true,
     },
-
-    credentialVerified: {
-      type: Boolean,
-      default: false,
-    },
-
-    assignedAt: {
-      type: Date,
-      default: Date.now,
-    },
-
-    notes: {
-      type: String,
-      trim: true,
-    },
+    credentialVerified: { type: Boolean, default: false },
+    available: { type: Boolean, default: true },
+    notes: { type: String, trim: true },
   },
   { _id: false }
 );
 
-/**
- * ============================================================
- * PRE-OP ASSESSMENT
- * ============================================================
- */
+const PreOpVitalsSchema = new Schema(
+  {
+    bpSystolic: Number,
+    bpDiastolic: Number,
+    heartRate: Number,
+    tempCelsius: Number,
+    spO2: Number,
+    respiratoryRate: Number,
+  },
+  { _id: false }
+);
 
 const PreOpAssessmentSchema = new Schema(
   {
-    diagnosis: {
-      type: String,
-      trim: true,
-    },
-
-    indicationForSurgery: {
-      type: String,
-      trim: true,
-    },
-
-    surgicalHistory: {
-      type: String,
-      trim: true,
-    },
-
-    medicalHistory: {
-      type: String,
-      trim: true,
-    },
-
-    allergies: {
-      type: [String],
-      default: [],
-    },
-
-    currentMedications: {
-      type: [String],
-      default: [],
-    },
-
-    laboratoryResults: {
-      type: String,
-      trim: true,
-    },
-
-    imagingResults: {
-      type: String,
-      trim: true,
-    },
-
-    anaestheticAssessment: {
-      type: String,
-      trim: true,
-    },
+    diagnosis: String,
+    surgicalIndication: String,
+    surgicalHistory: String,
+    medicalHistory: String,
+    allergies: [String],
+    currentMedications: [String],
+    laboratoryResults: String,
+    imagingResults: String,
+    anestheticAssessment: String,
 
     asaClassification: {
       type: String,
@@ -110,579 +58,206 @@ const PreOpAssessmentSchema = new Schema(
 
     mallampatiScore: {
       type: String,
-      enum: [
-        'CLASS_I',
-        'CLASS_II',
-        'CLASS_III',
-        'CLASS_IV',
-      ],
+      enum: ['CLASS_I', 'CLASS_II', 'CLASS_III', 'CLASS_IV'],
     },
 
-    vteRiskScore: {
-      type: String,
-      trim: true,
-    },
-
-    infectionScreeningNotes: {
-      type: String,
-      trim: true,
-    },
+    vteRiskScore: String,
+    infectionScreening: String,
 
     pregnancyStatus: {
       type: String,
-      enum: [
-        'NOT_APPLICABLE',
-        'NEGATIVE',
-        'POSITIVE',
-      ],
+      enum: ['NOT_APPLICABLE', 'NEGATIVE', 'POSITIVE', 'UNKNOWN'],
       default: 'NOT_APPLICABLE',
     },
 
-    preOpVitals: {
-      bpSystolic: Number,
-      bpDiastolic: Number,
-      heartRate: Number,
-      respiratoryRate: Number,
-      tempCelsius: Number,
-      spO2: Number,
-    },
+    preOpVitals: PreOpVitalsSchema,
 
     optimizationChecklist: {
-      fastingConfirmed: {
-        type: Boolean,
-        default: false,
-      },
-
-      labsReviewed: {
-        type: Boolean,
-        default: false,
-      },
-
-      imagingReviewed: {
-        type: Boolean,
-        default: false,
-      },
-
-      bloodAvailable: {
-        type: Boolean,
-        default: false,
-      },
-
-      medicationsReviewed: {
-        type: Boolean,
-        default: false,
-      },
-
-      allergiesReviewed: {
-        type: Boolean,
-        default: false,
-      },
-
-      infectionScreeningCompleted: {
-        type: Boolean,
-        default: false,
-      },
-
-      anaesthesiaAssessmentCompleted: {
-        type: Boolean,
-        default: false,
-      },
+      fastingConfirmed: Boolean,
+      labsReviewed: Boolean,
+      imagingReviewed: Boolean,
+      medicationsReviewed: Boolean,
+      allergiesReviewed: Boolean,
+      bloodAvailable: Boolean,
+      anesthesiaReviewed: Boolean,
+      patientIdentified: Boolean,
     },
 
-    clearedForSurgery: {
-      type: Boolean,
-      default: false,
-    },
-
+    clearedForSurgery: { type: Boolean, default: false },
     clearedAt: Date,
-
-    clearedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'Account',
-    },
-
-    notes: {
-      type: String,
-      trim: true,
-    },
+    clearedBy: { type: Schema.Types.ObjectId, ref: 'Account' },
   },
   { _id: false }
 );
 
-/**
- * ============================================================
- * CONSENT
- * ============================================================
- */
-
-const ConsentVersionSchema = new Schema(
+const ConsentRecordSchema = new Schema(
   {
-    version: {
-      type: Number,
+    type: {
+      type: String,
+      enum: Object.values(ConsentType),
       required: true,
     },
-
-    procedureConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    anesthesiaConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    bloodTransfusionConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    highRiskConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    additionalProcedureConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    signedByPatient: {
-      type: Boolean,
-      default: false,
-    },
-
-    patientSignatureUrl: {
-      type: String,
-      trim: true,
-    },
-
-    witnessName: {
-      type: String,
-      trim: true,
-    },
-
-    witnessSignatureUrl: {
-      type: String,
-      trim: true,
-    },
-
+    obtained: { type: Boolean, default: false },
+    signedByPatient: Boolean,
+    witnessName: String,
+    witnessId: { type: Schema.Types.ObjectId, ref: 'Account' },
+    digitalSignatureUrl: String,
+    version: { type: Number, required: true },
     signedAt: Date,
-
-    recordedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'Account',
-    },
-
-    notes: {
-      type: String,
-      trim: true,
-    },
+    notes: String,
   },
   { _id: false }
 );
 
 const SurgicalConsentSchema = new Schema(
   {
-    procedureConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    anesthesiaConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    bloodTransfusionConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    highRiskConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    additionalProcedureConsent: {
-      type: Boolean,
-      default: false,
-    },
-
-    signedByPatient: {
-      type: Boolean,
-      default: false,
-    },
-
-    patientSignatureUrl: {
-      type: String,
-      trim: true,
-    },
-
-    witnessName: {
-      type: String,
-      trim: true,
-    },
-
-    witnessSignatureUrl: {
-      type: String,
-      trim: true,
-    },
-
+    procedureConsent: { type: Boolean, default: false },
+    anesthesiaConsent: { type: Boolean, default: false },
+    bloodTransfusionConsent: { type: Boolean, default: false },
+    highRiskConsent: { type: Boolean, default: false },
+    additionalProcedureConsent: { type: Boolean, default: false },
+    signedByPatient: { type: Boolean, default: false },
+    witnessName: String,
+    witnessId: { type: Schema.Types.ObjectId, ref: 'Account' },
+    digitalSignatureUrl: String,
     signedAt: Date,
-
-    currentVersion: {
-      type: Number,
-      default: 1,
-    },
-
-    versionHistory: {
-      type: [ConsentVersionSchema],
-      default: [],
-    },
-
-    notes: {
-      type: String,
-      trim: true,
-    },
+    currentVersion: { type: Number, default: 1 },
+    history: { type: [ConsentRecordSchema], default: [] },
   },
   { _id: false }
 );
 
-/**
- * ============================================================
- * EQUIPMENT
- * ============================================================
- */
-
-const EquipmentItemSchema = new Schema(
+const PreOpMedicationSchema = new Schema(
   {
-    itemId: {
-      type: String,
-      trim: true,
-    },
-
-    itemName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    required: {
-      type: Boolean,
-      default: true,
-    },
-
-    available: {
-      type: Boolean,
-      default: false,
-    },
-
-    sterileStatus: {
-      type: String,
-      enum: Object.values(SterilizationStatus),
-      default: SterilizationStatus.PENDING,
-    },
-
-    maintenanceOk: {
-      type: Boolean,
-      default: true,
-    },
-
-    sterilizationBatchId: {
-      type: String,
-      trim: true,
-    },
-
-    notes: {
-      type: String,
-      trim: true,
-    },
-  },
-  { _id: false }
-);
-
-/**
- * ============================================================
- * CONSUMABLES
- * ============================================================
- */
-
-const ConsumableItemSchema = new Schema(
-  {
-    itemId: {
-      type: String,
-      trim: true,
-    },
-
-    itemName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    quantityRequired: {
-      type: Number,
-      min: 0,
-    },
-
-    quantityUsed: {
-      type: Number,
-      required: true,
-      min: 0,
-      default: 0,
-    },
-
-    unitCost: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    lotNumber: {
-      type: String,
-      trim: true,
-    },
-
-    expiryDate: Date,
-
-    stockDeducted: {
-      type: Boolean,
-      default: false,
-    },
-
-    notes: {
-      type: String,
-      trim: true,
-    },
-  },
-  { _id: false }
-);
-
-/**
- * ============================================================
- * MEDICATION
- * ============================================================
- */
-
-const SurgeryMedicationSchema = new Schema(
-  {
-    medicationName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    dose: {
-      type: String,
-      trim: true,
-    },
-
-    route: {
-      type: String,
-      trim: true,
-    },
-
-    frequency: {
-      type: String,
-      trim: true,
-    },
-
-    timing: {
-      type: String,
-      enum: Object.values(MedicationTiming),
-      required: true,
-    },
-
-    administered: {
-      type: Boolean,
-      default: false,
-    },
-
+    medicationName: { type: String, required: true },
+    dose: String,
+    route: String,
+    scheduledTime: Date,
     administeredAt: Date,
-
-    administeredBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'Account',
-    },
-
-    notes: {
+    administeredBy: { type: Schema.Types.ObjectId, ref: 'Account' },
+    status: {
       type: String,
-      trim: true,
+      enum: Object.values(MedicationStatus),
+      default: MedicationStatus.ORDERED,
     },
+    indication: String,
+    notes: String,
   },
   { _id: true }
 );
 
-/**
- * ============================================================
- * WHO CHECKLIST
- * ============================================================
- */
+const EquipmentItemSchema = new Schema(
+  {
+    itemName: { type: String, required: true },
+    category: String,
+    quantity: { type: Number, default: 1 },
+    sterileStatus: {
+      type: String,
+      enum: Object.values(SterilizationStatus),
+      default: SterilizationStatus.STERILE,
+    },
+    maintenanceOk: { type: Boolean, default: true },
+    sterilizationBatch: String,
+    expiryDate: Date,
+    required: { type: Boolean, default: true },
+    available: { type: Boolean, default: true },
+    notes: String,
+  },
+  { _id: false }
+);
+
+const InstrumentItemSchema = new Schema(
+  {
+    instrumentName: { type: String, required: true },
+    quantityRequired: Number,
+    quantityAvailable: Number,
+    sterileStatus: {
+      type: String,
+      enum: Object.values(SterilizationStatus),
+      default: SterilizationStatus.STERILE,
+    },
+    sterilizationBatch: String,
+    countBefore: Number,
+    countAfter: Number,
+    notes: String,
+  },
+  { _id: false }
+);
+
+const ImplantItemSchema = new Schema(
+  {
+    name: { type: String, required: true },
+    manufacturer: String,
+    model: String,
+    serialNumber: String,
+    lotNumber: String,
+    expiryDate: Date,
+    quantity: Number,
+  },
+  { _id: false }
+);
+
+const ConsumableItemSchema = new Schema(
+  {
+    itemName: { type: String, required: true },
+    category: String,
+    quantityUsed: { type: Number, required: true, default: 1 },
+    unitCost: { type: Number, default: 0 },
+    lotNumber: String,
+    expiryDate: Date,
+  },
+  { _id: false }
+);
 
 const WHOSignInSchema = new Schema(
   {
-    completed: {
-      type: Boolean,
-      default: false,
-    },
-
+    completed: { type: Boolean, default: false },
     completedAt: Date,
-
-    completedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'Account',
-    },
-
-    patientIdentityConfirmed: {
-      type: Boolean,
-      default: false,
-    },
-
-    procedureConfirmed: {
-      type: Boolean,
-      default: false,
-    },
-
-    siteConfirmed: {
-      type: Boolean,
-      default: false,
-    },
-
-    consentVerified: {
-      type: Boolean,
-      default: false,
-    },
-
-    anesthesiaSafetyChecked: {
-      type: Boolean,
-      default: false,
-    },
-
-    pulseOximeterOn: {
-      type: Boolean,
-      default: false,
-    },
-
-    allergiesChecked: {
-      type: Boolean,
-      default: false,
-    },
-
-    airwayRisk: {
-      type: Boolean,
-      default: false,
-    },
-
-    bloodLossRiskOver500ml: {
-      type: Boolean,
-      default: false,
-    },
-
-    notes: String,
+    completedBy: { type: Schema.Types.ObjectId, ref: 'Account' },
+    patientIdentityConfirmed: Boolean,
+    procedureConfirmed: Boolean,
+    siteMarked: Boolean,
+    consentVerified: Boolean,
+    anesthesiaSafetyChecked: Boolean,
+    pulseOximeterOn: Boolean,
+    allergiesConfirmed: Boolean,
+    airwayRisk: Boolean,
+    bloodLossRiskOver500ml: Boolean,
   },
   { _id: false }
 );
 
 const WHOTimeOutSchema = new Schema(
   {
-    completed: {
-      type: Boolean,
-      default: false,
-    },
-
+    completed: { type: Boolean, default: false },
     completedAt: Date,
-
-    completedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'Account',
-    },
-
-    patientConfirmed: {
-      type: Boolean,
-      default: false,
-    },
-
-    procedureConfirmed: {
-      type: Boolean,
-      default: false,
-    },
-
-    surgicalSiteConfirmed: {
-      type: Boolean,
-      default: false,
-    },
-
-    teamIntroduced: {
-      type: Boolean,
-      default: false,
-    },
-
-    antibioticProphylaxisGiven: {
-      type: Boolean,
-      default: false,
-    },
-
-    imagingAvailable: {
-      type: Boolean,
-      default: false,
-    },
-
+    completedBy: { type: Schema.Types.ObjectId, ref: 'Account' },
+    patientConfirmed: Boolean,
+    procedureConfirmed: Boolean,
+    surgicalSiteConfirmed: Boolean,
+    teamIntroduced: Boolean,
+    antibioticProphylaxisConfirmed: Boolean,
+    imagingDisplayed: Boolean,
     criticalConcernsSurgeon: String,
-
     criticalConcernsAnaesthetist: String,
-
     criticalConcernsNursing: String,
-
-    notes: String,
   },
   { _id: false }
 );
 
 const WHOSignOutSchema = new Schema(
   {
-    completed: {
-      type: Boolean,
-      default: false,
-    },
-
+    completed: { type: Boolean, default: false },
     completedAt: Date,
-
-    completedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'Account',
-    },
-
-    procedurePerformed: String,
-
+    completedBy: { type: Schema.Types.ObjectId, ref: 'Account' },
+    procedureRecorded: String,
     instrumentCount: Number,
-
     spongeCount: Number,
-
     needleCount: Number,
-
-    countsCorrect: {
-      type: Boolean,
-      default: false,
-    },
-
-    specimenCollected: {
-      type: Boolean,
-      default: false,
-    },
-
-    specimenLabeled: {
-      type: Boolean,
-      default: false,
-    },
-
+    countsCorrect: Boolean,
+    specimenLabeled: Boolean,
     equipmentIssuesNoted: String,
-
-    postOperativePlan: String,
-
-    recoveryPlan: String,
-
-    notes: String,
+    postOpRecoveryPlan: String,
   },
   { _id: false }
 );
@@ -691,162 +266,54 @@ const WHOChecklistSchema = new Schema(
   {
     signIn: {
       type: WHOSignInSchema,
-      default: () => ({
-        completed: false,
-      }),
+      default: () => ({ completed: false }),
     },
-
     timeOut: {
       type: WHOTimeOutSchema,
-      default: () => ({
-        completed: false,
-      }),
+      default: () => ({ completed: false }),
     },
-
     signOut: {
       type: WHOSignOutSchema,
-      default: () => ({
-        completed: false,
-      }),
+      default: () => ({ completed: false }),
     },
   },
   { _id: false }
 );
-
-/**
- * ============================================================
- * VITALS
- * ============================================================
- */
 
 const IntraopVitalsSchema = new Schema(
   {
-    timestamp: {
-      type: Date,
-      default: Date.now,
-    },
-
+    timestamp: { type: Date, default: Date.now },
     bpSystolic: Number,
     bpDiastolic: Number,
-
     heartRate: Number,
-
     spO2: Number,
-
     respRate: Number,
-
     tempCelsius: Number,
-
     etCO2: Number,
-
     ecgRhythm: String,
-
-    oxygenFlow: String,
-
+    oxygenFlow: Number,
     ventilationMode: String,
-
+    anesthesiaEvent: String,
     notes: String,
   },
   { _id: false }
 );
 
-/**
- * ============================================================
- * SPECIMENS
- * ============================================================
- */
-
-const SpecimenSchema = new Schema(
+const AnesthesiaDrugSchema = new Schema(
   {
-    specimenType: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    description: String,
-
-    containerLabel: String,
-
-    sentToLaboratory: {
-      type: Boolean,
-      default: false,
-    },
-
-    sentAt: Date,
-
+    medicationName: { type: String, required: true },
+    dose: String,
+    route: String,
+    administeredAt: Date,
+    administeredBy: { type: Schema.Types.ObjectId, ref: 'Account' },
     notes: String,
   },
   { _id: false }
 );
-
-/**
- * ============================================================
- * INTRAOP DOCUMENTATION
- * ============================================================
- */
-
-const IntraopDocumentationSchema = new Schema(
-  {
-    procedureStartTime: Date,
-
-    procedureEndTime: Date,
-
-    incisionTime: Date,
-
-    closureTime: Date,
-
-    operativeDiagnosis: String,
-
-    postOperativeDiagnosis: String,
-
-    procedurePerformed: String,
-
-    surgicalFindings: String,
-
-    techniqueNotes: String,
-
-    estimatedBloodLossMl: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    fluidsAdministeredMl: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    bloodProductsAdministered: String,
-
-    drainsInserted: String,
-
-    implantsUsed: String,
-
-    specimens: {
-      type: [SpecimenSchema],
-      default: [],
-    },
-
-    complications: String,
-
-    surgeonNotes: String,
-
-    notes: String,
-  },
-  { _id: false }
-);
-
-/**
- * ============================================================
- * ANAESTHESIA
- * ============================================================
- */
 
 const AnesthesiaRecordSchema = new Schema(
   {
-    preAnaestheticAssessment: String,
+    preAnestheticAssessment: String,
 
     anesthesiaType: {
       type: String,
@@ -854,281 +321,202 @@ const AnesthesiaRecordSchema = new Schema(
     },
 
     airwayManagement: String,
-
     airwayDevice: String,
 
-    inductionDetails: String,
-
-    maintenanceDetails: String,
-
-    anestheticDrugs: {
-      type: [SurgeryMedicationSchema],
+    drugs: {
+      type: [AnesthesiaDrugSchema],
       default: [],
     },
 
-    monitoring: String,
-
-    oxygenVentilationData: String,
-
-    fluidsAdministeredMl: {
-      type: Number,
-      min: 0,
-    },
-
-    bloodLossMl: {
-      type: Number,
-      min: 0,
-    },
-
-    bloodProducts: String,
-
+    oxygenVentilation: String,
+    fluidBalanceMl: Number,
+    bloodLossMl: Number,
     complications: String,
-
     recoveryAssessment: String,
-
     notes: String,
   },
   { _id: false }
 );
 
-/**
- * ============================================================
- * RECOVERY
- * ============================================================
- */
-
-const RecoveryAssessmentSchema = new Schema(
+const IntraopDocumentationSchema = new Schema(
   {
-    arrivalTime: Date,
+    procedureStartTime: Date,
+    procedureEndTime: Date,
+    incisionTime: Date,
+    closureTime: Date,
 
-    consciousnessLevel: String,
+    operativeDiagnosis: String,
+    postOperativeDiagnosis: String,
+    procedurePerformed: String,
+    surgicalFindings: String,
+    techniqueNotes: String,
 
-    airwayStatus: String,
+    eblMl: { type: Number, default: 0 },
+    fluidsAdministeredMl: { type: Number, default: 0 },
 
-    breathingStatus: String,
+    bloodProductsAdministered: String,
+    drainsInserted: String,
 
-    circulationStatus: String,
-
-    painScore: {
-      type: Number,
-      min: 0,
-      max: 10,
+    implantsUsed: {
+      type: [ImplantItemSchema],
+      default: [],
     },
 
-    nauseaVomiting: Boolean,
-
-    recoveryNotes: String,
-
-    dischargedFromRecovery: {
-      type: Boolean,
-      default: false,
-    },
-
-    dischargedAt: Date,
-
-    dischargedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'Account',
-    },
+    specimensCollected: String,
+    complications: String,
+    surgeonNotes: String,
   },
   { _id: false }
 );
 
-/**
- * ============================================================
- * SURGERY CASE
- * ============================================================
- */
-
-const SurgeryCaseSchema =
-  new Schema<ISurgeryCaseDocument>(
-    {
-      hospitalId: {
-        type: Schema.Types.ObjectId,
-        ref: 'Account',
-        required: true,
-        index: true,
-      },
-
-      patientId: {
-        type: Schema.Types.ObjectId,
-        ref: 'Patient',
-        required: true,
-        index: true,
-      },
-
-      leadSurgeonId: {
-        type: Schema.Types.ObjectId,
-        ref: 'Account',
-        required: true,
-        index: true,
-      },
-
-      theatreId: {
-        type: String,
-        required: true,
-        trim: true,
-        index: true,
-      },
-
-      procedureName: {
-        type: String,
-        required: true,
-        trim: true,
-      },
-
-      icdCode: {
-        type: String,
-        trim: true,
-      },
-
-      urgency: {
-        type: String,
-        enum: Object.values(UrgencyLevel),
-        default: UrgencyLevel.ELECTIVE,
-        required: true,
-      },
-
-      priority: {
-        type: String,
-        enum: Object.values(SurgeryPriority),
-        default: SurgeryPriority.ROUTINE,
-        required: true,
-      },
-
-      status: {
-        type: String,
-        enum: Object.values(SurgeryStatus),
-        default: SurgeryStatus.SCHEDULED,
-        required: true,
-        index: true,
-      },
-
-      scheduledStartTime: {
-        type: Date,
-        required: true,
-        index: true,
-      },
-
-      scheduledEndTime: {
-        type: Date,
-        required: true,
-        index: true,
-      },
-
-      estimatedDurationMinutes: {
-        type: Number,
-        min: 1,
-      },
-
-      actualStartTime: Date,
-
-      actualEndTime: Date,
-
-      anesthesiaType: {
-        type: String,
-        enum: Object.values(AnesthesiaType),
-        required: true,
-      },
-
-      surgicalTeam: {
-        type: [SurgicalTeamMemberSchema],
-        default: [],
-      },
-
-      preOpAssessment: {
-        type: PreOpAssessmentSchema,
-      },
-
-      consent: {
-        type: SurgicalConsentSchema,
-      },
-
-      preOpMedications: {
-        type: [SurgeryMedicationSchema],
-        default: [],
-      },
-
-      intraOpMedications: {
-        type: [SurgeryMedicationSchema],
-        default: [],
-      },
-
-      equipmentChecklist: {
-        type: [EquipmentItemSchema],
-        default: [],
-      },
-
-      consumablesUsed: {
-        type: [ConsumableItemSchema],
-        default: [],
-      },
-
-      whoChecklist: {
-        type: WHOChecklistSchema,
-        default: () => ({
-          signIn: { completed: false },
-          timeOut: { completed: false },
-          signOut: { completed: false },
-        }),
-      },
-
-      vitalsTimeline: {
-        type: [IntraopVitalsSchema],
-        default: [],
-      },
-
-      intraopDocs: {
-        type: IntraopDocumentationSchema,
-      },
-
-      anesthesiaRecord: {
-        type: AnesthesiaRecordSchema,
-      },
-
-      recoveryAssessment: {
-        type: RecoveryAssessmentSchema,
-      },
-
-      cancellationReason: {
-        type: String,
-        trim: true,
-      },
-
-      postponedReason: {
-        type: String,
-        trim: true,
-      },
-
-      rescheduledFrom: Date,
-
-      rescheduledAt: Date,
-
-      rescheduledBy: {
-        type: Schema.Types.ObjectId,
-        ref: 'Account',
-      },
-
-      createdBy: {
-        type: Schema.Types.ObjectId,
-        ref: 'Account',
-      },
-
-      updatedBy: {
-        type: Schema.Types.ObjectId,
-        ref: 'Account',
-      },
+const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
+  {
+    hospitalId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Account',
+      required: true,
+      index: true,
     },
-    {
-      timestamps: true,
-    }
-  );
 
-/**
- * ============================================================
- * INDEXES
- * ============================================================
- */
+    patientId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Patient',
+      required: true,
+      index: true,
+    },
+
+    procedureName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    icdCode: {
+      type: String,
+      trim: true,
+    },
+
+    theatreId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
+    urgency: {
+      type: String,
+      enum: Object.values(UrgencyLevel),
+      default: UrgencyLevel.ELECTIVE,
+      required: true,
+    },
+
+    priority: {
+      type: String,
+      enum: Object.values(PriorityLevel),
+      default: PriorityLevel.NORMAL,
+      required: true,
+    },
+
+    status: {
+      type: String,
+      enum: Object.values(SurgeryStatus),
+      default: SurgeryStatus.SCHEDULED,
+      required: true,
+      index: true,
+    },
+
+    scheduledStartTime: {
+      type: Date,
+      required: true,
+    },
+
+    scheduledEndTime: {
+      type: Date,
+      required: true,
+    },
+
+    estimatedDurationMinutes: {
+      type: Number,
+      required: true,
+    },
+
+    actualStartTime: Date,
+    actualEndTime: Date,
+
+    leadSurgeonId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Account',
+      required: true,
+      index: true,
+    },
+
+    surgicalTeam: {
+      type: [SurgicalTeamMemberSchema],
+      default: [],
+    },
+
+    anesthesiaType: {
+      type: String,
+      enum: Object.values(AnesthesiaType),
+      required: true,
+    },
+
+    preOpAssessment: PreOpAssessmentSchema,
+
+    consent: SurgicalConsentSchema,
+
+    preOpMedications: {
+      type: [PreOpMedicationSchema],
+      default: [],
+    },
+
+    equipmentChecklist: {
+      type: [EquipmentItemSchema],
+      default: [],
+    },
+
+    instrumentChecklist: {
+      type: [InstrumentItemSchema],
+      default: [],
+    },
+
+    consumablesUsed: {
+      type: [ConsumableItemSchema],
+      default: [],
+    },
+
+    implantsUsed: {
+      type: [ImplantItemSchema],
+      default: [],
+    },
+
+    whoChecklist: {
+      type: WHOChecklistSchema,
+      default: () => ({
+        signIn: { completed: false },
+        timeOut: { completed: false },
+        signOut: { completed: false },
+      }),
+    },
+
+    vitalsTimeline: {
+      type: [IntraopVitalsSchema],
+      default: [],
+    },
+
+    anesthesiaRecord: AnesthesiaRecordSchema,
+
+    intraopDocs: IntraopDocumentationSchema,
+
+    postOpNotes: String,
+
+    cancellationReason: String,
+
+    postponementReason: String,
+  },
+  {
+    timestamps: true,
+  }
+);
 
 SurgeryCaseSchema.index({
   hospitalId: 1,
@@ -1149,20 +537,7 @@ SurgeryCaseSchema.index({
   scheduledStartTime: 1,
 });
 
-SurgeryCaseSchema.index({
-  hospitalId: 1,
-  urgency: 1,
-  priority: 1,
-});
-
-/**
- * ============================================================
- * MODEL
- * ============================================================
- */
-
-export const SurgeryCaseModel =
-  model<ISurgeryCaseDocument>(
-    'SurgeryCase',
-    SurgeryCaseSchema
-  );
+export const SurgeryCaseModel = model<ISurgeryCaseDocument>(
+  'SurgeryCase',
+  SurgeryCaseSchema
+);
