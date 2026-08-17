@@ -56,6 +56,7 @@ export interface ISurgicalTeamMember {
   role: SurgicalRole;
   credentialVerified?: boolean;
   notes?: string;
+  [key: string]: any;
 }
 
 export interface IPreOpAssessment {
@@ -70,10 +71,12 @@ export interface IPreOpAssessment {
     heartRate?: number;
     tempCelsius?: number;
     spO2?: number;
+    [key: string]: any;
   };
   clearedForSurgery?: boolean;
   clearedAt?: Date;
   clearedBy?: Types.ObjectId;
+  [key: string]: any;
 }
 
 export interface ISurgicalConsent {
@@ -85,6 +88,7 @@ export interface ISurgicalConsent {
   witnessName?: string;
   digitalSignatureUrl?: string;
   signedAt?: Date;
+  [key: string]: any;
 }
 
 export interface IEquipmentItem {
@@ -92,6 +96,7 @@ export interface IEquipmentItem {
   sterileStatus: SterilizationStatus;
   maintenanceOk: boolean;
   notes?: string;
+  [key: string]: any;
 }
 
 export interface IConsumableItem {
@@ -99,6 +104,7 @@ export interface IConsumableItem {
   quantityUsed: number;
   unitCost?: number;
   lotNumber?: string;
+  [key: string]: any;
 }
 
 export interface IWHOSignIn {
@@ -112,6 +118,7 @@ export interface IWHOSignIn {
   allergyKnown?: boolean;
   airwayRisk?: boolean;
   bloodLossRiskOver500ml?: boolean;
+  [key: string]: any;
 }
 
 export interface IWHOTimeOut {
@@ -125,6 +132,7 @@ export interface IWHOTimeOut {
   criticalConcernsSurgeon?: string;
   criticalConcernsAnaesthetist?: string;
   criticalConcernsNursing?: string;
+  [key: string]: any;
 }
 
 export interface IWHOSignOut {
@@ -136,12 +144,14 @@ export interface IWHOSignOut {
   specimenLabeled?: boolean;
   equipmentIssuesNoted?: string;
   postOpRecoveryPlan?: string;
+  [key: string]: any;
 }
 
 export interface IWHOChecklist {
   signIn: IWHOSignIn;
   timeOut: IWHOTimeOut;
   signOut: IWHOSignOut;
+  [key: string]: any;
 }
 
 export interface IIntraopVitalsLog {
@@ -155,6 +165,7 @@ export interface IIntraopVitalsLog {
   etCO2?: number;
   ecgRhythm?: string;
   notes?: string;
+  [key: string]: any;
 }
 
 export interface IIntraopDocumentation {
@@ -171,6 +182,7 @@ export interface IIntraopDocumentation {
   implantsUsed?: string;
   specimensCollected?: string;
   complications?: string;
+  [key: string]: any;
 }
 
 export interface ISurgeryCase {
@@ -198,6 +210,7 @@ export interface ISurgeryCase {
   anesthesiaNotes?: string;
   postOpNotes?: string;
   cancellationReason?: string;
+  [key: string]: any;
 }
 
 export interface ISurgeryCaseDocument extends ISurgeryCase, Document {
@@ -222,6 +235,7 @@ export interface CreateSurgeryCaseInput {
     credentialVerified?: boolean;
     notes?: string;
   }[];
+  [key: string]: any;
 }
 
 export interface UpdatePreOpInput {
@@ -239,6 +253,7 @@ export interface UpdatePreOpInput {
   };
   clearedForSurgery?: boolean;
   clearedBy?: string;
+  [key: string]: any;
 }
 
 export interface UpdateConsentInput {
@@ -249,12 +264,14 @@ export interface UpdateConsentInput {
   signedByPatient: boolean;
   witnessName?: string;
   digitalSignatureUrl?: string;
+  [key: string]: any;
 }
 
 export interface UpdateWHOChecklistInput {
   stage: 'signIn' | 'timeOut' | 'signOut';
   completedBy: string;
   data: Record<string, unknown>;
+  [key: string]: any;
 }
 
 export interface AddVitalsLogInput {
@@ -267,6 +284,7 @@ export interface AddVitalsLogInput {
   etCO2?: number;
   ecgRhythm?: string;
   notes?: string;
+  [key: string]: any;
 }
 
 export interface UpdateIntraopInput {
@@ -285,12 +303,14 @@ export interface UpdateIntraopInput {
   complications?: string;
   consumablesUsed?: IConsumableItem[];
   equipmentChecklist?: IEquipmentItem[];
+  [key: string]: any;
 }
 
 export interface CompleteSurgeryInput {
   anesthesiaNotes?: string;
   postOpNotes?: string;
   intraopDocs?: UpdateIntraopInput;
+  [key: string]: any;
 }
 
 export interface GetSurgeryCasesQuery {
@@ -301,4 +321,5 @@ export interface GetSurgeryCasesQuery {
   leadSurgeonId?: string;
   patientId?: string;
   date?: string;
+  [key: string]: any;
 }
