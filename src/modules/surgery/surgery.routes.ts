@@ -12,6 +12,12 @@ router.post(
     surgeryController.scheduleCase(req, res, next)
 );
 
+router.post(
+  '/emergency',
+  (req, res, next) =>
+    surgeryController.scheduleEmergencyCase(req, res, next)
+);
+
 router.get(
   '/',
   (req, res, next) =>
@@ -19,27 +25,9 @@ router.get(
 );
 
 router.get(
-  '/theatre/:theatreId/schedule',
-  (req, res, next) =>
-    surgeryController.getTheatreSchedule(req, res, next)
-);
-
-router.get(
-  '/theatre/:theatreId/utilization',
-  (req, res, next) =>
-    surgeryController.getUtilization(req, res, next)
-);
-
-router.get(
   '/:id',
   (req, res, next) =>
     surgeryController.getCaseById(req, res, next)
-);
-
-router.patch(
-  '/:id/reschedule',
-  (req, res, next) =>
-    surgeryController.rescheduleCase(req, res, next)
 );
 
 router.patch(
@@ -55,6 +43,30 @@ router.patch(
 );
 
 router.patch(
+  '/:id/team',
+  (req, res, next) =>
+    surgeryController.updateTeam(req, res, next)
+);
+
+router.patch(
+  '/:id/reschedule',
+  (req, res, next) =>
+    surgeryController.rescheduleCase(req, res, next)
+);
+
+router.post(
+  '/:id/medications',
+  (req, res, next) =>
+    surgeryController.addMedication(req, res, next)
+);
+
+router.patch(
+  '/:id/medications/administer',
+  (req, res, next) =>
+    surgeryController.administerMedication(req, res, next)
+);
+
+router.patch(
   '/:id/who-checklist',
   (req, res, next) =>
     surgeryController.updateWHOChecklist(req, res, next)
@@ -67,9 +79,9 @@ router.post(
 );
 
 router.patch(
-  '/:id/anesthesia',
+  '/:id/start',
   (req, res, next) =>
-    surgeryController.updateAnesthesia(req, res, next)
+    surgeryController.startSurgery(req, res, next)
 );
 
 router.patch(
@@ -79,21 +91,21 @@ router.patch(
 );
 
 router.patch(
-  '/:id/team',
+  '/:id/anesthesia',
   (req, res, next) =>
-    surgeryController.assignTeamMember(req, res, next)
-);
-
-router.patch(
-  '/:id/start',
-  (req, res, next) =>
-    surgeryController.startSurgery(req, res, next)
+    surgeryController.updateAnesthesia(req, res, next)
 );
 
 router.patch(
   '/:id/complete',
   (req, res, next) =>
     surgeryController.completeSurgery(req, res, next)
+);
+
+router.patch(
+  '/:id/recovery',
+  (req, res, next) =>
+    surgeryController.updateRecovery(req, res, next)
 );
 
 router.patch(
