@@ -3,9 +3,7 @@ import { surgeryService } from './surgery.service.js';
 import {
   SurgeryStatus,
   UrgencyLevel,
-  PriorityLevel,
   AnesthesiaType,
-  SurgicalRole,
 } from './surgery.types.js';
 
 export interface AuthenticatedRequest extends Request {
@@ -25,36 +23,75 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const {
-        patientId,
-        leadSurgeonId,
-        theatreId,
-        procedureName,
-        icdCode,
-        urgency,
-        priority,
-        scheduledStartTime,
-        scheduledEndTime,
-        estimatedDurationMinutes,
-        anesthesiaType,
-        surgicalTeam,
-      } = req.body;
+      const surgeryCase = await surgeryService.scheduleCase(
+        authReq.user.hospitalId,
+        authReq.user._id,
+        {
+          patientId: req.body.patientId,
+          leadSurgeonId:
+            req.body.leadSurgeonId || authReq.user._id,
+          theatreId: req.body.theatreId,
+          procedureName: req.body.procedureName,
+          icdCode: req.body.icdCode,
+          urgency: req.body.urgency as UrgencyLevel,
+          priority: req.body.priority,
+          scheduledStartTime: new Date(
+            req.body.scheduledStartTime
+          ),
+          scheduledEndTime: new Date(
+            req.body.scheduledEndTime
+          ),
+          anesthesiaType:
+            req.body.anesthesiaType as AnesthesiaType,
+          surgicalTeam: req.body.surgicalTeam,
+          estimatedDurationMinutes:
+            req.body.estimatedDurationMinutes,
+        }
+      );
 
-      const surgeryCase = await surgeryService.scheduleCase({
-        hospitalId: authReq.user.hospitalId,
-        patientId,
-        leadSurgeonId: leadSurgeonId || authReq.user._id,
-        theatreId,
-        procedureName,
-        icdCode,
-        urgency: urgency as UrgencyLevel,
-        priority: priority as PriorityLevel,
-        scheduledStartTime: new Date(scheduledStartTime),
-        scheduledEndTime: new Date(scheduledEndTime),
-        estimatedDurationMinutes,
-        anesthesiaType: anesthesiaType as AnesthesiaType,
-        surgicalTeam,
+      res.status(201).json({
+        success: true,
+        data: surgeryCase,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async scheduleEmergencyCase(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const surgeryCase =
+        await surgeryService.insertEmergencyCase(
+          authReq.user.hospitalId,
+          authReq.user._id,
+          {
+            patientId: req.body.patientId,
+            leadSurgeonId:
+              req.body.leadSurgeonId || authReq.user._id,
+            theatreId: req.body.theatreId,
+            procedureName: req.body.procedureName,
+            icdCode: req.body.icdCode,
+            urgency: UrgencyLevel.EMERGENCY,
+            priority: req.body.priority ?? 100,
+            scheduledStartTime: new Date(
+              req.body.scheduledStartTime
+            ),
+            scheduledEndTime: new Date(
+              req.body.scheduledEndTime
+            ),
+            anesthesiaType:
+              req.body.anesthesiaType as AnesthesiaType,
+            surgicalTeam: req.body.surgicalTeam,
+            estimatedDurationMinutes:
+              req.body.estimatedDurationMinutes,
+          }
+        );
 
       res.status(201).json({
         success: true,
@@ -77,19 +114,29 @@ export class SurgeryController {
         authReq.user.hospitalId,
         {
           page: req.query.page
-            ? parseInt(req.query.page as string, 10)
+            ? Number(req.query.page)
             : 1,
           limit: req.query.limit
-            ? parseInt(req.query.limit as string, 10)
+            ? Number(req.query.limit)
             : 20,
-          status: req.query.status as SurgeryStatus | undefined,
-          urgency: req.query.urgency as UrgencyLevel | undefined,
-          priority: req.query.priority as PriorityLevel | undefined,
-          theatreId: req.query.theatreId as string | undefined,
-          leadSurgeonId:
-            req.query.leadSurgeonId as string | undefined,
-          patientId: req.query.patientId as string | undefined,
-          date: req.query.date as string | undefined,
+          status: req.query.status as
+            | SurgeryStatus
+            | undefined,
+          urgency: req.query.urgency as
+            | UrgencyLevel
+            | undefined,
+          theatreId: req.query.theatreId as
+            | string
+            | undefined,
+          leadSurgeonId: req.query.leadSurgeonId as
+            | string
+            | undefined,
+          patientId: req.query.patientId as
+            | string
+            | undefined,
+          date: req.query.date as
+            | string
+            | undefined,
         }
       );
 
@@ -110,15 +157,16 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const surgeryCase = await surgeryService.getCaseById(
-        req.params.id,
-        authReq.user.hospitalId
-      );
+      const surgeryCase =
+        await surgeryService.getCaseById(
+          req.params.id,
+          authReq.user.hospitalId
+        );
 
       if (!surgeryCase) {
         res.status(404).json({
           success: false,
-          message: 'Surgical case not found',
+          message: 'Surgical case not found.',
         });
         return;
       }
@@ -126,38 +174,6 @@ export class SurgeryController {
       res.status(200).json({
         success: true,
         data: surgeryCase,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async rescheduleCase(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-
-      const updated = await surgeryService.rescheduleCase(
-        req.params.id,
-        authReq.user.hospitalId,
-        new Date(req.body.scheduledStartTime),
-        new Date(req.body.scheduledEndTime)
-      );
-
-      if (!updated) {
-        res.status(404).json({
-          success: false,
-          message: 'Surgical case not found',
-        });
-        return;
-      }
-
-      res.status(200).json({
-        success: true,
-        data: updated,
       });
     } catch (error) {
       next(error);
@@ -172,24 +188,20 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const updated = await surgeryService.updatePreOpAssessment(
-        req.params.id,
-        authReq.user.hospitalId,
-        req.body
-      );
+      const updated =
+        await surgeryService.updatePreOpAssessment(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body
+        );
 
       if (!updated) {
         res.status(404).json({
           success: false,
-          message: 'Surgical case not found',
+          message: 'Surgical case not found.',
         });
         return;
-      }
-
-      if (req.body.clearedForSurgery === true) {
-        if (updated.preOpAssessment) {
-          updated.preOpAssessment.clearedBy = authReq.user._id as never;
-        }
       }
 
       res.status(200).json({
@@ -209,16 +221,157 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const updated = await surgeryService.updateConsent(
+      const updated =
+        await surgeryService.updateConsent(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Surgical case not found.',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateTeam(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated = await surgeryService.updateTeam(
         req.params.id,
         authReq.user.hospitalId,
+        authReq.user._id,
         req.body
       );
 
       if (!updated) {
         res.status(404).json({
           success: false,
-          message: 'Surgical case not found',
+          message: 'Surgical case not found.',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async rescheduleCase(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await surgeryService.rescheduleCase(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          {
+            scheduledStartTime: new Date(
+              req.body.scheduledStartTime
+            ),
+            scheduledEndTime: new Date(
+              req.body.scheduledEndTime
+            ),
+            theatreId: req.body.theatreId,
+            reason: req.body.reason,
+          }
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Surgical case not found.',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async addMedication(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await surgeryService.updateMedication(
+          req.params.id,
+          authReq.user.hospitalId,
+          req.body
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Surgical case not found.',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async administerMedication(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await surgeryService.administerMedication(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Medication or surgical case not found.',
         });
         return;
       }
@@ -240,20 +393,18 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const updated = await surgeryService.updateWHOChecklist(
-        req.params.id,
-        authReq.user.hospitalId,
-        {
-          stage: req.body.stage,
-          data: req.body.data,
-        },
-        authReq.user._id
-      );
+      const updated =
+        await surgeryService.updateWHOChecklist(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body
+        );
 
       if (!updated) {
         res.status(404).json({
           success: false,
-          message: 'Surgical case not found',
+          message: 'Surgical case not found.',
         });
         return;
       }
@@ -275,78 +426,18 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const updated = await surgeryService.addVitalsLog(
-        req.params.id,
-        authReq.user.hospitalId,
-        req.body
-      );
+      const updated =
+        await surgeryService.addVitalsLog(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body
+        );
 
       if (!updated) {
         res.status(404).json({
           success: false,
-          message: 'Surgical case not found or surgery is not in progress',
-        });
-        return;
-      }
-
-      res.status(200).json({
-        success: true,
-        data: updated,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async updateAnesthesia(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-
-      const updated = await surgeryService.updateAnesthesia(
-        req.params.id,
-        authReq.user.hospitalId,
-        req.body
-      );
-
-      if (!updated) {
-        res.status(404).json({
-          success: false,
-          message: 'Surgical case not found',
-        });
-        return;
-      }
-
-      res.status(200).json({
-        success: true,
-        data: updated,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async updateIntraopDocs(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-
-      const updated = await surgeryService.updateIntraopDocs(
-        req.params.id,
-        authReq.user.hospitalId,
-        req.body
-      );
-
-      if (!updated) {
-        res.status(404).json({
-          success: false,
-          message: 'Surgical case not found',
+          message: 'Surgical case not found.',
         });
         return;
       }
@@ -368,15 +459,85 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const updated = await surgeryService.startSurgery(
-        req.params.id,
-        authReq.user.hospitalId
-      );
+      const updated =
+        await surgeryService.startSurgery(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id
+        );
 
       if (!updated) {
         res.status(404).json({
           success: false,
-          message: 'Surgical case not found',
+          message:
+            'Surgical case not found or cannot be started.',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateIntraopDocs(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await surgeryService.updateIntraopDocs(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message:
+            'Surgical case not found or surgery is not in progress.',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateAnesthesia(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await surgeryService.updateAnesthesia(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Surgical case not found.',
         });
         return;
       }
@@ -398,16 +559,53 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const updated = await surgeryService.completeSurgery(
-        req.params.id,
-        authReq.user.hospitalId,
-        req.body
-      );
+      const updated =
+        await surgeryService.completeSurgery(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body
+        );
 
       if (!updated) {
         res.status(404).json({
           success: false,
-          message: 'Surgical case not found or not currently in progress',
+          message:
+            'Surgical case not found or surgery is not in progress.',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateRecovery(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await surgeryService.updateRecovery(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message:
+            'Surgical case not found or not currently in recovery.',
         });
         return;
       }
@@ -429,16 +627,19 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const updated = await surgeryService.cancelCase(
-        req.params.id,
-        authReq.user.hospitalId,
-        req.body.cancellationReason || 'No reason specified'
-      );
+      const updated =
+        await surgeryService.cancelCase(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body.cancellationReason ||
+            'No reason specified.'
+        );
 
       if (!updated) {
         res.status(404).json({
           success: false,
-          message: 'Surgical case not found or cannot be cancelled',
+          message: 'Surgical case not found.',
         });
         return;
       }
@@ -460,16 +661,18 @@ export class SurgeryController {
     try {
       const authReq = req as AuthenticatedRequest;
 
-      const updated = await surgeryService.postponeCase(
-        req.params.id,
-        authReq.user.hospitalId,
-        req.body.postponementReason || 'No reason specified'
-      );
+      const updated =
+        await surgeryService.postponeCase(
+          req.params.id,
+          authReq.user.hospitalId,
+          authReq.user._id,
+          req.body.reason || 'No reason specified.'
+        );
 
       if (!updated) {
         res.status(404).json({
           success: false,
-          message: 'Surgical case not found or cannot be postponed',
+          message: 'Surgical case not found.',
         });
         return;
       }
@@ -477,86 +680,6 @@ export class SurgeryController {
       res.status(200).json({
         success: true,
         data: updated,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async assignTeamMember(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-
-      const updated = await surgeryService.assignTeamMember(
-        req.params.id,
-        authReq.user.hospitalId,
-        req.body.userId,
-        req.body.role as SurgicalRole,
-        req.body.credentialVerified ?? false
-      );
-
-      if (!updated) {
-        res.status(404).json({
-          success: false,
-          message: 'Surgical case not found',
-        });
-        return;
-      }
-
-      res.status(200).json({
-        success: true,
-        data: updated,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async getTheatreSchedule(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-
-      const cases = await surgeryService.getTheatreSchedule(
-        authReq.user.hospitalId,
-        req.params.theatreId,
-        req.query.date as string
-      );
-
-      res.status(200).json({
-        success: true,
-        data: cases,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async getUtilization(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-
-      const result = await surgeryService.getUtilization(
-        authReq.user.hospitalId,
-        req.params.theatreId,
-        new Date(req.query.startDate as string),
-        new Date(req.query.endDate as string)
-      );
-
-      res.status(200).json({
-        success: true,
-        data: result,
       });
     } catch (error) {
       next(error);
