@@ -30,10 +30,46 @@ const ACTIVE_STATUSES = [
 ];
 
 export class SurgeryService {
-  private validateObjectId(id: string, field = 'ID'): void {
-    if (!Types.ObjectId.isValid(id)) {
+  private validateObjectId(id: string | undefined | null, field = 'ID'): string {
+    if (!id || !Types.ObjectId.isValid(id)) {
       throw new Error(`Invalid ${field}.`);
     }
+
+    return id;
+  }
+
+  private normalizeObjectId(value: unknown, field: string): string {
+    if (!value || typeof value !== 'string') {
+      throw new Error(`Invalid ${field}.`);
+    }
+
+    const normalized = value.trim();
+
+    if (!Types.ObjectId.isValid(normalized)) {
+      throw new Error(`Invalid ${field}.`);
+    }
+
+    return normalized;
+  }
+
+  private normalizeTeamMembers(
+    team: Array<{ userId?: string | null; role: SurgicalRole | string; credentialVerified?: boolean; notes?: string }>
+  ) {
+    if (!team) return [];
+
+    return team
+      .filter((member) => member && member.userId)
+      .map((member) => {
+        const userId = this.normalizeObjectId(member.userId, 'surgical team member ID');
+
+        return {
+          userId: new Types.ObjectId(userId),
+          role: member.role,
+          credentialVerified: Boolean(member.credentialVerified),
+          assignedAt: new Date(),
+          notes: member.notes || '',
+        };
+      });
   }
 
   private async checkSchedulingConflicts(
@@ -68,12 +104,15 @@ export class SurgeryService {
 
     if (!surgicalTeam.length) return;
 
-    const teamIds = surgicalTeam.map((member) => member.userId);
+    const teamIds = surgicalTeam
+      .map((member) => member.userId)
+      .filter(Boolean)
+      .map((id) => new Types.ObjectId(id));
 
     const teamConflict = await SurgeryCaseModel.findOne({
       ...baseFilter,
       'surgicalTeam.userId': {
-        $in: teamIds.map((id) => new Types.ObjectId(id)),
+        $in: teamIds,
       },
     }).lean();
 
@@ -97,12 +136,12 @@ export class SurgeryService {
     }
   }
 
-  private validateTeam(team: UpdateTeamInput['surgicalTeam']): void {
+  private validateTeam(team: Array<{ userId: string; role: SurgicalRole | string; credentialVerified?: boolean }>): void {
     const users = new Set<string>();
     const roles = new Set<SurgicalRole>();
 
     for (const member of team) {
-      if (!Types.ObjectId.isValid(member.userId)) {
+      if (!member?.userId || !Types.ObjectId.isValid(member.userId)) {
         throw new Error('Invalid surgical team member ID.');
       }
 
@@ -112,11 +151,14 @@ export class SurgeryService {
 
       users.add(member.userId);
 
-      if (roles.has(member.role) && member.role === SurgicalRole.PRIMARY_SURGEON) {
+      if (
+        member.role === SurgicalRole.PRIMARY_SURGEON &&
+        roles.has(SurgicalRole.PRIMARY_SURGEON)
+      ) {
         throw new Error('Only one primary surgeon can be assigned.');
       }
 
-      roles.add(member.role);
+      roles.add(member.role as SurgicalRole);
     }
   }
 
@@ -125,26 +167,37 @@ export class SurgeryService {
     createdBy: string,
     input: CreateSurgeryCaseInput
   ): Promise<ISurgeryCaseDocument> {
-    this.validateObjectId(input.patientId, 'patient ID');
-    this.validateObjectId(input.leadSurgeonId, 'lead surgeon ID');
+    const patientId = this.validateObjectId(input.patientId, 'patient ID');
+    const leadSurgeonId = this.validateObjectId(input.leadSurgeonId, 'lead surgeon ID');
 
     const start = new Date(input.scheduledStartTime);
     const end = new Date(input.scheduledEndTime);
 
     this.validateTimeRange(start, end);
 
-    const team = input.surgicalTeam || [];
+    const rawTeam = input.surgicalTeam || [];
+    const normalizedTeam = this.normalizeTeamMembers(rawTeam);
 
-    this.validateTeam({
-      surgicalTeam: [
-        {
-          userId: input.leadSurgeonId,
-          role: SurgicalRole.PRIMARY_SURGEON,
-          credentialVerified: true,
-        },
-        ...team,
-      ],
-    });
+    const teamPayload = [
+      {
+        userId: new Types.ObjectId(leadSurgeonId),
+        role: SurgicalRole.PRIMARY_SURGEON,
+        credentialVerified: true,
+        assignedAt: new Date(),
+        notes: '',
+      },
+      ...normalizedTeam.filter(
+        (member) => member.userId.toString() !== leadSurgeonId
+      ),
+    ];
+
+    this.validateTeam(
+      teamPayload.map((member) => ({
+        userId: member.userId.toString(),
+        role: member.role as SurgicalRole,
+        credentialVerified: member.credentialVerified,
+      }))
+    );
 
     await this.checkSchedulingConflicts(
       hospitalId,
@@ -152,33 +205,17 @@ export class SurgeryService {
       end,
       input.theatreId,
       [
-        { userId: input.leadSurgeonId },
-        ...team.map((member) => ({ userId: member.userId })),
+        { userId: leadSurgeonId },
+        ...normalizedTeam.map((member) => ({
+          userId: member.userId.toString(),
+        })),
       ]
     );
 
-    const surgicalTeam = [
-      {
-        userId: new Types.ObjectId(input.leadSurgeonId),
-        role: SurgicalRole.PRIMARY_SURGEON,
-        credentialVerified: true,
-        assignedAt: new Date(),
-      },
-      ...team
-        .filter((member) => member.userId !== input.leadSurgeonId)
-        .map((member) => ({
-          userId: new Types.ObjectId(member.userId),
-          role: member.role,
-          credentialVerified: member.credentialVerified ?? false,
-          assignedAt: new Date(),
-          notes: member.notes,
-        })),
-    ];
-
     const surgeryCase = await SurgeryCaseModel.create({
       hospitalId: new Types.ObjectId(hospitalId),
-      patientId: new Types.ObjectId(input.patientId),
-      leadSurgeonId: new Types.ObjectId(input.leadSurgeonId),
+      patientId: new Types.ObjectId(patientId),
+      leadSurgeonId: new Types.ObjectId(leadSurgeonId),
       theatreId: input.theatreId,
       procedureName: input.procedureName,
       icdCode: input.icdCode,
@@ -191,7 +228,7 @@ export class SurgeryService {
         input.estimatedDurationMinutes ??
         Math.round((end.getTime() - start.getTime()) / 60000),
       anesthesiaType: input.anesthesiaType,
-      surgicalTeam,
+      surgicalTeam: teamPayload,
       createdBy: new Types.ObjectId(createdBy),
       updatedBy: new Types.ObjectId(createdBy),
     });
@@ -242,18 +279,9 @@ export class SurgeryService {
 
     const [cases, total] = await Promise.all([
       SurgeryCaseModel.find(filter)
-        .populate(
-          'patientId',
-          'firstName lastName mrn gender dateOfBirth'
-        )
-        .populate(
-          'leadSurgeonId',
-          'firstName lastName role'
-        )
-        .populate(
-          'surgicalTeam.userId',
-          'firstName lastName role'
-        )
+        .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
+        .populate('leadSurgeonId', 'firstName lastName role')
+        .populate('surgicalTeam.userId', 'firstName lastName role')
         .sort({
           scheduledStartTime: 1,
           priority: -1,
@@ -283,22 +311,10 @@ export class SurgeryService {
       _id: caseId,
       hospitalId,
     })
-      .populate(
-        'patientId',
-        'firstName lastName mrn gender dateOfBirth'
-      )
-      .populate(
-        'leadSurgeonId',
-        'firstName lastName role'
-      )
-      .populate(
-        'surgicalTeam.userId',
-        'firstName lastName role'
-      )
-      .populate(
-        'preOpAssessment.clearedBy',
-        'firstName lastName role'
-      )
+      .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
+      .populate('leadSurgeonId', 'firstName lastName role')
+      .populate('surgicalTeam.userId', 'firstName lastName role')
+      .populate('preOpAssessment.clearedBy', 'firstName lastName role')
       .exec();
   }
 
@@ -460,7 +476,24 @@ export class SurgeryService {
     updatedBy: string,
     input: UpdateTeamInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateTeam(input);
+    const cleanTeam = input.surgicalTeam
+      .filter((member) => member && member.userId)
+      .map((member) => ({
+        ...member,
+        userId: this.normalizeObjectId(member.userId, 'surgical team member ID'),
+      }));
+
+    if (!cleanTeam.length) {
+      throw new Error('At least one surgical team member is required.');
+    }
+
+    this.validateTeam(
+      cleanTeam.map((member) => ({
+        userId: member.userId,
+        role: member.role,
+        credentialVerified: member.credentialVerified,
+      }))
+    );
 
     const existingCase = await SurgeryCaseModel.findOne({
       _id: caseId,
@@ -469,7 +502,7 @@ export class SurgeryService {
 
     if (!existingCase) return null;
 
-    const leadSurgeonExists = input.surgicalTeam.some(
+    const leadSurgeonExists = cleanTeam.some(
       (member) =>
         member.role === SurgicalRole.PRIMARY_SURGEON &&
         member.userId === existingCase.leadSurgeonId.toString()
@@ -486,13 +519,13 @@ export class SurgeryService {
       existingCase.scheduledStartTime,
       existingCase.scheduledEndTime,
       existingCase.theatreId,
-      input.surgicalTeam.map((member) => ({
+      cleanTeam.map((member) => ({
         userId: member.userId,
       })),
       caseId
     );
 
-    const surgicalTeam = input.surgicalTeam.map((member) => ({
+    const surgicalTeam = cleanTeam.map((member) => ({
       userId: new Types.ObjectId(member.userId),
       role: member.role,
       credentialVerified: member.credentialVerified ?? false,
