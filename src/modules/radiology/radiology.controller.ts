@@ -1,9 +1,21 @@
-import { Request, Response, NextFunction } from 'express';
+import {
+  Request,
+  Response,
+  NextFunction,
+} from 'express';
+
 import { radiologyService } from './radiology.service.js';
+
 import {
   ImagingModality,
   RadiologyOrderStatus,
   PriorityLevel,
+  ExaminationQueueStatus,
+  AssignmentRole,
+  PregnancyScreeningStatus,
+  ContrastStatus,
+  CriticalResultStatus,
+  AIStudyPriority,
 } from './radiology.types.js';
 
 export interface AuthenticatedRequest extends Request {
@@ -15,164 +27,844 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export class RadiologyController {
-  public async createOrder(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async createOrder(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
 
-      const {
-        patientId,
-        orderingDoctorId,
-        modality,
-        procedureName,
-        bodyPart,
-        clinicalIndication,
-        priority,
-      } = req.body;
+      const order =
+        await radiologyService.createOrder({
+          hospitalId: authReq.user.hospitalId,
 
-      const order = await radiologyService.createOrder({
-        hospitalId,
-        patientId,
-        orderingDoctorId: orderingDoctorId || authReq.user._id,
-        modality: modality as ImagingModality,
-        procedureName,
-        bodyPart,
-        clinicalIndication,
-        priority: priority as PriorityLevel,
+          patientId: req.body.patientId,
+
+          orderingDoctorId:
+            req.body.orderingDoctorId ||
+            authReq.user._id,
+
+          modality:
+            req.body.modality as ImagingModality,
+
+          procedureName: req.body.procedureName,
+
+          bodyPart: req.body.bodyPart,
+
+          clinicalIndication:
+            req.body.clinicalIndication,
+
+          priority:
+            req.body.priority as PriorityLevel,
+
+          accessionNumber:
+            req.body.accessionNumber,
+
+          scheduling:
+            req.body.scheduling,
+
+          patientPreparation:
+            req.body.patientPreparation,
+
+          contrast: req.body.contrast,
+
+          pregnancyScreening:
+            req.body.pregnancyScreening,
+        });
+
+      res.status(201).json({
+        success: true,
+        data: order,
       });
-
-      res.status(201).json({ success: true, data: order });
     } catch (error) {
       next(error);
     }
   }
 
-  public async getOrders(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async getOrders(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
 
-      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
-      const status = req.query.status as RadiologyOrderStatus | undefined;
-      const modality = req.query.modality as ImagingModality | undefined;
-      const patientId = req.query.patientId as string | undefined;
-      const orderingDoctorId = req.query.orderingDoctorId as string | undefined;
-      const radiologistId = req.query.radiologistId as string | undefined;
+      const result =
+        await radiologyService.getOrders(
+          authReq.user.hospitalId,
+          {
+            page: req.query.page
+              ? Number(req.query.page)
+              : 1,
 
-      const result = await radiologyService.getOrders(hospitalId, {
-        page,
-        limit,
-        status,
-        modality,
-        patientId,
-        orderingDoctorId,
-        radiologistId,
+            limit: req.query.limit
+              ? Number(req.query.limit)
+              : 20,
+
+            search:
+              req.query.search as string | undefined,
+
+            status:
+              req.query.status as
+                | RadiologyOrderStatus
+                | undefined,
+
+            modality:
+              req.query.modality as
+                | ImagingModality
+                | undefined,
+
+            priority:
+              req.query.priority as
+                | PriorityLevel
+                | undefined,
+
+            patientId:
+              req.query.patientId as
+                | string
+                | undefined,
+
+            orderingDoctorId:
+              req.query.orderingDoctorId as
+                | string
+                | undefined,
+
+            radiologistId:
+              req.query.radiologistId as
+                | string
+                | undefined,
+
+            queueStatus:
+              req.query.queueStatus as
+                | ExaminationQueueStatus
+                | undefined,
+
+            scheduledDate:
+              req.query.scheduledDate as
+                | string
+                | undefined,
+          }
+        );
+
+      res.status(200).json({
+        success: true,
+        data: result,
       });
-
-      res.status(200).json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
   }
 
-  public async getOrderById(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async getOrderById(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const id = req.params.id as string;
 
-      const order = await radiologyService.getOrderById(id, hospitalId);
+      const order =
+        await radiologyService.getOrderById(
+          req.params.id,
+          authReq.user.hospitalId
+        );
 
       if (!order) {
-        res.status(404).json({ success: false, message: 'Radiology order not found' });
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
         return;
       }
 
-      res.status(200).json({ success: true, data: order });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async updatePacsData(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const id = req.params.id as string;
-
-      const { studyInstanceUid, seriesInstanceUid, imageCount, dicomViewerUrl, dicomFileKeys } = req.body;
-
-      const updated = await radiologyService.updatePacsData(id, hospitalId, {
-        studyInstanceUid,
-        seriesInstanceUid,
-        imageCount,
-        dicomViewerUrl,
-        dicomFileKeys,
+      res.status(200).json({
+        success: true,
+        data: order,
       });
-
-      if (!updated) {
-        res.status(404).json({ success: false, message: 'Radiology order not found' });
-        return;
-      }
-
-      res.status(200).json({ success: true, data: updated });
     } catch (error) {
       next(error);
     }
   }
 
-  public async completeReport(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async updateOrder(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const radiologistId = authReq.user._id;
-      const id = req.params.id as string;
 
-      const { findings, impression, radiologistNotes } = req.body;
+      const updated =
+        await radiologyService.updateOrder(
+          req.params.id,
+          authReq.user.hospitalId,
+          req.body
+        );
 
-      const updated = await radiologyService.completeReport(id, hospitalId, {
-        radiologistId,
-        findings,
-        impression,
-        radiologistNotes,
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message:
+            'Radiology order not found or cannot be modified',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
       });
-
-      if (!updated) {
-        res.status(404).json({ success: false, message: 'Radiology order not found' });
-        return;
-      }
-
-      res.status(200).json({ success: true, data: updated });
     } catch (error) {
       next(error);
     }
   }
 
-  public async cancelOrder(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async scheduleOrder(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const id = req.params.id as string;
 
-      const { cancellationReason } = req.body;
-
-      const updated = await radiologyService.cancelOrder(
-        id,
-        hospitalId,
-        cancellationReason || 'No reason provided'
-      );
+      const updated =
+        await radiologyService.scheduleOrder(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            ...req.body,
+            scheduledBy: authReq.user._id,
+          }
+        );
 
       if (!updated) {
-        res.status(404).json({ success: false, message: 'Radiology order not found or already reported' });
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
         return;
       }
 
-      res.status(200).json({ success: true, data: updated });
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async assignStaff(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.assignStaff(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            userId: req.body.userId,
+            role: req.body.role as AssignmentRole,
+            notes: req.body.notes,
+          },
+          authReq.user._id
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async removeStaff(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.removeStaff(
+          req.params.id,
+          authReq.user.hospitalId,
+          req.body.userId,
+          req.body.role as AssignmentRole
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateExaminationStatus(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.updateExaminationStatus(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            status:
+              req.body.status as RadiologyOrderStatus,
+
+            notes: req.body.notes,
+          }
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateQueue(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.updateQueue(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            queuePosition:
+              req.body.queuePosition,
+
+            queueStatus:
+              req.body.queueStatus as
+                | ExaminationQueueStatus
+                | undefined,
+          }
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updatePacsData(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.updatePacsData(
+          req.params.id,
+          authReq.user.hospitalId,
+          req.body
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateContrast(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.updateContrast(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            status:
+              req.body.status as ContrastStatus,
+
+            contrastName:
+              req.body.contrastName,
+
+            contrastType:
+              req.body.contrastType,
+
+            dose: req.body.dose,
+
+            doseUnit:
+              req.body.doseUnit,
+
+            route:
+              req.body.route,
+
+            reactionObserved:
+              req.body.reactionObserved,
+
+            reactionDescription:
+              req.body.reactionDescription,
+
+            notes: req.body.notes,
+          },
+          authReq.user._id
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updatePregnancyScreening(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.updatePregnancyScreening(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            status:
+              req.body.status as PregnancyScreeningStatus,
+
+            testType:
+              req.body.testType,
+
+            testResult:
+              req.body.testResult,
+
+            notes:
+              req.body.notes,
+          },
+          authReq.user._id
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateRadiationExposure(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.updateRadiationExposure(
+          req.params.id,
+          authReq.user.hospitalId,
+          req.body,
+          authReq.user._id
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async completeReport(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.completeReport(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            radiologistId:
+              authReq.user._id,
+
+            findings:
+              req.body.findings,
+
+            impression:
+              req.body.impression,
+
+            radiologistNotes:
+              req.body.radiologistNotes,
+
+            templateId:
+              req.body.templateId,
+
+            criticalResult:
+              req.body.criticalResult,
+          }
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async signReport(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.signReport(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            radiologistId:
+              authReq.user._id,
+          }
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message:
+            'Radiology report not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async amendReport(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.amendReport(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            radiologistId:
+              authReq.user._id,
+
+            findings:
+              req.body.findings,
+
+            impression:
+              req.body.impression,
+
+            radiologistNotes:
+              req.body.radiologistNotes,
+
+            amendmentReason:
+              req.body.amendmentReason,
+          }
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message:
+            'Radiology report not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateCriticalResult(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.updateCriticalResult(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            status:
+              req.body.status as
+                CriticalResultStatus,
+
+            finding:
+              req.body.finding,
+
+            notifiedUserId:
+              req.body.notifiedUserId,
+
+            notificationMethod:
+              req.body.notificationMethod,
+
+            notificationNotes:
+              req.body.notificationNotes,
+          }
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async updateAIAnalysis(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.updateAIAnalysis(
+          req.params.id,
+          authReq.user.hospitalId,
+          {
+            enabled:
+              req.body.enabled,
+
+            modelName:
+              req.body.modelName,
+
+            modelVersion:
+              req.body.modelVersion,
+
+            priority:
+              req.body.priority as AIStudyPriority,
+
+            confidence:
+              req.body.confidence,
+
+            findings:
+              req.body.findings,
+
+            measurements:
+              req.body.measurements,
+
+            recommendations:
+              req.body.recommendations,
+
+            qualityPassed:
+              req.body.qualityPassed,
+
+            qualityNotes:
+              req.body.qualityNotes,
+          }
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async cancelOrder(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated =
+        await radiologyService.cancelOrder(
+          req.params.id,
+          authReq.user.hospitalId,
+          req.body.cancellationReason ||
+            'No reason provided'
+        );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message:
+            'Radiology order not found or cannot be cancelled',
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
     } catch (error) {
       next(error);
     }
   }
 }
 
-export const radiologyController = new RadiologyController();
+export const radiologyController =
+  new RadiologyController();
