@@ -4,6 +4,7 @@ import {
   CreateSurgeryCaseInput,
   GetSurgeryCasesQuery,
   ISurgeryCaseDocument,
+  ISurgicalConsent,
   SurgeryStatus,
   UpdatePreOpInput,
   UpdateConsentInput,
@@ -381,10 +382,9 @@ export class SurgeryService {
 
     if (!existingCase) return null;
 
-    const current =
-      existingCase.consent?.toObject?.() ||
-      existingCase.consent ||
-      {};
+    const current: Partial<ISurgicalConsent> =
+      (existingCase.consent?.toObject?.() ||
+      existingCase.consent) as ISurgicalConsent || {};
 
     const versions = current.versions || [];
 
@@ -430,8 +430,7 @@ export class SurgeryService {
       notes: input.notes,
     };
 
-    const consent = {
-      ...current,
+    const consent: ISurgicalConsent = {
       procedureConsent:
         input.procedureConsent ?? current.procedureConsent ?? false,
       anesthesiaConsent:
@@ -661,7 +660,7 @@ export class SurgeryService {
 
     if (!existingCase) return null;
 
-    const checklist = existingCase.whoChecklist.toObject();
+    const checklist = existingCase.whoChecklist?.toObject?.() || existingCase.whoChecklist || {};
 
     const stageData = {
       ...(checklist[input.stage] || {}),

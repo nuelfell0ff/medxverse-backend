@@ -252,9 +252,8 @@ export class SurgeryService {
         });
         if (!existingCase)
             return null;
-        const current = existingCase.consent?.toObject?.() ||
-            existingCase.consent ||
-            {};
+        const current = (existingCase.consent?.toObject?.() ||
+            existingCase.consent) || {};
         const versions = current.versions || [];
         const version = versions.length > 0
             ? versions[versions.length - 1].version + 1
@@ -293,7 +292,6 @@ export class SurgeryService {
             notes: input.notes,
         };
         const consent = {
-            ...current,
             procedureConsent: input.procedureConsent ?? current.procedureConsent ?? false,
             anesthesiaConsent: input.anesthesiaConsent ?? current.anesthesiaConsent ?? false,
             bloodTransfusionConsent: input.bloodTransfusionConsent ??
@@ -423,7 +421,7 @@ export class SurgeryService {
         });
         if (!existingCase)
             return null;
-        const checklist = existingCase.whoChecklist.toObject();
+        const checklist = existingCase.whoChecklist?.toObject?.() || existingCase.whoChecklist || {};
         const stageData = {
             ...(checklist[input.stage] || {}),
             ...input.data,
