@@ -100,6 +100,17 @@ export class SurgeryService {
             roles.add(member.role);
         }
     }
+    async populateSurgeryCase(caseId, hospitalId) {
+        return SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+        })
+            .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
+            .populate('leadSurgeonId', 'firstName lastName role')
+            .populate('surgicalTeam.userId', 'firstName lastName role')
+            .populate('preOpAssessment.clearedBy', 'firstName lastName role')
+            .exec();
+    }
     async scheduleCase(hospitalId, createdBy, input) {
         const patientId = this.validateObjectId(input.patientId, 'patient ID');
         const leadSurgeonId = this.validateObjectId(input.leadSurgeonId, 'lead surgeon ID');
@@ -235,7 +246,7 @@ export class SurgeryService {
             preOp.clearedAt = new Date();
             preOp.clearedBy = new Types.ObjectId(updatedBy);
         }
-        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
+        await SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
             $set: {
                 preOpAssessment: preOp,
                 status: input.clearedForSurgery === true
@@ -244,6 +255,7 @@ export class SurgeryService {
                 updatedBy: new Types.ObjectId(updatedBy),
             },
         }, { new: true }).exec();
+        return this.populateSurgeryCase(caseId, hospitalId);
     }
     async updateConsent(caseId, hospitalId, recordedBy, input) {
         const existingCase = await SurgeryCaseModel.findOne({
@@ -316,6 +328,7 @@ export class SurgeryService {
                 updatedBy: new Types.ObjectId(recordedBy),
             },
         }, { new: true }).exec();
+        return this.populateSurgeryCase(caseId, hospitalId);
     }
     async updateTeam(caseId, hospitalId, updatedBy, input) {
         const cleanTeam = input.surgicalTeam
@@ -353,12 +366,13 @@ export class SurgeryService {
             assignedAt: new Date(),
             notes: member.notes,
         }));
-        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
+        await SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
             $set: {
                 surgicalTeam,
                 updatedBy: new Types.ObjectId(updatedBy),
             },
         }, { new: true }).exec();
+        return this.populateSurgeryCase(caseId, hospitalId);
     }
     async rescheduleCase(caseId, hospitalId, updatedBy, input) {
         const existingCase = await SurgeryCaseModel.findOne({

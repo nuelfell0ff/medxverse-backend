@@ -163,6 +163,18 @@ export class SurgeryService {
     }
   }
 
+  private async populateSurgeryCase(caseId: string, hospitalId: string): Promise<ISurgeryCaseDocument | null> {
+    return SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    })
+      .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
+      .populate('leadSurgeonId', 'firstName lastName role')
+      .populate('surgicalTeam.userId', 'firstName lastName role')
+      .populate('preOpAssessment.clearedBy', 'firstName lastName role')
+      .exec();
+  }
+
   public async scheduleCase(
     hospitalId: string,
     createdBy: string,
@@ -353,7 +365,7 @@ export class SurgeryService {
       preOp.clearedBy = new Types.ObjectId(updatedBy);
     }
 
-    return SurgeryCaseModel.findOneAndUpdate(
+    await SurgeryCaseModel.findOneAndUpdate(
       { _id: caseId, hospitalId },
       {
         $set: {
@@ -367,6 +379,8 @@ export class SurgeryService {
       },
       { new: true }
     ).exec();
+
+    return this.populateSurgeryCase(caseId, hospitalId);
   }
 
   public async updateConsent(
@@ -467,6 +481,8 @@ export class SurgeryService {
       },
       { new: true }
     ).exec();
+
+    return this.populateSurgeryCase(caseId, hospitalId);
   }
 
   public async updateTeam(
@@ -532,7 +548,7 @@ export class SurgeryService {
       notes: member.notes,
     }));
 
-    return SurgeryCaseModel.findOneAndUpdate(
+    await SurgeryCaseModel.findOneAndUpdate(
       { _id: caseId, hospitalId },
       {
         $set: {
@@ -542,6 +558,8 @@ export class SurgeryService {
       },
       { new: true }
     ).exec();
+
+    return this.populateSurgeryCase(caseId, hospitalId);
   }
 
   public async rescheduleCase(
