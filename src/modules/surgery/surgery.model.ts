@@ -18,6 +18,7 @@ const SurgicalTeamMemberSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'Account',
       required: true,
+      index: true,
     },
     role: {
       type: String,
@@ -30,10 +31,12 @@ const SurgicalTeamMemberSchema = new Schema(
     },
     assignedAt: {
       type: Date,
+      default: Date.now,
     },
     notes: {
       type: String,
       trim: true,
+      default: '',
     },
   },
   { _id: false }
@@ -511,8 +514,8 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
     theatreId: {
       type: String,
       required: true,
-      index: true,
       trim: true,
+      index: true,
     },
 
     procedureName: {
