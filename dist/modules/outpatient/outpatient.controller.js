@@ -1,18 +1,49 @@
 import { outpatientService } from './outpatient.service.js';
+import { TriagePriority } from './outpatient.types.js';
+/**
+ * Safely extracts the hospital identifier across varying JWT payload structures
+ */
+const extractHospitalId = (req) => {
+    return (req.user?.hospitalId ||
+        req.user?.accountId ||
+        req.user?.hospital ||
+        null);
+};
 export class OutpatientController {
     async createEncounter(req, res, next) {
         try {
             const authReq = req;
-            const hospitalId = authReq.user.hospitalId;
+            const hospitalId = extractHospitalId(authReq);
+            if (!hospitalId) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Validation Error: hospitalId is missing from user authentication token.',
+                });
+                return;
+            }
             const { patientId, doctorId, departmentId, triagePriority, chiefComplaint } = req.body;
-            const encounter = await outpatientService.createEncounter({
+            if (!patientId) {
+                res.status(400).json({ success: false, message: 'Validation Error: patientId is required.' });
+                return;
+            }
+            if (!chiefComplaint || typeof chiefComplaint !== 'string' || !chiefComplaint.trim()) {
+                res.status(400).json({ success: false, message: 'Validation Error: chiefComplaint is required.' });
+                return;
+            }
+            // Build payload and exclude empty strings so Mongoose ObjectId casting succeeds
+            const createInput = {
                 hospitalId,
                 patientId,
-                doctorId,
-                departmentId,
-                triagePriority: triagePriority,
-                chiefComplaint,
-            });
+                chiefComplaint: chiefComplaint.trim(),
+                triagePriority: triagePriority || TriagePriority.STANDARD,
+            };
+            if (doctorId && typeof doctorId === 'string' && doctorId.trim() !== '') {
+                createInput.doctorId = doctorId;
+            }
+            if (departmentId && typeof departmentId === 'string' && departmentId.trim() !== '') {
+                createInput.departmentId = departmentId;
+            }
+            const encounter = await outpatientService.createEncounter(createInput);
             res.status(201).json({ success: true, data: encounter });
         }
         catch (error) {
@@ -22,7 +53,14 @@ export class OutpatientController {
     async getQueue(req, res, next) {
         try {
             const authReq = req;
-            const hospitalId = authReq.user.hospitalId;
+            const hospitalId = extractHospitalId(authReq);
+            if (!hospitalId) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Validation Error: hospitalId is missing from user authentication token.',
+                });
+                return;
+            }
             const page = req.query.page ? parseInt(req.query.page, 10) : 1;
             const limit = req.query.limit ? parseInt(req.query.limit, 10) : 20;
             const status = req.query.status;
@@ -41,10 +79,40 @@ export class OutpatientController {
             next(error);
         }
     }
+    async getEncounterById(req, res, next) {
+        try {
+            const authReq = req;
+            const hospitalId = extractHospitalId(authReq);
+            if (!hospitalId) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Validation Error: hospitalId is missing from user authentication token.',
+                });
+                return;
+            }
+            const encounterId = req.params.id;
+            const encounter = await outpatientService.getEncounterById(encounterId, hospitalId);
+            if (!encounter) {
+                res.status(404).json({ success: false, message: 'Encounter not found' });
+                return;
+            }
+            res.status(200).json({ success: true, data: encounter });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
     async recordVitals(req, res, next) {
         try {
             const authReq = req;
-            const hospitalId = authReq.user.hospitalId;
+            const hospitalId = extractHospitalId(authReq);
+            if (!hospitalId) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Validation Error: hospitalId is missing from user authentication token.',
+                });
+                return;
+            }
             const encounterId = req.params.id;
             const { vitalSigns, nursingNotes } = req.body;
             const updated = await outpatientService.recordVitals(encounterId, hospitalId, {
@@ -64,8 +132,15 @@ export class OutpatientController {
     async startConsultation(req, res, next) {
         try {
             const authReq = req;
-            const hospitalId = authReq.user.hospitalId;
-            const doctorId = authReq.user._id;
+            const hospitalId = extractHospitalId(authReq);
+            if (!hospitalId) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Validation Error: hospitalId is missing from user authentication token.',
+                });
+                return;
+            }
+            const doctorId = authReq.user?._id;
             const encounterId = req.params.id;
             const updated = await outpatientService.startConsultation(encounterId, hospitalId, doctorId);
             if (!updated) {
@@ -81,7 +156,14 @@ export class OutpatientController {
     async completeConsultation(req, res, next) {
         try {
             const authReq = req;
-            const hospitalId = authReq.user.hospitalId;
+            const hospitalId = extractHospitalId(authReq);
+            if (!hospitalId) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Validation Error: hospitalId is missing from user authentication token.',
+                });
+                return;
+            }
             const encounterId = req.params.id;
             const { consultationNotes, diagnoses } = req.body;
             const updated = await outpatientService.completeConsultation(encounterId, hospitalId, {

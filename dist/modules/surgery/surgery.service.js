@@ -1,59 +1,193 @@
 import { Types } from 'mongoose';
 import { SurgeryCaseModel } from './surgery.model.js';
-import { SurgeryStatus, } from './surgery.types.js';
+import { SurgeryStatus, SurgicalRole, UrgencyLevel, ConsentType, } from './surgery.types.js';
+const ACTIVE_STATUSES = [
+    SurgeryStatus.SCHEDULED,
+    SurgeryStatus.PRE_OP_PREPARATION,
+    SurgeryStatus.READY_FOR_THEATRE,
+    SurgeryStatus.IN_PROGRESS,
+];
 export class SurgeryService {
-    async scheduleCase(input) {
-        const conflictingCase = await SurgeryCaseModel.findOne({
-            hospitalId: input.hospitalId,
-            theatreId: input.theatreId,
-            status: { $in: [SurgeryStatus.SCHEDULED, SurgeryStatus.IN_PROGRESS] },
-            $or: [
-                {
-                    scheduledStartTime: { $lt: input.scheduledEndTime },
-                    scheduledEndTime: { $gt: input.scheduledStartTime },
-                },
-            ],
-        });
-        if (conflictingCase) {
-            throw new Error(`Operating Theatre ${input.theatreId} is already booked for this time slot.`);
+    validateObjectId(id, field = 'ID') {
+        if (!id || !Types.ObjectId.isValid(id)) {
+            throw new Error(`Invalid ${field}.`);
         }
-        const surgicalTeam = (input.surgicalTeam || []).map((member) => ({
-            userId: new Types.ObjectId(member.userId),
-            role: member.role,
-            notes: member.notes,
-        }));
-        return SurgeryCaseModel.create({
-            ...input,
-            surgicalTeam,
-            status: SurgeryStatus.SCHEDULED,
+        return id;
+    }
+    normalizeObjectId(value, field) {
+        if (!value || typeof value !== 'string') {
+            throw new Error(`Invalid ${field}.`);
+        }
+        const normalized = value.trim();
+        if (!Types.ObjectId.isValid(normalized)) {
+            throw new Error(`Invalid ${field}.`);
+        }
+        return normalized;
+    }
+    normalizeTeamMembers(team) {
+        if (!team)
+            return [];
+        return team
+            .filter((member) => member && member.userId)
+            .map((member) => {
+            const userId = this.normalizeObjectId(member.userId, 'surgical team member ID');
+            return {
+                userId: new Types.ObjectId(userId),
+                role: member.role,
+                credentialVerified: Boolean(member.credentialVerified),
+                assignedAt: new Date(),
+                notes: member.notes || '',
+            };
         });
+    }
+    async checkSchedulingConflicts(hospitalId, startTime, endTime, theatreId, surgicalTeam, excludeCaseId) {
+        const baseFilter = {
+            hospitalId,
+            status: { $in: ACTIVE_STATUSES },
+            scheduledStartTime: { $lt: endTime },
+            scheduledEndTime: { $gt: startTime },
+        };
+        if (excludeCaseId) {
+            baseFilter._id = { $ne: excludeCaseId };
+        }
+        const theatreConflict = await SurgeryCaseModel.findOne({
+            ...baseFilter,
+            theatreId,
+        }).lean();
+        if (theatreConflict) {
+            throw new Error(`Operating Theatre ${theatreId} is already booked for this time slot.`);
+        }
+        if (!surgicalTeam.length)
+            return;
+        const teamIds = surgicalTeam
+            .map((member) => member.userId)
+            .filter(Boolean)
+            .map((id) => new Types.ObjectId(id));
+        const teamConflict = await SurgeryCaseModel.findOne({
+            ...baseFilter,
+            'surgicalTeam.userId': {
+                $in: teamIds,
+            },
+        }).lean();
+        if (teamConflict) {
+            throw new Error('One or more surgical team members are already assigned to another surgery during this time.');
+        }
+    }
+    validateTimeRange(start, end) {
+        if (Number.isNaN(start.getTime()) ||
+            Number.isNaN(end.getTime())) {
+            throw new Error('Invalid surgery schedule date.');
+        }
+        if (start >= end) {
+            throw new Error('Scheduled end time must be after scheduled start time.');
+        }
+    }
+    validateTeam(team) {
+        const users = new Set();
+        const roles = new Set();
+        for (const member of team) {
+            if (!member?.userId || !Types.ObjectId.isValid(member.userId)) {
+                throw new Error('Invalid surgical team member ID.');
+            }
+            if (users.has(member.userId)) {
+                throw new Error('A surgical team member cannot be assigned twice.');
+            }
+            users.add(member.userId);
+            if (member.role === SurgicalRole.PRIMARY_SURGEON &&
+                roles.has(SurgicalRole.PRIMARY_SURGEON)) {
+                throw new Error('Only one primary surgeon can be assigned.');
+            }
+            roles.add(member.role);
+        }
+    }
+    async scheduleCase(hospitalId, createdBy, input) {
+        const patientId = this.validateObjectId(input.patientId, 'patient ID');
+        const leadSurgeonId = this.validateObjectId(input.leadSurgeonId, 'lead surgeon ID');
+        const start = new Date(input.scheduledStartTime);
+        const end = new Date(input.scheduledEndTime);
+        this.validateTimeRange(start, end);
+        const rawTeam = input.surgicalTeam || [];
+        const normalizedTeam = this.normalizeTeamMembers(rawTeam);
+        const teamPayload = [
+            {
+                userId: new Types.ObjectId(leadSurgeonId),
+                role: SurgicalRole.PRIMARY_SURGEON,
+                credentialVerified: true,
+                assignedAt: new Date(),
+                notes: '',
+            },
+            ...normalizedTeam.filter((member) => member.userId.toString() !== leadSurgeonId),
+        ];
+        this.validateTeam(teamPayload.map((member) => ({
+            userId: member.userId.toString(),
+            role: member.role,
+            credentialVerified: member.credentialVerified,
+        })));
+        await this.checkSchedulingConflicts(hospitalId, start, end, input.theatreId, [
+            { userId: leadSurgeonId },
+            ...normalizedTeam.map((member) => ({
+                userId: member.userId.toString(),
+            })),
+        ]);
+        const surgeryCase = await SurgeryCaseModel.create({
+            hospitalId: new Types.ObjectId(hospitalId),
+            patientId: new Types.ObjectId(patientId),
+            leadSurgeonId: new Types.ObjectId(leadSurgeonId),
+            theatreId: input.theatreId,
+            procedureName: input.procedureName,
+            icdCode: input.icdCode,
+            urgency: input.urgency ?? UrgencyLevel.ELECTIVE,
+            priority: input.priority ?? 0,
+            status: SurgeryStatus.SCHEDULED,
+            scheduledStartTime: start,
+            scheduledEndTime: end,
+            estimatedDurationMinutes: input.estimatedDurationMinutes ??
+                Math.round((end.getTime() - start.getTime()) / 60000),
+            anesthesiaType: input.anesthesiaType,
+            surgicalTeam: teamPayload,
+            createdBy: new Types.ObjectId(createdBy),
+            updatedBy: new Types.ObjectId(createdBy),
+        });
+        return surgeryCase;
     }
     async getCases(hospitalId, query) {
         const page = Math.max(1, query.page || 1);
-        const limit = Math.min(50, Math.max(1, query.limit || 20));
+        const limit = Math.min(100, Math.max(1, query.limit || 20));
         const skip = (page - 1) * limit;
-        const filter = { hospitalId };
+        const filter = {
+            hospitalId,
+        };
         if (query.status)
             filter.status = query.status;
+        if (query.urgency)
+            filter.urgency = query.urgency;
         if (query.theatreId)
             filter.theatreId = query.theatreId;
-        if (query.leadSurgeonId)
+        if (query.leadSurgeonId) {
+            this.validateObjectId(query.leadSurgeonId, 'lead surgeon ID');
             filter.leadSurgeonId = query.leadSurgeonId;
-        if (query.patientId)
+        }
+        if (query.patientId) {
+            this.validateObjectId(query.patientId, 'patient ID');
             filter.patientId = query.patientId;
+        }
         if (query.date) {
-            const startOfDay = new Date(query.date);
-            startOfDay.setHours(0, 0, 0, 0);
-            const endOfDay = new Date(query.date);
-            endOfDay.setHours(23, 59, 59, 999);
-            filter.scheduledStartTime = { $gte: startOfDay, $lte: endOfDay };
+            const startOfDay = new Date(`${query.date}T00:00:00`);
+            const endOfDay = new Date(`${query.date}T23:59:59.999`);
+            filter.scheduledStartTime = {
+                $gte: startOfDay,
+                $lte: endOfDay,
+            };
         }
         const [cases, total] = await Promise.all([
             SurgeryCaseModel.find(filter)
                 .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
                 .populate('leadSurgeonId', 'firstName lastName role')
                 .populate('surgicalTeam.userId', 'firstName lastName role')
-                .sort({ scheduledStartTime: 1 })
+                .sort({
+                scheduledStartTime: 1,
+                priority: -1,
+            })
                 .skip(skip)
                 .limit(limit)
                 .exec(),
@@ -67,70 +201,436 @@ export class SurgeryService {
         };
     }
     async getCaseById(caseId, hospitalId) {
-        return SurgeryCaseModel.findOne({ _id: caseId, hospitalId })
+        this.validateObjectId(caseId, 'surgery case ID');
+        return SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+        })
             .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
             .populate('leadSurgeonId', 'firstName lastName role')
             .populate('surgicalTeam.userId', 'firstName lastName role')
+            .populate('preOpAssessment.clearedBy', 'firstName lastName role')
             .exec();
     }
-    async updateChecklist(caseId, hospitalId, input) {
-        const existingCase = await SurgeryCaseModel.findOne({ _id: caseId, hospitalId });
+    async updatePreOpAssessment(caseId, hospitalId, updatedBy, input) {
+        this.validateObjectId(caseId, 'surgery case ID');
+        const existingCase = await SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+        });
         if (!existingCase)
             return null;
-        const checklist = existingCase.checklist || {
-            signInCompleted: false,
-            timeOutCompleted: false,
-            signOutCompleted: false,
+        const current = existingCase.preOpAssessment?.toObject?.() ||
+            existingCase.preOpAssessment ||
+            {};
+        const preOp = {
+            ...current,
+            ...input,
+            preOpVitals: {
+                ...(current.preOpVitals || {}),
+                ...(input.preOpVitals || {}),
+            },
         };
-        if (input.signInCompleted !== undefined) {
-            checklist.signInCompleted = input.signInCompleted;
-            if (input.signInCompleted && !checklist.signInCompletedAt) {
-                checklist.signInCompletedAt = new Date();
-            }
+        if (input.clearedForSurgery === true) {
+            preOp.clearedAt = new Date();
+            preOp.clearedBy = new Types.ObjectId(updatedBy);
         }
-        if (input.timeOutCompleted !== undefined) {
-            checklist.timeOutCompleted = input.timeOutCompleted;
-            if (input.timeOutCompleted && !checklist.timeOutCompletedAt) {
-                checklist.timeOutCompletedAt = new Date();
-            }
-        }
-        if (input.signOutCompleted !== undefined) {
-            checklist.signOutCompleted = input.signOutCompleted;
-            if (input.signOutCompleted && !checklist.signOutCompletedAt) {
-                checklist.signOutCompletedAt = new Date();
-            }
-        }
-        if (input.notes !== undefined) {
-            checklist.notes = input.notes;
-        }
-        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, { $set: { checklist } }, { new: true }).exec();
+        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
+            $set: {
+                preOpAssessment: preOp,
+                status: input.clearedForSurgery === true
+                    ? SurgeryStatus.READY_FOR_THEATRE
+                    : SurgeryStatus.PRE_OP_PREPARATION,
+                updatedBy: new Types.ObjectId(updatedBy),
+            },
+        }, { new: true }).exec();
     }
-    async startSurgery(caseId, hospitalId) {
-        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId, status: SurgeryStatus.SCHEDULED }, {
+    async updateConsent(caseId, hospitalId, recordedBy, input) {
+        const existingCase = await SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+        });
+        if (!existingCase)
+            return null;
+        const current = existingCase.consent?.toObject?.() ||
+            existingCase.consent ||
+            {};
+        const versions = current.versions || [];
+        const version = versions.length > 0
+            ? versions[versions.length - 1].version + 1
+            : 1;
+        const consentType = input.type || ConsentType.PROCEDURE;
+        let consented = false;
+        switch (consentType) {
+            case ConsentType.PROCEDURE:
+                consented = input.procedureConsent ?? false;
+                break;
+            case ConsentType.ANESTHESIA:
+                consented = input.anesthesiaConsent ?? false;
+                break;
+            case ConsentType.BLOOD_TRANSFUSION:
+                consented = input.bloodTransfusionConsent ?? false;
+                break;
+            case ConsentType.HIGH_RISK:
+                consented = input.highRiskConsent ?? false;
+                break;
+            case ConsentType.ADDITIONAL_PROCEDURE:
+                consented = input.additionalProcedureConsent ?? false;
+                break;
+        }
+        const newVersion = {
+            version,
+            type: consentType,
+            consented,
+            signedByPatient: input.signedByPatient ?? false,
+            witnessName: input.witnessName,
+            witnessId: input.witnessId
+                ? new Types.ObjectId(input.witnessId)
+                : undefined,
+            digitalSignatureUrl: input.digitalSignatureUrl,
+            signedAt: new Date(),
+            recordedBy: new Types.ObjectId(recordedBy),
+            notes: input.notes,
+        };
+        const consent = {
+            ...current,
+            procedureConsent: input.procedureConsent ?? current.procedureConsent ?? false,
+            anesthesiaConsent: input.anesthesiaConsent ?? current.anesthesiaConsent ?? false,
+            bloodTransfusionConsent: input.bloodTransfusionConsent ??
+                current.bloodTransfusionConsent ??
+                false,
+            highRiskConsent: input.highRiskConsent ?? current.highRiskConsent ?? false,
+            additionalProcedureConsent: input.additionalProcedureConsent ??
+                current.additionalProcedureConsent ??
+                false,
+            signedByPatient: input.signedByPatient ?? current.signedByPatient ?? false,
+            witnessName: input.witnessName ?? current.witnessName,
+            witnessId: input.witnessId
+                ? new Types.ObjectId(input.witnessId)
+                : current.witnessId,
+            digitalSignatureUrl: input.digitalSignatureUrl ?? current.digitalSignatureUrl,
+            signedAt: new Date(),
+            versions: [...versions, newVersion],
+        };
+        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
+            $set: {
+                consent,
+                updatedBy: new Types.ObjectId(recordedBy),
+            },
+        }, { new: true }).exec();
+    }
+    async updateTeam(caseId, hospitalId, updatedBy, input) {
+        const cleanTeam = input.surgicalTeam
+            .filter((member) => member && member.userId)
+            .map((member) => ({
+            ...member,
+            userId: this.normalizeObjectId(member.userId, 'surgical team member ID'),
+        }));
+        if (!cleanTeam.length) {
+            throw new Error('At least one surgical team member is required.');
+        }
+        this.validateTeam(cleanTeam.map((member) => ({
+            userId: member.userId,
+            role: member.role,
+            credentialVerified: member.credentialVerified,
+        })));
+        const existingCase = await SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+        });
+        if (!existingCase)
+            return null;
+        const leadSurgeonExists = cleanTeam.some((member) => member.role === SurgicalRole.PRIMARY_SURGEON &&
+            member.userId === existingCase.leadSurgeonId.toString());
+        if (!leadSurgeonExists) {
+            throw new Error('The lead surgeon must be included as the primary surgeon.');
+        }
+        await this.checkSchedulingConflicts(hospitalId, existingCase.scheduledStartTime, existingCase.scheduledEndTime, existingCase.theatreId, cleanTeam.map((member) => ({
+            userId: member.userId,
+        })), caseId);
+        const surgicalTeam = cleanTeam.map((member) => ({
+            userId: new Types.ObjectId(member.userId),
+            role: member.role,
+            credentialVerified: member.credentialVerified ?? false,
+            assignedAt: new Date(),
+            notes: member.notes,
+        }));
+        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
+            $set: {
+                surgicalTeam,
+                updatedBy: new Types.ObjectId(updatedBy),
+            },
+        }, { new: true }).exec();
+    }
+    async rescheduleCase(caseId, hospitalId, updatedBy, input) {
+        const existingCase = await SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+        });
+        if (!existingCase)
+            return null;
+        if ([
+            SurgeryStatus.IN_PROGRESS,
+            SurgeryStatus.COMPLETED,
+            SurgeryStatus.CANCELLED,
+        ].includes(existingCase.status)) {
+            throw new Error('This surgery cannot be rescheduled in its current status.');
+        }
+        this.validateTimeRange(new Date(input.scheduledStartTime), new Date(input.scheduledEndTime));
+        const theatreId = input.theatreId || existingCase.theatreId;
+        await this.checkSchedulingConflicts(hospitalId, new Date(input.scheduledStartTime), new Date(input.scheduledEndTime), theatreId, existingCase.surgicalTeam.map((member) => ({
+            userId: member.userId.toString(),
+        })), caseId);
+        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
+            $set: {
+                scheduledStartTime: new Date(input.scheduledStartTime),
+                scheduledEndTime: new Date(input.scheduledEndTime),
+                theatreId,
+                postponementReason: input.reason,
+                status: SurgeryStatus.SCHEDULED,
+                updatedBy: new Types.ObjectId(updatedBy),
+            },
+        }, { new: true }).exec();
+    }
+    async updateMedication(caseId, hospitalId, input) {
+        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
+            $push: {
+                medications: {
+                    ...input,
+                    status: 'PLANNED',
+                },
+            },
+        }, { new: true }).exec();
+    }
+    async administerMedication(caseId, hospitalId, administeredBy, input) {
+        return SurgeryCaseModel.findOneAndUpdate({
+            _id: caseId,
+            hospitalId,
+            'medications._id': input.medicationId,
+        }, {
+            $set: {
+                'medications.$.status': 'ADMINISTERED',
+                'medications.$.administeredAt': new Date(),
+                'medications.$.administeredBy': new Types.ObjectId(administeredBy),
+                'medications.$.notes': input.notes,
+            },
+        }, { new: true }).exec();
+    }
+    async updateWHOChecklist(caseId, hospitalId, completedBy, input) {
+        const existingCase = await SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+        });
+        if (!existingCase)
+            return null;
+        const checklist = existingCase.whoChecklist.toObject();
+        const stageData = {
+            ...(checklist[input.stage] || {}),
+            ...input.data,
+            completed: true,
+            completedAt: new Date(),
+            completedBy: new Types.ObjectId(completedBy),
+        };
+        checklist[input.stage] = stageData;
+        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
+            $set: {
+                whoChecklist: checklist,
+                updatedBy: new Types.ObjectId(completedBy),
+            },
+        }, { new: true }).exec();
+    }
+    async addVitalsLog(caseId, hospitalId, updatedBy, input) {
+        const vitals = {
+            ...input,
+            timestamp: input.timestamp
+                ? new Date(input.timestamp)
+                : new Date(),
+        };
+        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId }, {
+            $push: {
+                vitalsTimeline: vitals,
+            },
+            $set: {
+                updatedBy: new Types.ObjectId(updatedBy),
+            },
+        }, { new: true }).exec();
+    }
+    async startSurgery(caseId, hospitalId, updatedBy) {
+        const existingCase = await SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+        });
+        if (!existingCase)
+            return null;
+        if (![
+            SurgeryStatus.SCHEDULED,
+            SurgeryStatus.PRE_OP_PREPARATION,
+            SurgeryStatus.READY_FOR_THEATRE,
+        ].includes(existingCase.status)) {
+            throw new Error('This surgery cannot be started in its current status.');
+        }
+        return SurgeryCaseModel.findOneAndUpdate({
+            _id: caseId,
+            hospitalId,
+            status: {
+                $in: [
+                    SurgeryStatus.SCHEDULED,
+                    SurgeryStatus.PRE_OP_PREPARATION,
+                    SurgeryStatus.READY_FOR_THEATRE,
+                ],
+            },
+        }, {
             $set: {
                 status: SurgeryStatus.IN_PROGRESS,
                 actualStartTime: new Date(),
+                'intraopDocs.procedureStartTime': new Date(),
+                updatedBy: new Types.ObjectId(updatedBy),
             },
         }, { new: true }).exec();
     }
-    async completeSurgery(caseId, hospitalId, input) {
-        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId, status: SurgeryStatus.IN_PROGRESS }, {
+    async updateIntraopDocs(caseId, hospitalId, updatedBy, input) {
+        return SurgeryCaseModel.findOneAndUpdate({
+            _id: caseId,
+            hospitalId,
+            status: SurgeryStatus.IN_PROGRESS,
+        }, {
             $set: {
-                status: SurgeryStatus.COMPLETED,
-                actualEndTime: new Date(),
-                anesthesiaNotes: input.anesthesiaNotes,
-                operationNotes: input.operationNotes,
-                postOpNotes: input.postOpNotes,
+                intraopDocs: input,
+                updatedBy: new Types.ObjectId(updatedBy),
+            },
+        }, {
+            new: true,
+        }).exec();
+    }
+    async updateAnesthesia(caseId, hospitalId, updatedBy, input) {
+        const drugs = input.drugs?.map((drug) => ({
+            ...drug,
+            administeredAt: drug.administeredAt
+                ? new Date(drug.administeredAt)
+                : new Date(),
+            administeredBy: new Types.ObjectId(updatedBy),
+        }));
+        return SurgeryCaseModel.findOneAndUpdate({
+            _id: caseId,
+            hospitalId,
+        }, {
+            $set: {
+                anesthesiaRecord: {
+                    ...input,
+                    drugs,
+                },
+                updatedBy: new Types.ObjectId(updatedBy),
             },
         }, { new: true }).exec();
     }
-    async cancelCase(caseId, hospitalId, cancellationReason) {
-        return SurgeryCaseModel.findOneAndUpdate({ _id: caseId, hospitalId, status: { $ne: SurgeryStatus.COMPLETED } }, {
+    async completeSurgery(caseId, hospitalId, updatedBy, input) {
+        const existingCase = await SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+            status: SurgeryStatus.IN_PROGRESS,
+        });
+        if (!existingCase)
+            return null;
+        const now = new Date();
+        const currentDocs = existingCase.intraopDocs?.toObject?.() ||
+            existingCase.intraopDocs ||
+            {};
+        const intraopDocs = {
+            ...currentDocs,
+            ...(input.intraopDocs || {}),
+            procedureEndTime: now,
+            closureTime: input.intraopDocs?.closureTime || now,
+        };
+        return SurgeryCaseModel.findOneAndUpdate({
+            _id: caseId,
+            hospitalId,
+            status: SurgeryStatus.IN_PROGRESS,
+        }, {
+            $set: {
+                status: SurgeryStatus.RECOVERY,
+                actualEndTime: now,
+                intraopDocs,
+                postOpNotes: input.postOpNotes,
+                updatedBy: new Types.ObjectId(updatedBy),
+            },
+        }, { new: true }).exec();
+    }
+    async updateRecovery(caseId, hospitalId, assessedBy, input) {
+        const existingCase = await SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+            status: SurgeryStatus.RECOVERY,
+        });
+        if (!existingCase)
+            return null;
+        const recoveryAssessment = {
+            ...input,
+            arrivalTime: existingCase.recoveryAssessment?.arrivalTime ||
+                new Date(),
+            assessedBy: new Types.ObjectId(assessedBy),
+        };
+        return SurgeryCaseModel.findOneAndUpdate({
+            _id: caseId,
+            hospitalId,
+            status: SurgeryStatus.RECOVERY,
+        }, {
+            $set: {
+                recoveryAssessment,
+                status: input.dischargeCriteriaMet
+                    ? SurgeryStatus.COMPLETED
+                    : SurgeryStatus.RECOVERY,
+                updatedBy: new Types.ObjectId(assessedBy),
+            },
+        }, { new: true }).exec();
+    }
+    async cancelCase(caseId, hospitalId, updatedBy, cancellationReason) {
+        const existingCase = await SurgeryCaseModel.findOne({
+            _id: caseId,
+            hospitalId,
+        });
+        if (!existingCase)
+            return null;
+        if ([
+            SurgeryStatus.COMPLETED,
+            SurgeryStatus.CANCELLED,
+        ].includes(existingCase.status)) {
+            throw new Error('This surgery can no longer be cancelled.');
+        }
+        return SurgeryCaseModel.findOneAndUpdate({
+            _id: caseId,
+            hospitalId,
+        }, {
             $set: {
                 status: SurgeryStatus.CANCELLED,
                 cancellationReason,
+                updatedBy: new Types.ObjectId(updatedBy),
             },
         }, { new: true }).exec();
+    }
+    async postponeCase(caseId, hospitalId, updatedBy, reason) {
+        return SurgeryCaseModel.findOneAndUpdate({
+            _id: caseId,
+            hospitalId,
+            status: {
+                $nin: [
+                    SurgeryStatus.COMPLETED,
+                    SurgeryStatus.CANCELLED,
+                ],
+            },
+        }, {
+            $set: {
+                status: SurgeryStatus.POSTPONED,
+                postponementReason: reason,
+                updatedBy: new Types.ObjectId(updatedBy),
+            },
+        }, { new: true }).exec();
+    }
+    async insertEmergencyCase(hospitalId, createdBy, input) {
+        return this.scheduleCase(hospitalId, createdBy, {
+            ...input,
+            urgency: UrgencyLevel.EMERGENCY,
+            priority: input.priority ?? 100,
+        });
     }
 }
 export const surgeryService = new SurgeryService();

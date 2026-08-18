@@ -21,20 +21,28 @@ export class OutpatientService {
             filter.triagePriority = query.triagePriority;
         const [encounters, total] = await Promise.all([
             OutpatientModel.find(filter)
-                .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
-                .populate('doctorId', 'firstName lastName role')
+                .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+                .populate('doctorId', 'firstName lastName role department')
                 .sort({ queuedAt: 1 })
                 .skip(skip)
                 .limit(limit)
+                .lean()
                 .exec(),
             OutpatientModel.countDocuments(filter),
         ]);
         return {
-            encounters,
+            encounters: encounters,
             total,
             page,
             totalPages: Math.ceil(total / limit),
         };
+    }
+    async getEncounterById(encounterId, hospitalId) {
+        return OutpatientModel.findOne({ _id: encounterId, hospitalId })
+            .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+            .populate('doctorId', 'firstName lastName role department')
+            .lean()
+            .exec();
     }
     async recordVitals(encounterId, hospitalId, input) {
         const bmi = input.vitalSigns.height && input.vitalSigns.weight
@@ -46,7 +54,11 @@ export class OutpatientService {
                 nursingNotes: input.nursingNotes,
                 status: ConsultationStatus.WAITING_FOR_DOCTOR,
             },
-        }, { new: true }).exec();
+        }, { new: true })
+            .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+            .populate('doctorId', 'firstName lastName role department')
+            .lean()
+            .exec();
     }
     async startConsultation(encounterId, hospitalId, doctorId) {
         return OutpatientModel.findOneAndUpdate({ _id: encounterId, hospitalId }, {
@@ -55,7 +67,11 @@ export class OutpatientService {
                 status: ConsultationStatus.IN_CONSULTATION,
                 consultationStartedAt: new Date(),
             },
-        }, { new: true }).exec();
+        }, { new: true })
+            .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+            .populate('doctorId', 'firstName lastName role department')
+            .lean()
+            .exec();
     }
     async completeConsultation(encounterId, hospitalId, input) {
         return OutpatientModel.findOneAndUpdate({ _id: encounterId, hospitalId }, {
@@ -65,7 +81,11 @@ export class OutpatientService {
                 status: ConsultationStatus.COMPLETED,
                 consultationEndedAt: new Date(),
             },
-        }, { new: true }).exec();
+        }, { new: true })
+            .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone')
+            .populate('doctorId', 'firstName lastName role department')
+            .lean()
+            .exec();
     }
 }
 export const outpatientService = new OutpatientService();

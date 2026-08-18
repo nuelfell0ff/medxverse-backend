@@ -207,6 +207,7 @@ export class RadiologyService {
             $regex: search,
             $options: 'i',
           },
+        },
       ];
     }
 

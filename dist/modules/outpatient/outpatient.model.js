@@ -1,4 +1,4 @@
-import { Schema, model } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 import { TriagePriority, ConsultationStatus, } from './outpatient.types.js';
 const VitalSignsSchema = new Schema({
     temperature: { type: Number },
@@ -14,7 +14,8 @@ const VitalSignsSchema = new Schema({
 const OutpatientSchema = new Schema({
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-    doctorId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    // ✅ Fixed ref to 'Staff' so populate resolves doctor details correctly
+    doctorId: { type: Schema.Types.ObjectId, ref: 'Staff', index: true },
     departmentId: { type: Schema.Types.ObjectId, ref: 'Department' },
     triagePriority: {
         type: String,
@@ -39,4 +40,5 @@ const OutpatientSchema = new Schema({
     consultationEndedAt: { type: Date },
 }, { timestamps: true });
 OutpatientSchema.index({ hospitalId: 1, status: 1, queuedAt: 1 });
-export const OutpatientModel = model('Outpatient', OutpatientSchema);
+export const OutpatientModel = mongoose.models.Outpatient ||
+    mongoose.model('Outpatient', OutpatientSchema);

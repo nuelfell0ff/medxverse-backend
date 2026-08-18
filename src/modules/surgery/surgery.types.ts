@@ -94,6 +94,7 @@ export interface IPreOpVitals {
 }
 
 export interface IPreOpAssessment {
+  toObject?: () => IPreOpAssessment;
   diagnosis?: string;
   surgicalIndication?: string;
   surgicalHistory?: string;
@@ -141,6 +142,7 @@ export interface IConsentVersion {
 }
 
 export interface ISurgicalConsent {
+  toObject?: () => ISurgicalConsent;
   procedureConsent: boolean;
   anesthesiaConsent: boolean;
   bloodTransfusionConsent: boolean;
@@ -204,27 +206,27 @@ export interface IWHOSignIn {
   completed: boolean;
   completedAt?: Date;
   completedBy?: Types.ObjectId;
-  patientIdentityConfirmed: boolean;
-  procedureConfirmed: boolean;
-  siteSideConfirmed: boolean;
-  consentVerified: boolean;
-  anesthesiaSafetyConfirmed: boolean;
-  pulseOximeterOn: boolean;
-  allergiesReviewed: boolean;
-  airwayRisk: boolean;
-  bloodLossRisk: boolean;
+  patientIdentityConfirmed?: boolean;
+  procedureConfirmed?: boolean;
+  siteSideConfirmed?: boolean;
+  consentVerified?: boolean;
+  anesthesiaSafetyConfirmed?: boolean;
+  pulseOximeterOn?: boolean;
+  allergiesReviewed?: boolean;
+  airwayRisk?: boolean;
+  bloodLossRisk?: boolean;
 }
 
 export interface IWHOTimeOut {
   completed: boolean;
   completedAt?: Date;
   completedBy?: Types.ObjectId;
-  patientConfirmed: boolean;
-  procedureConfirmed: boolean;
-  surgicalSiteConfirmed: boolean;
-  teamIntroduced: boolean;
-  antibioticProphylaxisConfirmed: boolean;
-  imagingAvailable: boolean;
+  patientConfirmed?: boolean;
+  procedureConfirmed?: boolean;
+  surgicalSiteConfirmed?: boolean;
+  teamIntroduced?: boolean;
+  antibioticProphylaxisConfirmed?: boolean;
+  imagingAvailable?: boolean;
   criticalConcernsSurgeon?: string;
   criticalConcernsAnaesthetist?: string;
   criticalConcernsNursing?: string;
@@ -235,15 +237,16 @@ export interface IWHOSignOut {
   completedAt?: Date;
   completedBy?: Types.ObjectId;
   procedureRecorded?: string;
-  instrumentCountCorrect: boolean;
-  spongeCountCorrect: boolean;
-  needleCountCorrect: boolean;
-  specimenLabeled: boolean;
+  instrumentCountCorrect?: boolean;
+  spongeCountCorrect?: boolean;
+  needleCountCorrect?: boolean;
+  specimenLabeled?: boolean;
   equipmentIssuesNoted?: string;
   postOperativePlan?: string;
 }
 
 export interface IWHOChecklist {
+  toObject?: () => IWHOChecklist;
   signIn: IWHOSignIn;
   timeOut: IWHOTimeOut;
   signOut: IWHOSignOut;
@@ -286,6 +289,7 @@ export interface IAnesthesiaRecord {
 }
 
 export interface IIntraopDocumentation {
+  toObject?: () => IIntraopDocumentation;
   procedureStartTime?: Date;
   procedureEndTime?: Date;
   incisionTime?: Date;
