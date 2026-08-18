@@ -1,462 +1,412 @@
-import { Document, Types } from 'mongoose';
+import { RadiologyOrderModel } from './radiology.model.js';
+import {
+  CreateRadiologyOrderInput,
+  GetRadiologyOrdersQuery,
+  IRadiologyOrderDocument,
+  RadiologyOrderStatus,
+  UpdatePacsMetadataInput,
+  CompleteRadiologyReportInput,
+} from './radiology.types.js';
 
-export enum ImagingModality {
-  X_RAY = 'X_RAY',
-  CT_SCAN = 'CT_SCAN',
-  MRI = 'MRI',
-  ULTRASOUND = 'ULTRASOUND',
-  MAMMOGRAPHY = 'MAMMOGRAPHY',
-  PET_SCAN = 'PET_SCAN',
-  DEXA = 'DEXA',
-  NUCLEAR_MEDICINE = 'NUCLEAR_MEDICINE',
-  FLUOROSCOPY = 'FLUOROSCOPY',
-  OTHER = 'OTHER',
+export class RadiologyService {
+  /**
+   * Create a new radiology order.
+   */
+  public async createOrder(
+    input: CreateRadiologyOrderInput
+  ): Promise<IRadiologyOrderDocument> {
+    const order = await RadiologyOrderModel.create({
+      hospitalId: input.hospitalId,
+      patientId: input.patientId,
+      orderingDoctorId: input.orderingDoctorId,
+      modality: input.modality,
+      procedureName: input.procedureName,
+      bodyPart: input.bodyPart,
+      clinicalIndication: input.clinicalIndication,
+      priority: input.priority,
+      status: RadiologyOrderStatus.REQUESTED,
+    });
+
+    return order;
+  }
+
+  /**
+   * Get radiology orders with pagination and filters.
+   */
+  public async getOrders(
+    hospitalId: string,
+    query: GetRadiologyOrdersQuery
+  ): Promise<{
+    orders: IRadiologyOrderDocument[];
+    total: number;
+    page: number;
+    totalPages: number;
+  }> {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(query.limit) || 20));
+    const skip = (page - 1) * limit;
+
+    const filter: Record<string, unknown> = {
+      hospitalId,
+    };
+
+    if (query.status) {
+      filter.status = query.status;
+    }
+
+    if (query.modality) {
+      filter.modality = query.modality;
+    }
+
+    if (query.patientId) {
+      filter.patientId = query.patientId;
+    }
+
+    if (query.orderingDoctorId) {
+      filter.orderingDoctorId = query.orderingDoctorId;
+    }
+
+    if (query.radiologistId) {
+      filter.radiologistId = query.radiologistId;
+    }
+
+    const [orders, total] = await Promise.all([
+      RadiologyOrderModel.find(filter)
+        .populate(
+          'patientId',
+          'firstName lastName mrn gender dateOfBirth'
+        )
+        .populate(
+          'orderingDoctorId',
+          'firstName lastName role'
+        )
+        .populate(
+          'radiologistId',
+          'firstName lastName role'
+        )
+        .sort({
+          priority: 1,
+          createdAt: -1,
+        })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+
+      RadiologyOrderModel.countDocuments(filter),
+    ]);
+
+    return {
+      orders,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Get a single radiology order.
+   */
+  public async getOrderById(
+    orderId: string,
+    hospitalId: string
+  ): Promise<IRadiologyOrderDocument | null> {
+    return RadiologyOrderModel.findOne({
+      _id: orderId,
+      hospitalId,
+    })
+      .populate(
+        'patientId',
+        'firstName lastName mrn gender dateOfBirth'
+      )
+      .populate(
+        'orderingDoctorId',
+        'firstName lastName role'
+      )
+      .populate(
+        'radiologistId',
+        'firstName lastName role'
+      )
+      .exec();
+  }
+
+  /**
+   * Update PACS information for a radiology study.
+   *
+   * This is normally used after the examination has been performed
+   * and the study has been received by PACS.
+   */
+  public async updatePacsData(
+    orderId: string,
+    hospitalId: string,
+    input: UpdatePacsMetadataInput
+  ): Promise<IRadiologyOrderDocument | null> {
+    const update: Record<string, unknown> = {};
+
+    if (input.studyInstanceUid !== undefined) {
+      update['pacsMetadata.studyInstanceUid'] =
+        input.studyInstanceUid;
+    }
+
+    if (input.seriesInstanceUid !== undefined) {
+      update['pacsMetadata.seriesInstanceUid'] =
+        input.seriesInstanceUid;
+    }
+
+    if (input.imageCount !== undefined) {
+      update['pacsMetadata.imageCount'] =
+        input.imageCount;
+    }
+
+    if (input.dicomViewerUrl !== undefined) {
+      update['pacsMetadata.dicomViewerUrl'] =
+        input.dicomViewerUrl;
+    }
+
+    if (input.dicomFileKeys !== undefined) {
+      update['pacsMetadata.dicomFileKeys'] =
+        input.dicomFileKeys;
+    }
+
+    update.status = RadiologyOrderStatus.COMPLETED;
+
+    return RadiologyOrderModel.findOneAndUpdate(
+      {
+        _id: orderId,
+        hospitalId,
+      },
+      {
+        $set: update,
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    )
+      .populate(
+        'patientId',
+        'firstName lastName mrn gender dateOfBirth'
+      )
+      .populate(
+        'orderingDoctorId',
+        'firstName lastName role'
+      )
+      .populate(
+        'radiologistId',
+        'firstName lastName role'
+      )
+      .exec();
+  }
+
+  /**
+   * Complete a radiology report.
+   */
+  public async completeReport(
+    orderId: string,
+    hospitalId: string,
+    input: CompleteRadiologyReportInput
+  ): Promise<IRadiologyOrderDocument | null> {
+    return RadiologyOrderModel.findOneAndUpdate(
+      {
+        _id: orderId,
+        hospitalId,
+      },
+      {
+        $set: {
+          radiologistId: input.radiologistId,
+          findings: input.findings,
+          impression: input.impression,
+          radiologistNotes: input.radiologistNotes,
+          status: RadiologyOrderStatus.REPORTED,
+          reportedAt: new Date(),
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    )
+      .populate(
+        'patientId',
+        'firstName lastName mrn gender dateOfBirth'
+      )
+      .populate(
+        'orderingDoctorId',
+        'firstName lastName role'
+      )
+      .populate(
+        'radiologistId',
+        'firstName lastName role'
+      )
+      .exec();
+  }
+
+  /**
+   * Cancel a radiology order.
+   *
+   * Reported studies cannot be cancelled.
+   */
+  public async cancelOrder(
+    orderId: string,
+    hospitalId: string,
+    cancellationReason: string
+  ): Promise<IRadiologyOrderDocument | null> {
+    return RadiologyOrderModel.findOneAndUpdate(
+      {
+        _id: orderId,
+        hospitalId,
+        status: {
+          $nin: [
+            RadiologyOrderStatus.REPORTED,
+            RadiologyOrderStatus.CANCELLED,
+          ],
+        },
+      },
+      {
+        $set: {
+          status: RadiologyOrderStatus.CANCELLED,
+          cancellationReason:
+            cancellationReason?.trim() ||
+            'No reason provided',
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    )
+      .populate(
+        'patientId',
+        'firstName lastName mrn gender dateOfBirth'
+      )
+      .populate(
+        'orderingDoctorId',
+        'firstName lastName role'
+      )
+      .populate(
+        'radiologistId',
+        'firstName lastName role'
+      )
+      .exec();
+  }
+
+  /**
+   * Schedule an order.
+   */
+  public async scheduleOrder(
+    orderId: string,
+    hospitalId: string
+  ): Promise<IRadiologyOrderDocument | null> {
+    return RadiologyOrderModel.findOneAndUpdate(
+      {
+        _id: orderId,
+        hospitalId,
+        status: RadiologyOrderStatus.REQUESTED,
+      },
+      {
+        $set: {
+          status: RadiologyOrderStatus.SCHEDULED,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    )
+      .populate(
+        'patientId',
+        'firstName lastName mrn gender dateOfBirth'
+      )
+      .populate(
+        'orderingDoctorId',
+        'firstName lastName role'
+      )
+      .populate(
+        'radiologistId',
+        'firstName lastName role'
+      )
+      .exec();
+  }
+
+  /**
+   * Mark an examination as in progress.
+   */
+  public async startExamination(
+    orderId: string,
+    hospitalId: string
+  ): Promise<IRadiologyOrderDocument | null> {
+    return RadiologyOrderModel.findOneAndUpdate(
+      {
+        _id: orderId,
+        hospitalId,
+        status: {
+          $in: [
+            RadiologyOrderStatus.REQUESTED,
+            RadiologyOrderStatus.SCHEDULED,
+          ],
+        },
+      },
+      {
+        $set: {
+          status: RadiologyOrderStatus.IN_PROGRESS,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    )
+      .populate(
+        'patientId',
+        'firstName lastName mrn gender dateOfBirth'
+      )
+      .populate(
+        'orderingDoctorId',
+        'firstName lastName role'
+      )
+      .populate(
+        'radiologistId',
+        'firstName lastName role'
+      )
+      .exec();
+  }
+
+  /**
+   * Assign a radiologist to an order.
+   */
+  public async assignRadiologist(
+    orderId: string,
+    hospitalId: string,
+    radiologistId: string
+  ): Promise<IRadiologyOrderDocument | null> {
+    return RadiologyOrderModel.findOneAndUpdate(
+      {
+        _id: orderId,
+        hospitalId,
+      },
+      {
+        $set: {
+          radiologistId,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    )
+      .populate(
+        'patientId',
+        'firstName lastName mrn gender dateOfBirth'
+      )
+      .populate(
+        'orderingDoctorId',
+        'firstName lastName role'
+      )
+      .populate(
+        'radiologistId',
+        'firstName lastName role'
+      )
+      .exec();
+  }
 }
 
-export enum RadiologyOrderStatus {
-  REQUESTED = 'REQUESTED',
-  SCHEDULED = 'SCHEDULED',
-  PATIENT_ARRIVED = 'PATIENT_ARRIVED',
-  PREPARING = 'PREPARING',
-  READY_FOR_EXAM = 'READY_FOR_EXAM',
-  IN_PROGRESS = 'IN_PROGRESS',
-  IMAGE_ACQUISITION_COMPLETE = 'IMAGE_ACQUISITION_COMPLETE',
-  AWAITING_REPORT = 'AWAITING_REPORT',
-  REPORTING = 'REPORTING',
-  REPORTED = 'REPORTED',
-  COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
-  POSTPONED = 'POSTPONED',
-}
-
-export enum PriorityLevel {
-  ROUTINE = 'ROUTINE',
-  URGENT = 'URGENT',
-  STAT = 'STAT',
-}
-
-export enum ExaminationQueueStatus {
-  WAITING = 'WAITING',
-  CALLED = 'CALLED',
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
-}
-
-export enum AssignmentRole {
-  RADIOLOGIST = 'RADIOLOGIST',
-  LEAD_TECHNOLOGIST = 'LEAD_TECHNOLOGIST',
-  TECHNOLOGIST = 'TECHNOLOGIST',
-  ASSISTANT = 'ASSISTANT',
-}
-
-export enum ReportStatus {
-  DRAFT = 'DRAFT',
-  FINAL = 'FINAL',
-  AMENDED = 'AMENDED',
-  CANCELLED = 'CANCELLED',
-}
-
-export enum CriticalResultStatus {
-  NOT_APPLICABLE = 'NOT_APPLICABLE',
-  PENDING_NOTIFICATION = 'PENDING_NOTIFICATION',
-  NOTIFIED = 'NOTIFIED',
-  ACKNOWLEDGED = 'ACKNOWLEDGED',
-}
-
-export enum PregnancyScreeningStatus {
-  NOT_REQUIRED = 'NOT_REQUIRED',
-  NOT_SCREENED = 'NOT_SCREENED',
-  NEGATIVE = 'NEGATIVE',
-  POSITIVE = 'POSITIVE',
-  UNKNOWN = 'UNKNOWN',
-}
-
-export enum ContrastStatus {
-  NOT_REQUIRED = 'NOT_REQUIRED',
-  PLANNED = 'PLANNED',
-  ADMINISTERED = 'ADMINISTERED',
-  NOT_ADMINISTERED = 'NOT_ADMINISTERED',
-  CANCELLED = 'CANCELLED',
-}
-
-export enum AIStudyPriority {
-  NOT_PROCESSED = 'NOT_PROCESSED',
-  NORMAL = 'NORMAL',
-  POTENTIALLY_URGENT = 'POTENTIALLY_URGENT',
-  CRITICAL = 'CRITICAL',
-  FAILED = 'FAILED',
-}
-
-export interface IPacsMetadata {
-  studyInstanceUid?: string;
-  seriesInstanceUid?: string;
-  accessionNumber?: string;
-  studyId?: string;
-  studyDate?: Date;
-  imageCount?: number;
-  seriesCount?: number;
-  modality?: ImagingModality;
-  dicomViewerUrl?: string;
-  dicomFileKeys?: string[];
-  storageLocation?: string;
-  storageStatus?: 'PENDING' | 'STORED' | 'ARCHIVED' | 'FAILED';
-  keyImageIds?: string[];
-  priorStudyInstanceUids?: string[];
-  exportEnabled?: boolean;
-  sharedLink?: string;
-  sharedLinkExpiresAt?: Date;
-}
-
-export interface IAssignment {
-  userId: Types.ObjectId;
-  role: AssignmentRole;
-  assignedAt?: Date;
-  assignedBy?: Types.ObjectId;
-  notes?: string;
-}
-
-export interface IScheduling {
-  scheduledDate?: Date;
-  scheduledStartTime?: string;
-  scheduledEndTime?: string;
-  estimatedDurationMinutes?: number;
-  modalityId?: Types.ObjectId;
-  theatreOrRoom?: string;
-  scheduledBy?: Types.ObjectId;
-}
-
-export interface IProcedureTracking {
-  queuedAt?: Date;
-  patientArrivedAt?: Date;
-  preparationStartedAt?: Date;
-  readyAt?: Date;
-  examinationStartedAt?: Date;
-  imageAcquisitionCompletedAt?: Date;
-  reportingStartedAt?: Date;
-  reportedAt?: Date;
-  completedAt?: Date;
-}
-
-export interface IPatientPreparation {
-  instructions?: string;
-  fastingRequired?: boolean;
-  fastingHours?: number;
-  hydrationRequired?: boolean;
-  medicationInstructions?: string;
-  preparationCompleted?: boolean;
-  preparationNotes?: string;
-}
-
-export interface IContrastAdministration {
-  status: ContrastStatus;
-  contrastName?: string;
-  contrastType?: string;
-  dose?: number;
-  doseUnit?: string;
-  route?: string;
-  administeredAt?: Date;
-  administeredBy?: Types.ObjectId;
-  reactionObserved?: boolean;
-  reactionDescription?: string;
-  notes?: string;
-}
-
-export interface IPregnancyScreening {
-  status: PregnancyScreeningStatus;
-  screenedAt?: Date;
-  screenedBy?: Types.ObjectId;
-  testType?: string;
-  testResult?: string;
-  notes?: string;
-}
-
-export interface IRadiationExposure {
-  dose?: number;
-  doseUnit?: string;
-  doseAreaProduct?: number;
-  doseAreaProductUnit?: string;
-  ctDoseIndex?: number;
-  doseLengthProduct?: number;
-  recordedAt?: Date;
-  recordedBy?: Types.ObjectId;
-  notes?: string;
-}
-
-export interface IReportVersion {
-  version: number;
-  findings: string;
-  impression: string;
-  radiologistNotes?: string;
-  status: ReportStatus;
-  createdBy: Types.ObjectId;
-  createdAt: Date;
-  signedAt?: Date;
-}
-
-export interface ICriticalResult {
-  status: CriticalResultStatus;
-  finding?: string;
-  notifiedUserId?: Types.ObjectId;
-  notifiedAt?: Date;
-  acknowledgedAt?: Date;
-  notificationMethod?: 'PHONE' | 'SMS' | 'EMAIL' | 'IN_APP';
-  notificationNotes?: string;
-}
-
-export interface IAIAnalysis {
-  enabled?: boolean;
-  modelName?: string;
-  modelVersion?: string;
-  processedAt?: Date;
-  priority?: AIStudyPriority;
-  confidence?: number;
-  findings?: string[];
-  measurements?: Record<string, number>;
-  recommendations?: string[];
-  qualityPassed?: boolean;
-  qualityNotes?: string;
-}
-
-export interface IRadiologyReport {
-  status: ReportStatus;
-  findings?: string;
-  impression?: string;
-  radiologistNotes?: string;
-  templateId?: string;
-  version?: number;
-  draftedAt?: Date;
-  signedAt?: Date;
-  signedBy?: Types.ObjectId;
-  amendedAt?: Date;
-  amendmentReason?: string;
-  criticalResult?: ICriticalResult;
-  versions?: IReportVersion[];
-}
-
-export interface IRadiologyOrder {
-  hospitalId: Types.ObjectId;
-
-  patientId: Types.ObjectId;
-
-  orderingDoctorId: Types.ObjectId;
-
-  radiologistId?: Types.ObjectId;
-
-  modality: ImagingModality;
-
-  procedureName: string;
-
-  bodyPart: string;
-
-  clinicalIndication: string;
-
-  priority: PriorityLevel;
-
-  status: RadiologyOrderStatus;
-
-  accessionNumber?: string;
-
-  scheduling?: IScheduling;
-
-  assignments?: IAssignment[];
-
-  procedureTracking?: IProcedureTracking;
-
-  patientPreparation?: IPatientPreparation;
-
-  contrast?: IContrastAdministration;
-
-  pregnancyScreening?: IPregnancyScreening;
-
-  radiationExposure?: IRadiationExposure;
-
-  pacsMetadata?: IPacsMetadata;
-
-  report?: IRadiologyReport;
-
-  findings?: string;
-
-  impression?: string;
-
-  radiologistNotes?: string;
-
-  reportedAt?: Date;
-
-  cancellationReason?: string;
-
-  queuePosition?: number;
-
-  queueStatus?: ExaminationQueueStatus;
-
-  aiAnalysis?: IAIAnalysis;
-
-  createdAt?: Date;
-
-  updatedAt?: Date;
-}
-
-export interface IRadiologyOrderDocument
-  extends IRadiologyOrder,
-    Document {
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CreateRadiologyOrderInput {
-  hospitalId: string;
-  patientId: string;
-  orderingDoctorId: string;
-  modality: ImagingModality;
-  procedureName: string;
-  bodyPart: string;
-  clinicalIndication: string;
-  priority?: PriorityLevel;
-
-  accessionNumber?: string;
-
-  scheduling?: {
-    scheduledDate?: string | Date;
-    scheduledStartTime?: string;
-    scheduledEndTime?: string;
-    estimatedDurationMinutes?: number;
-    modalityId?: string;
-    theatreOrRoom?: string;
-  };
-
-  patientPreparation?: IPatientPreparation;
-
-  contrast?: IContrastAdministration;
-
-  pregnancyScreening?: IPregnancyScreening;
-}
-
-export interface UpdateRadiologyOrderInput {
-  procedureName?: string;
-  bodyPart?: string;
-  clinicalIndication?: string;
-  modality?: ImagingModality;
-  priority?: PriorityLevel;
-  scheduling?: Partial<{
-    scheduledDate: string | Date;
-    scheduledStartTime: string;
-    scheduledEndTime: string;
-    estimatedDurationMinutes: number;
-    modalityId: string;
-    theatreOrRoom: string;
-  }>;
-  patientPreparation?: IPatientPreparation;
-}
-
-export interface UpdatePacsMetadataInput {
-  studyInstanceUid?: string;
-  seriesInstanceUid?: string;
-  accessionNumber?: string;
-  studyId?: string;
-  studyDate?: string | Date;
-  imageCount?: number;
-  seriesCount?: number;
-  modality?: ImagingModality;
-  dicomViewerUrl?: string;
-  dicomFileKeys?: string[];
-  storageLocation?: string;
-  storageStatus?: 'PENDING' | 'STORED' | 'ARCHIVED' | 'FAILED';
-  keyImageIds?: string[];
-  priorStudyInstanceUids?: string[];
-  exportEnabled?: boolean;
-  sharedLink?: string;
-  sharedLinkExpiresAt?: string | Date;
-}
-
-export interface AssignRadiologyStaffInput {
-  userId: string;
-  role: AssignmentRole;
-  notes?: string;
-}
-
-export interface UpdateExaminationStatusInput {
-  status: RadiologyOrderStatus;
-  notes?: string;
-}
-
-export interface UpdateQueueInput {
-  queuePosition?: number;
-  queueStatus?: ExaminationQueueStatus;
-}
-
-export interface UpdateContrastInput {
-  status: ContrastStatus;
-  contrastName?: string;
-  contrastType?: string;
-  dose?: number;
-  doseUnit?: string;
-  route?: string;
-  reactionObserved?: boolean;
-  reactionDescription?: string;
-  notes?: string;
-}
-
-export interface UpdatePregnancyScreeningInput {
-  status: PregnancyScreeningStatus;
-  testType?: string;
-  testResult?: string;
-  notes?: string;
-}
-
-export interface UpdateRadiationExposureInput {
-  dose?: number;
-  doseUnit?: string;
-  doseAreaProduct?: number;
-  doseAreaProductUnit?: string;
-  ctDoseIndex?: number;
-  doseLengthProduct?: number;
-  notes?: string;
-}
-
-export interface CompleteRadiologyReportInput {
-  radiologistId: string;
-  findings: string;
-  impression: string;
-  radiologistNotes?: string;
-  templateId?: string;
-  criticalResult?: Partial<ICriticalResult>;
-}
-
-export interface SignRadiologyReportInput {
-  radiologistId: string;
-}
-
-export interface AmendRadiologyReportInput {
-  radiologistId: string;
-  findings: string;
-  impression: string;
-  radiologistNotes?: string;
-  amendmentReason: string;
-}
-
-export interface UpdateAIAnalysisInput {
-  enabled?: boolean;
-  modelName?: string;
-  modelVersion?: string;
-  priority?: AIStudyPriority;
-  confidence?: number;
-  findings?: string[];
-  measurements?: Record<string, number>;
-  recommendations?: string[];
-  qualityPassed?: boolean;
-  qualityNotes?: string;
-}
-
-export interface GetRadiologyOrdersQuery {
-  page?: number;
-  limit?: number;
-  search?: string;
-  status?: RadiologyOrderStatus;
-  modality?: ImagingModality;
-  priority?: PriorityLevel;
-  patientId?: string;
-  orderingDoctorId?: string;
-  radiologistId?: string;
-  queueStatus?: ExaminationQueueStatus;
-  scheduledDate?: string;
-}
+export const radiologyService = new RadiologyService();
