@@ -14,25 +14,71 @@ import {
   AIStudyPriority,
 } from './radiology.types.js';
 
+/* =========================================================
+   PACS METADATA
+========================================================= */
+
 const PacsMetadataSchema = new Schema(
   {
-    studyInstanceUid: { type: String, trim: true, index: true },
-    seriesInstanceUid: { type: String, trim: true },
-    accessionNumber: { type: String, trim: true, index: true },
-    studyId: { type: String, trim: true },
-    studyDate: { type: Date },
-    imageCount: { type: Number, default: 0, min: 0 },
-    seriesCount: { type: Number, default: 0, min: 0 },
+    studyInstanceUid: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+
+    seriesInstanceUid: {
+      type: String,
+      trim: true,
+    },
+
+    accessionNumber: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+
+    studyId: {
+      type: String,
+      trim: true,
+    },
+
+    studyDate: {
+      type: Date,
+    },
+
+    imageCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    seriesCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
 
     modality: {
       type: String,
       enum: Object.values(ImagingModality),
     },
 
-    dicomViewerUrl: { type: String, trim: true },
-    dicomFileKeys: [{ type: String, trim: true }],
+    dicomViewerUrl: {
+      type: String,
+      trim: true,
+    },
 
-    storageLocation: { type: String, trim: true },
+    dicomFileKeys: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+
+    storageLocation: {
+      type: String,
+      trim: true,
+    },
 
     storageStatus: {
       type: String,
@@ -40,9 +86,19 @@ const PacsMetadataSchema = new Schema(
       default: 'PENDING',
     },
 
-    keyImageIds: [{ type: String, trim: true }],
+    keyImageIds: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
 
-    priorStudyInstanceUids: [{ type: String, trim: true }],
+    priorStudyInstanceUids: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
 
     exportEnabled: {
       type: Boolean,
@@ -58,14 +114,24 @@ const PacsMetadataSchema = new Schema(
       type: Date,
     },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   STAFF ASSIGNMENT
+========================================================= */
 
 const AssignmentSchema = new Schema(
   {
     userId: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+
+      // IMPORTANT:
+      // Your application uses Account rather than User.
+      ref: 'Account',
+
       required: true,
     },
 
@@ -82,7 +148,7 @@ const AssignmentSchema = new Schema(
 
     assignedBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
 
     notes: {
@@ -90,8 +156,14 @@ const AssignmentSchema = new Schema(
       trim: true,
     },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   SCHEDULING
+========================================================= */
 
 const SchedulingSchema = new Schema(
   {
@@ -127,26 +199,46 @@ const SchedulingSchema = new Schema(
 
     scheduledBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   PROCEDURE TRACKING
+========================================================= */
 
 const ProcedureTrackingSchema = new Schema(
   {
     queuedAt: Date,
+
     patientArrivedAt: Date,
+
     preparationStartedAt: Date,
+
     readyAt: Date,
+
     examinationStartedAt: Date,
+
     imageAcquisitionCompletedAt: Date,
+
     reportingStartedAt: Date,
+
     reportedAt: Date,
+
     completedAt: Date,
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   PATIENT PREPARATION
+========================================================= */
 
 const PatientPreparationSchema = new Schema(
   {
@@ -185,8 +277,14 @@ const PatientPreparationSchema = new Schema(
       trim: true,
     },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   CONTRAST
+========================================================= */
 
 const ContrastSchema = new Schema(
   {
@@ -206,7 +304,9 @@ const ContrastSchema = new Schema(
       trim: true,
     },
 
-    dose: Number,
+    dose: {
+      type: Number,
+    },
 
     doseUnit: {
       type: String,
@@ -218,11 +318,13 @@ const ContrastSchema = new Schema(
       trim: true,
     },
 
-    administeredAt: Date,
+    administeredAt: {
+      type: Date,
+    },
 
     administeredBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
 
     reactionObserved: {
@@ -240,8 +342,14 @@ const ContrastSchema = new Schema(
       trim: true,
     },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   PREGNANCY SCREENING
+========================================================= */
 
 const PregnancyScreeningSchema = new Schema(
   {
@@ -251,11 +359,13 @@ const PregnancyScreeningSchema = new Schema(
       default: PregnancyScreeningStatus.NOT_REQUIRED,
     },
 
-    screenedAt: Date,
+    screenedAt: {
+      type: Date,
+    },
 
     screenedBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
 
     testType: {
@@ -273,34 +383,50 @@ const PregnancyScreeningSchema = new Schema(
       trim: true,
     },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   RADIATION EXPOSURE
+========================================================= */
 
 const RadiationExposureSchema = new Schema(
   {
-    dose: Number,
+    dose: {
+      type: Number,
+    },
 
     doseUnit: {
       type: String,
       trim: true,
     },
 
-    doseAreaProduct: Number,
+    doseAreaProduct: {
+      type: Number,
+    },
 
     doseAreaProductUnit: {
       type: String,
       trim: true,
     },
 
-    ctDoseIndex: Number,
+    ctDoseIndex: {
+      type: Number,
+    },
 
-    doseLengthProduct: Number,
+    doseLengthProduct: {
+      type: Number,
+    },
 
-    recordedAt: Date,
+    recordedAt: {
+      type: Date,
+    },
 
     recordedBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
 
     notes: {
@@ -308,8 +434,14 @@ const RadiationExposureSchema = new Schema(
       trim: true,
     },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   CRITICAL RESULT
+========================================================= */
 
 const CriticalResultSchema = new Schema(
   {
@@ -326,12 +458,16 @@ const CriticalResultSchema = new Schema(
 
     notifiedUserId: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
 
-    notifiedAt: Date,
+    notifiedAt: {
+      type: Date,
+    },
 
-    acknowledgedAt: Date,
+    acknowledgedAt: {
+      type: Date,
+    },
 
     notificationMethod: {
       type: String,
@@ -343,8 +479,14 @@ const CriticalResultSchema = new Schema(
       trim: true,
     },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   REPORT VERSION
+========================================================= */
 
 const ReportVersionSchema = new Schema(
   {
@@ -363,7 +505,9 @@ const ReportVersionSchema = new Schema(
       required: true,
     },
 
-    radiologistNotes: String,
+    radiologistNotes: {
+      type: String,
+    },
 
     status: {
       type: String,
@@ -373,7 +517,7 @@ const ReportVersionSchema = new Schema(
 
     createdBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
       required: true,
     },
 
@@ -382,10 +526,18 @@ const ReportVersionSchema = new Schema(
       default: Date.now,
     },
 
-    signedAt: Date,
+    signedAt: {
+      type: Date,
+    },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   RADIOLOGY REPORT
+========================================================= */
 
 const ReportSchema = new Schema(
   {
@@ -420,16 +572,22 @@ const ReportSchema = new Schema(
       default: 1,
     },
 
-    draftedAt: Date,
+    draftedAt: {
+      type: Date,
+    },
 
-    signedAt: Date,
+    signedAt: {
+      type: Date,
+    },
 
     signedBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
 
-    amendedAt: Date,
+    amendedAt: {
+      type: Date,
+    },
 
     amendmentReason: {
       type: String,
@@ -438,6 +596,7 @@ const ReportSchema = new Schema(
 
     criticalResult: {
       type: CriticalResultSchema,
+
       default: () => ({
         status: CriticalResultStatus.NOT_APPLICABLE,
       }),
@@ -448,8 +607,14 @@ const ReportSchema = new Schema(
       default: [],
     },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   AI ANALYSIS
+========================================================= */
 
 const AIAnalysisSchema = new Schema(
   {
@@ -458,11 +623,19 @@ const AIAnalysisSchema = new Schema(
       default: false,
     },
 
-    modelName: String,
+    modelName: {
+      type: String,
+      trim: true,
+    },
 
-    modelVersion: String,
+    modelVersion: {
+      type: String,
+      trim: true,
+    },
 
-    processedAt: Date,
+    processedAt: {
+      type: Date,
+    },
 
     priority: {
       type: String,
@@ -476,21 +649,42 @@ const AIAnalysisSchema = new Schema(
       max: 1,
     },
 
-    findings: [String],
+    findings: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
 
     measurements: {
       type: Map,
       of: Number,
     },
 
-    recommendations: [String],
+    recommendations: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
 
-    qualityPassed: Boolean,
+    qualityPassed: {
+      type: Boolean,
+    },
 
-    qualityNotes: String,
+    qualityNotes: {
+      type: String,
+      trim: true,
+    },
   },
-  { _id: false }
+  {
+    _id: false,
+  }
 );
+
+/* =========================================================
+   RADIOLOGY ORDER
+========================================================= */
 
 const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
   {
@@ -510,14 +704,14 @@ const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
 
     orderingDoctorId: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
       required: true,
       index: true,
     },
 
     radiologistId: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
       index: true,
     },
 
@@ -608,7 +802,10 @@ const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
       type: ReportSchema,
     },
 
-    // Legacy/report compatibility fields
+    /* ---------------------------------------------
+       Legacy/report compatibility fields
+    --------------------------------------------- */
+
     findings: {
       type: String,
       trim: true,
@@ -624,12 +821,18 @@ const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
       trim: true,
     },
 
-    reportedAt: Date,
+    reportedAt: {
+      type: Date,
+    },
 
     cancellationReason: {
       type: String,
       trim: true,
     },
+
+    /* ---------------------------------------------
+       Queue management
+    --------------------------------------------- */
 
     queuePosition: {
       type: Number,
@@ -644,6 +847,10 @@ const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
       index: true,
     },
 
+    /* ---------------------------------------------
+       AI
+    --------------------------------------------- */
+
     aiAnalysis: {
       type: AIAnalysisSchema,
     },
@@ -652,6 +859,10 @@ const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
     timestamps: true,
   }
 );
+
+/* =========================================================
+   INDEXES
+========================================================= */
 
 RadiologyOrderSchema.index({
   hospitalId: 1,
@@ -676,7 +887,12 @@ RadiologyOrderSchema.index({
   createdAt: -1,
 });
 
-export const RadiologyOrderModel = model<IRadiologyOrderDocument>(
-  'RadiologyOrder',
-  RadiologyOrderSchema
-);
+/* =========================================================
+   MODEL
+========================================================= */
+
+export const RadiologyOrderModel =
+  model<IRadiologyOrderDocument>(
+    'RadiologyOrder',
+    RadiologyOrderSchema
+  );
