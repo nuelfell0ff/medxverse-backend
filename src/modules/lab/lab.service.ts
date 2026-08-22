@@ -1,249 +1,301 @@
 import { Types } from 'mongoose';
-import { LabOrderModel, TestCatalogModel } from './lab.model.js';
+
+import {
+  LabOrderModel,
+} from './lab.model.js';
+
 import {
   CreateLabOrderDTO,
   RecordLabResultsDTO,
   RejectSampleDTO,
   GetLabOrdersQueryDTO,
+  AmendResultsDTO,
+  RepeatTestDTO,
+  AccessionSpecimenDTO,
   ILabOrderDocument,
   LabOrderStatus,
+  LabPriority,
   ResultFlag,
   EntryMethod,
+  SampleRoutingStatus,
+  AuthorizationLevel,
+  SpecimenQuality,
 } from './lab.types.js';
 
+/* =========================================================
+   HELPERS
+========================================================= */
+
+const ACCOUNT_SELECT = 'name email phone accountType';
+
 export class LabService {
-  // Helper to generate Universal Accession Numbers (Features 3, 5)
   private static generateAccessionNumber(): string {
-    const timestamp = Date.now().toString().slice(-6);
+    const timestamp = Date.now().toString().slice(-8);
     const random = Math.floor(1000 + Math.random() * 9000);
-    return `ACC-${timestamp}-${random}`;
+
+    return `LAB-${timestamp}-${random}`;
   }
 
-  // Feature 1, 2, 3, 11, 12, 15, 49, 50
+  private static getPredictedTatMinutes(
+    priority?: LabPriority,
+    isStat?: boolean
+  ): number {
+    if (isStat || priority === LabPriority.STAT) {
+      return 30;
+    }
+
+    if (priority === LabPriority.URGENT) {
+      return 60;
+    }
+
+    return 120;
+  }
+
+  private static async populateOrder(
+    order: ILabOrderDocument
+  ): Promise<ILabOrderDocument> {
+    await order.populate([
+      {
+        path: 'patientId',
+        select: 'firstName lastName mrn dateOfBirth gender bloodGroup genotype',
+      },
+      {
+        path: 'doctorId',
+        select: ACCOUNT_SELECT,
+      },
+      {
+        path: 'phlebotomistId',
+        select: ACCOUNT_SELECT,
+      },
+      {
+        path: 'labTechnicianId',
+        select: ACCOUNT_SELECT,
+      },
+      {
+        path: 'verifierId',
+        select: ACCOUNT_SELECT,
+      },
+    ]);
+
+    return order;
+  }
+
+  /* =========================================================
+     CREATE ORDER
+  ========================================================= */
+
   static async createOrder(
     hospitalId: string,
     requestingUserId: string,
     dto: CreateLabOrderDTO
   ): Promise<ILabOrderDocument> {
     const doctorId = dto.doctorId || requestingUserId;
-    const accessionNumber = this.generateAccessionNumber();
-    const barcodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${accessionNumber}`;
 
-    // Predictive TAT logic based on priority (Feature 49, 50)
-    let predictedTatMinutes = 120; // Routine default
-    if (dto.isStat || dto.priority === 'STAT') {
-      predictedTatMinutes = 30;
-    } else if (dto.priority === 'URGENT') {
-      predictedTatMinutes = 60;
-    }
+    const priority =
+      dto.priority ||
+      (dto.isStat ? LabPriority.STAT : LabPriority.ROUTINE);
 
-    const initialChain = [{
-      timestamp: new Date(),
-      action: 'ORDER_CREATED',
-      performedBy: new Types.ObjectId(requestingUserId),
-      notes: 'Electronic lab requisition created',
-    }];
+    const isStat =
+      dto.isStat === true ||
+      priority === LabPriority.STAT;
+
+    const accessionNumber =
+      this.generateAccessionNumber();
+
+    const barcodeUrl =
+      `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(accessionNumber)}`;
+
+    const duplicateSince = new Date(
+      Date.now() - 24 * 60 * 60 * 1000
+    );
+
+    const existingDuplicate = await LabOrderModel.findOne({
+      hospitalId: new Types.ObjectId(hospitalId),
+      patientId: new Types.ObjectId(dto.patientId),
+      testName: dto.testName,
+      status: {
+        $nin: [
+          LabOrderStatus.CANCELLED,
+          LabOrderStatus.COMPLETED,
+        ],
+      },
+      createdAt: {
+        $gte: duplicateSince,
+      },
+    });
+
+    const duplicateTestDetected =
+      Boolean(existingDuplicate);
+
+    const duplicateTestMessage =
+      existingDuplicate
+        ? `A similar active test order already exists: ${existingDuplicate.accessionNumber}`
+        : undefined;
+
+    const initialStatus =
+      dto.sampleCollectionScheduledAt
+        ? LabOrderStatus.SAMPLE_SCHEDULED
+        : LabOrderStatus.PENDING;
+
+    const predictedTatMinutes =
+      this.getPredictedTatMinutes(
+        priority,
+        isStat
+      );
 
     const order = await LabOrderModel.create({
       hospitalId: new Types.ObjectId(hospitalId),
+
       patientId: new Types.ObjectId(dto.patientId),
+
       doctorId: new Types.ObjectId(doctorId),
-      consultationId: dto.consultationId ? new Types.ObjectId(dto.consultationId) : undefined,
+
+      consultationId: dto.consultationId
+        ? new Types.ObjectId(dto.consultationId)
+        : undefined,
+
       accessionNumber,
+
       barcodeUrl,
-      testCatalogId: dto.testCatalogId ? new Types.ObjectId(dto.testCatalogId) : undefined,
+      qrCodeUrl: barcodeUrl,
+
+      testCatalogId: dto.testCatalogId
+        ? new Types.ObjectId(dto.testCatalogId)
+        : undefined,
+
       testName: dto.testName,
       testCategory: dto.testCategory,
-      priority: dto.priority || 'ROUTINE',
-      isStat: dto.isStat || dto.priority === 'STAT',
+      panelName: dto.panelName,
+
+      priority,
+      isStat,
+
+      status: initialStatus,
+
       sampleType: dto.sampleType,
-      sampleCollectionScheduledAt: dto.sampleCollectionScheduledAt ? new Date(dto.sampleCollectionScheduledAt) : undefined,
-      chainOfCustody: initialChain,
+
+      sampleCollectionScheduledAt:
+        dto.sampleCollectionScheduledAt
+          ? new Date(dto.sampleCollectionScheduledAt)
+          : undefined,
+
+      sampleRouting: {
+        department: dto.testCategory,
+        status: SampleRoutingStatus.PENDING,
+      },
+
+      chainOfCustody: [
+        {
+          timestamp: new Date(),
+          action: 'ORDER_CREATED',
+          performedBy: new Types.ObjectId(requestingUserId),
+          notes: 'Electronic laboratory requisition created.',
+        },
+      ],
+
       predictedTatMinutes,
+
+      duplicateTestDetected,
+      duplicateTestMessage,
+
       notes: dto.notes,
     });
 
-    return order.populate([
-      { path: 'patientId', select: 'firstName lastName mrn dateOfBirth gender' },
-      { path: 'doctorId', select: 'firstName lastName email department' },
-    ]);
+    return this.populateOrder(order);
   }
 
-  // Feature 4, 14 - Phlebotomy & Sample Collection
-  static async collectSample(
+  /* =========================================================
+     GET ORDERS / WORKLIST
+  ========================================================= */
+
+  static async getOrders(
     hospitalId: string,
-    orderId: string,
-    phlebotomistId: string
-  ): Promise<ILabOrderDocument> {
-    const order = await this.getOrderById(hospitalId, orderId);
+    query: GetLabOrdersQueryDTO
+  ) {
+    const page = Math.max(
+      Number(query.page) || 1,
+      1
+    );
 
-    order.status = LabOrderStatus.SAMPLE_COLLECTED;
-    order.phlebotomistId = new Types.ObjectId(phlebotomistId);
-    order.sampleCollectedAt = new Date();
-    order.chainOfCustody.push({
-      timestamp: new Date(),
-      action: 'SAMPLE_COLLECTED',
-      performedBy: new Types.ObjectId(phlebotomistId),
-      notes: 'Specimen collected and barcoded',
-    });
+    const limit = Math.min(
+      Math.max(Number(query.limit) || 20, 1),
+      100
+    );
 
-    await order.save();
-    return order;
-  }
-
-  // Feature 6, 7, 9, 10 - Accessioning & Routing
-  static async accessionSpecimen(
-    hospitalId: string,
-    orderId: string,
-    technicianId: string,
-    location: string
-  ): Promise<ILabOrderDocument> {
-    const order = await this.getOrderById(hospitalId, orderId);
-
-    order.status = LabOrderStatus.IN_PROGRESS;
-    order.labTechnicianId = new Types.ObjectId(technicianId);
-    order.chainOfCustody.push({
-      timestamp: new Date(),
-      action: 'SPECIMEN_ACCESSIONED',
-      performedBy: new Types.ObjectId(technicianId),
-      location,
-      notes: `Routed to ${order.testCategory} section`,
-    });
-
-    await order.save();
-    return order;
-  }
-
-  // Feature 8 - Rejection & Recollection Management
-  static async rejectSample(
-    hospitalId: string,
-    orderId: string,
-    technicianId: string,
-    dto: RejectSampleDTO
-  ): Promise<ILabOrderDocument> {
-    const order = await this.getOrderById(hospitalId, orderId);
-
-    order.status = LabOrderStatus.SAMPLE_REJECTED;
-    order.rejectionInfo = {
-      rejectedBy: new Types.ObjectId(technicianId),
-      reason: dto.reason,
-      quality: dto.quality,
-      rejectionDate: new Date(),
-      recollectionRequested: dto.requestRecollection,
-    };
-
-    order.chainOfCustody.push({
-      timestamp: new Date(),
-      action: 'SAMPLE_REJECTED',
-      performedBy: new Types.ObjectId(technicianId),
-      notes: `Rejected: ${dto.reason}`,
-    });
-
-    await order.save();
-    return order;
-  }
-
-  // Feature 31, 32, 33, 34, 38, 41, 42, 43, 44 - AI Engine & Results Recording
-  static async recordResults(
-    hospitalId: string,
-    orderId: string,
-    technicianId: string,
-    dto: RecordLabResultsDTO
-  ): Promise<ILabOrderDocument> {
-    const order = await this.getOrderById(hospitalId, orderId);
-
-    // AI & Pattern Check Logic
-    const evaluatedResults = dto.results.map((res) => {
-      let flag = res.flag || ResultFlag.NORMAL;
-      
-      // Auto-flag critical values (Feature 30, 43, 44)
-      if (res.value && !isNaN(Number(res.value))) {
-        const val = Number(res.value);
-        if (res.parameterName.toLowerCase().includes('glucose') && (val > 300 || val < 50)) {
-          flag = ResultFlag.CRITICAL;
-        }
-      }
-      return {
-        ...res,
-        flag,
-        entryMethod: res.entryMethod || EntryMethod.MANUAL,
-      };
-    });
-
-    // Check for Critical Results & Delta Alerts (Feature 42, 43)
-    const hasCritical = evaluatedResults.some((r) => r.flag === ResultFlag.CRITICAL);
-    if (hasCritical) {
-      order.criticalResultNotified = true;
-      order.aiPatternAlerts?.push('AI-ALERT: Critical parameter values detected. Urgent review required.');
-    }
-
-    order.results = evaluatedResults;
-    order.specimenQuality = dto.specimenQuality || order.specimenQuality;
-    order.labTechnicianId = new Types.ObjectId(technicianId);
-    order.status = LabOrderStatus.IN_PROGRESS;
-
-    if (dto.notes) order.notes = dto.notes;
-
-    order.chainOfCustody.push({
-      timestamp: new Date(),
-      action: 'RESULTS_RECORDED',
-      performedBy: new Types.ObjectId(technicianId),
-    });
-
-    await order.save();
-    return order;
-  }
-
-  // Feature 35, 36 - Multi-Level Result Verification
-  static async verifyResults(
-    hospitalId: string,
-    orderId: string,
-    verifierId: string
-  ): Promise<ILabOrderDocument> {
-    const order = await this.getOrderById(hospitalId, orderId);
-
-    order.status = LabOrderStatus.COMPLETED;
-    order.verifierId = new Types.ObjectId(verifierId);
-    order.verifiedAt = new Date();
-    order.completedAt = new Date();
-
-    order.chainOfCustody.push({
-      timestamp: new Date(),
-      action: 'RESULTS_VERIFIED_AND_RELEASED',
-      performedBy: new Types.ObjectId(verifierId),
-    });
-
-    await order.save();
-    return order;
-  }
-
-  // Feature 13, 48 - Automated Worklist with Prioritization
-  static async getOrders(hospitalId: string, query: GetLabOrdersQueryDTO) {
-    const page = Number(query.page) || 1;
-    const limit = Number(query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const filter: Record<string, unknown> = { hospitalId };
+    const filter: Record<string, unknown> = {
+      hospitalId: new Types.ObjectId(hospitalId),
+    };
 
-    if (query.patientId) filter.patientId = new Types.ObjectId(query.patientId);
-    if (query.doctorId) filter.doctorId = new Types.ObjectId(query.doctorId);
-    if (query.status) filter.status = query.status;
-    if (query.priority) filter.priority = query.priority;
-    if (query.department) filter.testCategory = query.department;
-    if (query.accessionNumber) filter.accessionNumber = query.accessionNumber;
-    if (query.isStat !== undefined) filter.isStat = String(query.isStat) === 'true';
+    if (query.patientId) {
+      filter.patientId =
+        new Types.ObjectId(query.patientId);
+    }
 
-    const [orders, total] = await Promise.all([
-      LabOrderModel.find(filter)
-        .populate('patientId', 'firstName lastName mrn dateOfBirth gender')
-        .populate('doctorId', 'firstName lastName email department')
-        .populate('labTechnicianId', 'firstName lastName')
-        .populate('verifierId', 'firstName lastName')
-        .sort({ isStat: -1, createdAt: -1 }) // STAT orders floated to top
-        .skip(skip)
-        .limit(limit),
-      LabOrderModel.countDocuments(filter),
-    ]);
+    if (query.doctorId) {
+      filter.doctorId =
+        new Types.ObjectId(query.doctorId);
+    }
+
+    if (query.status) {
+      filter.status = query.status;
+    }
+
+    if (query.priority) {
+      filter.priority = query.priority;
+    }
+
+    if (query.department) {
+      filter.testCategory =
+        query.department;
+    }
+
+    if (query.accessionNumber) {
+      filter.accessionNumber = {
+        $regex: query.accessionNumber,
+        $options: 'i',
+      };
+    }
+
+    if (query.isStat !== undefined) {
+      filter.isStat =
+        String(query.isStat) === 'true';
+    }
+
+    const [orders, total] =
+      await Promise.all([
+        LabOrderModel.find(filter)
+          .populate(
+            'patientId',
+            'firstName lastName mrn dateOfBirth gender'
+          )
+          .populate(
+            'doctorId',
+            ACCOUNT_SELECT
+          )
+          .populate(
+            'phlebotomistId',
+            ACCOUNT_SELECT
+          )
+          .populate(
+            'labTechnicianId',
+            ACCOUNT_SELECT
+          )
+          .populate(
+            'verifierId',
+            ACCOUNT_SELECT
+          )
+          .sort({
+            isStat: -1,
+            priority: -1,
+            createdAt: -1,
+          })
+          .skip(skip)
+          .limit(limit),
+
+        LabOrderModel.countDocuments(filter),
+      ]);
 
     return {
       orders,
@@ -254,20 +306,664 @@ export class LabService {
     };
   }
 
-  static async getOrderById(hospitalId: string, orderId: string): Promise<ILabOrderDocument> {
-    const order = await LabOrderModel.findOne({ _id: orderId, hospitalId }).populate([
-      { path: 'patientId', select: 'firstName lastName mrn dateOfBirth gender bloodGroup genotype' },
-      { path: 'doctorId', select: 'firstName lastName email department' },
-      { path: 'labTechnicianId', select: 'firstName lastName' },
-      { path: 'verifierId', select: 'firstName lastName' },
-    ]);
+  /* =========================================================
+     GET SINGLE ORDER
+  ========================================================= */
+
+  static async getOrderById(
+    hospitalId: string,
+    orderId: string
+  ): Promise<ILabOrderDocument> {
+    if (!Types.ObjectId.isValid(orderId)) {
+      const error = new Error(
+        'Invalid laboratory order ID.'
+      ) as Error & {
+        statusCode?: number;
+      };
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const order =
+      await LabOrderModel.findOne({
+        _id: new Types.ObjectId(orderId),
+        hospitalId: new Types.ObjectId(hospitalId),
+      });
 
     if (!order) {
-      const error = new Error('Lab order not found.') as Error & { statusCode?: number };
+      const error = new Error(
+        'Laboratory order not found.'
+      ) as Error & {
+        statusCode?: number;
+      };
+
       error.statusCode = 404;
       throw error;
     }
 
-    return order;
+    return this.populateOrder(order);
+  }
+
+  /* =========================================================
+     SAMPLE COLLECTION
+  ========================================================= */
+
+  static async collectSample(
+    hospitalId: string,
+    orderId: string,
+    phlebotomistId: string
+  ): Promise<ILabOrderDocument> {
+    const order =
+      await this.getOrderById(
+        hospitalId,
+        orderId
+      );
+
+    if (
+      [
+        LabOrderStatus.CANCELLED,
+        LabOrderStatus.COMPLETED,
+      ].includes(order.status)
+    ) {
+      const error = new Error(
+        'Sample cannot be collected for this order.'
+      ) as Error & {
+        statusCode?: number;
+      };
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const now = new Date();
+
+    order.status =
+      LabOrderStatus.SAMPLE_COLLECTED;
+
+    order.phlebotomistId =
+      new Types.ObjectId(phlebotomistId);
+
+    order.sampleCollectedAt = now;
+
+    order.chainOfCustody.push({
+      timestamp: now,
+      action: 'SAMPLE_COLLECTED',
+      performedBy:
+        new Types.ObjectId(phlebotomistId),
+      notes:
+        'Specimen collected and linked to accession number.',
+    });
+
+    await order.save();
+
+    return this.populateOrder(order);
+  }
+
+  /* =========================================================
+     SPECIMEN ACCESSIONING
+  ========================================================= */
+
+  static async accessionSpecimen(
+    hospitalId: string,
+    orderId: string,
+    technicianId: string,
+    dto: AccessionSpecimenDTO
+  ): Promise<ILabOrderDocument> {
+    const order =
+      await this.getOrderById(
+        hospitalId,
+        orderId
+      );
+
+    const now = new Date();
+
+    order.status =
+      LabOrderStatus.SPECIMEN_RECEIVED;
+
+    order.specimenReceivedAt = now;
+
+    order.labTechnicianId =
+      new Types.ObjectId(technicianId);
+
+    if (!order.sampleRouting) {
+      order.sampleRouting = {
+        department: order.testCategory,
+        status: SampleRoutingStatus.PENDING,
+      };
+    }
+
+    order.sampleRouting.department =
+      order.testCategory;
+
+    order.sampleRouting.routedAt = now;
+
+    order.sampleRouting.routedBy =
+      new Types.ObjectId(technicianId);
+
+    order.sampleRouting.location =
+      dto.location || 'Central Laboratory';
+
+    order.sampleRouting.status =
+      SampleRoutingStatus.ROUTED;
+
+    order.chainOfCustody.push({
+      timestamp: now,
+      action: 'SPECIMEN_ACCESSIONED_AND_ROUTED',
+      performedBy:
+        new Types.ObjectId(technicianId),
+      location:
+        dto.location || 'Central Laboratory',
+      notes:
+        `Specimen accessioned and routed to ${order.testCategory}.`,
+    });
+
+    await order.save();
+
+    return this.populateOrder(order);
+  }
+
+  /* =========================================================
+     REJECT SAMPLE
+  ========================================================= */
+
+  static async rejectSample(
+    hospitalId: string,
+    orderId: string,
+    technicianId: string,
+    dto: RejectSampleDTO
+  ): Promise<ILabOrderDocument> {
+    const order =
+      await this.getOrderById(
+        hospitalId,
+        orderId
+      );
+
+    const now = new Date();
+
+    order.status =
+      dto.requestRecollection
+        ? LabOrderStatus.RECOLLECTION_REQUIRED
+        : LabOrderStatus.SAMPLE_REJECTED;
+
+    order.specimenQuality = dto.quality;
+
+    order.rejectionInfo = {
+      rejectedBy:
+        new Types.ObjectId(technicianId),
+      reason: dto.reason,
+      quality: dto.quality,
+      rejectionDate: now,
+      recollectionRequested:
+        dto.requestRecollection,
+      recollectionScheduledAt:
+        dto.recollectionScheduledAt
+          ? new Date(
+              dto.recollectionScheduledAt
+            )
+          : undefined,
+    };
+
+    order.chainOfCustody.push({
+      timestamp: now,
+      action: 'SAMPLE_REJECTED',
+      performedBy:
+        new Types.ObjectId(technicianId),
+      notes: `Reason: ${dto.reason}`,
+    });
+
+    if (dto.requestRecollection) {
+      order.chainOfCustody.push({
+        timestamp: now,
+        action: 'RECOLLECTION_REQUESTED',
+        performedBy:
+          new Types.ObjectId(technicianId),
+        notes:
+          'A new specimen collection is required.',
+      });
+    }
+
+    await order.save();
+
+    return this.populateOrder(order);
+  }
+
+  /* =========================================================
+     RECOLLECT SAMPLE
+  ========================================================= */
+
+  static async recollectSample(
+    hospitalId: string,
+    orderId: string,
+    phlebotomistId: string
+  ): Promise<ILabOrderDocument> {
+    const order =
+      await this.getOrderById(
+        hospitalId,
+        orderId
+      );
+
+    if (
+      order.status !==
+      LabOrderStatus.RECOLLECTION_REQUIRED
+    ) {
+      const error = new Error(
+        'This order does not currently require recollection.'
+      ) as Error & {
+        statusCode?: number;
+      };
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const now = new Date();
+
+    order.status =
+      LabOrderStatus.SAMPLE_COLLECTED;
+
+    order.sampleCollectedAt = now;
+
+    order.phlebotomistId =
+      new Types.ObjectId(phlebotomistId);
+
+    order.specimenQuality =
+      SpecimenQuality.SATISFACTORY;
+
+    order.rejectionInfo = undefined;
+
+    order.chainOfCustody.push({
+      timestamp: now,
+      action: 'SAMPLE_RECOLLECTED',
+      performedBy:
+        new Types.ObjectId(phlebotomistId),
+      notes:
+        'Replacement specimen collected successfully.',
+    });
+
+    await order.save();
+
+    return this.populateOrder(order);
+  }
+
+  /* =========================================================
+     RECORD RESULTS
+  ========================================================= */
+
+  static async recordResults(
+    hospitalId: string,
+    orderId: string,
+    technicianId: string,
+    dto: RecordLabResultsDTO
+  ): Promise<ILabOrderDocument> {
+    const order =
+      await this.getOrderById(
+        hospitalId,
+        orderId
+      );
+
+    const evaluatedResults =
+      dto.results.map((result) => {
+        let flag =
+          result.flag ||
+          ResultFlag.NORMAL;
+
+        const numericValue =
+          Number(result.value);
+
+        if (
+          result.value &&
+          !Number.isNaN(numericValue)
+        ) {
+          const parameter =
+            result.parameterName.toLowerCase();
+
+          if (
+            parameter.includes('glucose') &&
+            (numericValue > 300 ||
+              numericValue < 50)
+          ) {
+            flag = ResultFlag.CRITICAL;
+          }
+        }
+
+        return {
+          ...result,
+          flag,
+          entryMethod:
+            result.entryMethod ||
+            EntryMethod.MANUAL,
+        };
+      });
+
+    const hasCritical =
+      evaluatedResults.some(
+        (result) =>
+          result.flag ===
+          ResultFlag.CRITICAL
+      );
+
+    const hasAbnormal =
+      evaluatedResults.some(
+        (result) =>
+          result.flag ===
+            ResultFlag.ABNORMAL ||
+          result.flag ===
+            ResultFlag.DELTA_CHECK_WARNING
+      );
+
+    order.results =
+      evaluatedResults;
+
+    order.specimenQuality =
+      dto.specimenQuality ||
+      order.specimenQuality ||
+      SpecimenQuality.SATISFACTORY;
+
+    order.labTechnicianId =
+      new Types.ObjectId(technicianId);
+
+    order.status =
+      LabOrderStatus.RESULTS_RECORDED;
+
+    if (hasCritical) {
+      order.criticalResultNotified = true;
+
+      order.aiPatternAlerts.push(
+        'CRITICAL RESULT ALERT: Critical laboratory value detected. Immediate clinical review is required.'
+      );
+    }
+
+    if (hasAbnormal) {
+      order.aiPatternAlerts.push(
+        'ABNORMAL RESULT FLAG: One or more laboratory values require clinical review.'
+      );
+    }
+
+    if (dto.notes) {
+      order.notes = dto.notes;
+    }
+
+    order.chainOfCustody.push({
+      timestamp: new Date(),
+      action: 'RESULTS_RECORDED',
+      performedBy:
+        new Types.ObjectId(technicianId),
+      notes:
+        'Laboratory results entered into the LIS.',
+    });
+
+    await order.save();
+
+    return this.populateOrder(order);
+  }
+
+  /* =========================================================
+     VERIFY RESULTS
+  ========================================================= */
+
+  static async verifyResults(
+    hospitalId: string,
+    orderId: string,
+    verifierId: string
+  ): Promise<ILabOrderDocument> {
+    const order =
+      await this.getOrderById(
+        hospitalId,
+        orderId
+      );
+
+    if (!order.results.length) {
+      const error = new Error(
+        'Results must be recorded before verification.'
+      ) as Error & {
+        statusCode?: number;
+      };
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const now = new Date();
+
+    order.status =
+      LabOrderStatus.VERIFIED;
+
+    order.verifierId =
+      new Types.ObjectId(verifierId);
+
+    order.verifiedAt = now;
+
+    order.authorizationHistory.push({
+      level:
+        AuthorizationLevel.VERIFIER,
+      authorizedBy:
+        new Types.ObjectId(verifierId),
+      authorizedAt: now,
+      notes:
+        'Results verified successfully.',
+    });
+
+    order.chainOfCustody.push({
+      timestamp: now,
+      action: 'RESULTS_VERIFIED',
+      performedBy:
+        new Types.ObjectId(verifierId),
+      notes:
+        'Results passed verification.',
+    });
+
+    await order.save();
+
+    return this.populateOrder(order);
+  }
+
+  /* =========================================================
+     AUTHORIZE / RELEASE RESULTS
+  ========================================================= */
+
+  static async authorizeResults(
+    hospitalId: string,
+    orderId: string,
+    authorizerId: string
+  ): Promise<ILabOrderDocument> {
+    const order =
+      await this.getOrderById(
+        hospitalId,
+        orderId
+      );
+
+    if (
+      order.status !==
+        LabOrderStatus.VERIFIED &&
+      order.status !==
+        LabOrderStatus.RESULTS_RECORDED
+    ) {
+      const error = new Error(
+        'Results must be recorded or verified before authorization.'
+      ) as Error & {
+        statusCode?: number;
+      };
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const now = new Date();
+
+    order.status =
+      LabOrderStatus.COMPLETED;
+
+    order.authorizedAt = now;
+
+    order.completedAt = now;
+
+    order.authorizationHistory.push({
+      level:
+        AuthorizationLevel.SENIOR_SCIENTIST,
+      authorizedBy:
+        new Types.ObjectId(authorizerId),
+      authorizedAt: now,
+      notes:
+        'Results authorized and released.',
+    });
+
+    order.chainOfCustody.push({
+      timestamp: now,
+      action:
+        'RESULTS_AUTHORIZED_AND_RELEASED',
+      performedBy:
+        new Types.ObjectId(authorizerId),
+      notes:
+        'Final laboratory results released.',
+    });
+
+    await order.save();
+
+    return this.populateOrder(order);
+  }
+
+  /* =========================================================
+     AMEND RESULTS
+  ========================================================= */
+
+  static async amendResults(
+    hospitalId: string,
+    orderId: string,
+    amendedBy: string,
+    dto: AmendResultsDTO
+  ): Promise<ILabOrderDocument> {
+    const order =
+      await this.getOrderById(
+        hospitalId,
+        orderId
+      );
+
+    if (!dto.reason?.trim()) {
+      const error = new Error(
+        'An amendment reason is required.'
+      ) as Error & {
+        statusCode?: number;
+      };
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const previousResults =
+      order.results.map((result) => ({
+        parameterName:
+          result.parameterName,
+        value: result.value,
+        unit: result.unit,
+        referenceRange:
+          result.referenceRange,
+        ageSexSpecificRange:
+          result.ageSexSpecificRange,
+        flag: result.flag,
+        previousValue:
+          result.previousValue,
+        deltaPercentage:
+          result.deltaPercentage,
+        entryMethod:
+          result.entryMethod,
+        analyzerName:
+          result.analyzerName,
+        analyzerResultId:
+          result.analyzerResultId,
+        isRepeat:
+          result.isRepeat,
+        repeatReason:
+          result.repeatReason,
+        dilutionFactor:
+          result.dilutionFactor,
+      }));
+
+    order.version += 1;
+
+    order.results =
+      dto.results.map((result) => ({
+        ...result,
+        entryMethod:
+          result.entryMethod ||
+          EntryMethod.MANUAL,
+      }));
+
+    order.amendmentHistory.push({
+      amendedBy:
+        new Types.ObjectId(amendedBy),
+      amendedAt: new Date(),
+      reason: dto.reason,
+      previousResults,
+      newResults:
+        dto.results,
+      version: order.version,
+    });
+
+    order.status =
+      LabOrderStatus.RESULTS_RECORDED;
+
+    if (dto.notes) {
+      order.notes = dto.notes;
+    }
+
+    order.chainOfCustody.push({
+      timestamp: new Date(),
+      action: 'RESULTS_AMENDED',
+      performedBy:
+        new Types.ObjectId(amendedBy),
+      notes:
+        `Version ${order.version}: ${dto.reason}`,
+    });
+
+    await order.save();
+
+    return this.populateOrder(order);
+  }
+
+  /* =========================================================
+     REPEAT TEST
+  ========================================================= */
+
+  static async repeatTest(
+    hospitalId: string,
+    orderId: string,
+    technicianId: string,
+    dto: RepeatTestDTO
+  ): Promise<ILabOrderDocument> {
+    const order =
+      await this.getOrderById(
+        hospitalId,
+        orderId
+      );
+
+    const now = new Date();
+
+    order.repeatTests.push({
+      repeatedAt: now,
+      repeatedBy:
+        new Types.ObjectId(technicianId),
+      reason: dto.reason,
+      parameterNames:
+        dto.parameterNames || [],
+      dilutionFactor:
+        dto.dilutionFactor,
+      notes: dto.notes,
+    });
+
+    order.status =
+      LabOrderStatus.IN_PROGRESS;
+
+    order.chainOfCustody.push({
+      timestamp: now,
+      action: 'TEST_REPEAT_REQUESTED',
+      performedBy:
+        new Types.ObjectId(technicianId),
+      notes: dto.reason,
+    });
+
+    await order.save();
+
+    return this.populateOrder(order);
   }
 }

@@ -1,15 +1,21 @@
 import { Document, Types } from 'mongoose';
 
-// Enums for Workflows & Departments
+/* =========================================================
+   ENUMS
+========================================================= */
+
 export enum LabOrderStatus {
   PENDING = 'PENDING',
   SAMPLE_SCHEDULED = 'SAMPLE_SCHEDULED',
   SAMPLE_COLLECTED = 'SAMPLE_COLLECTED',
   SPECIMEN_RECEIVED = 'SPECIMEN_RECEIVED',
   IN_PROGRESS = 'IN_PROGRESS',
-  SAMPLE_REJECTED = 'SAMPLE_REJECTED',
+  RESULTS_RECORDED = 'RESULTS_RECORDED',
   VERIFIED = 'VERIFIED',
+  AUTHORIZED = 'AUTHORIZED',
   COMPLETED = 'COMPLETED',
+  SAMPLE_REJECTED = 'SAMPLE_REJECTED',
+  RECOLLECTION_REQUIRED = 'RECOLLECTION_REQUIRED',
   CANCELLED = 'CANCELLED',
 }
 
@@ -45,15 +51,39 @@ export enum SpecimenQuality {
   LIPEMIC = 'LIPEMIC',
   CLOTTED = 'CLOTTED',
   INSUFFICIENT_VOLUME = 'INSUFFICIENT_VOLUME',
+  CONTAMINATED = 'CONTAMINATED',
+  LEAKING = 'LEAKING',
+  IMPROPERLY_LABELED = 'IMPROPERLY_LABELED',
+  DELAYED_TRANSPORT = 'DELAYED_TRANSPORT',
 }
 
 export enum EntryMethod {
   MANUAL = 'MANUAL',
   ANALYZER_AUTOMATED = 'ANALYZER_AUTOMATED',
   AI_PATTERN = 'AI_PATTERN',
+  IMPORTED = 'IMPORTED',
 }
 
-// Sub-Interfaces
+export enum SampleRoutingStatus {
+  PENDING = 'PENDING',
+  ROUTED = 'ROUTED',
+  RECEIVED_BY_SECTION = 'RECEIVED_BY_SECTION',
+  IN_ANALYSIS = 'IN_ANALYSIS',
+  COMPLETED = 'COMPLETED',
+}
+
+export enum AuthorizationLevel {
+  TECHNICIAN = 'TECHNICIAN',
+  VERIFIER = 'VERIFIER',
+  SENIOR_SCIENTIST = 'SENIOR_SCIENTIST',
+  PATHOLOGIST = 'PATHOLOGIST',
+  LAB_DIRECTOR = 'LAB_DIRECTOR',
+}
+
+/* =========================================================
+   SUB-INTERFACES
+========================================================= */
+
 export interface ILabResultField {
   parameterName: string;
   value: string;
@@ -64,6 +94,11 @@ export interface ILabResultField {
   previousValue?: string;
   deltaPercentage?: number;
   entryMethod: EntryMethod;
+  analyzerName?: string;
+  analyzerResultId?: string;
+  isRepeat?: boolean;
+  repeatReason?: string;
+  dilutionFactor?: number;
 }
 
 export interface IChainOfCustody {
@@ -80,53 +115,137 @@ export interface ISpecimenRejection {
   quality: SpecimenQuality;
   rejectionDate: Date;
   recollectionRequested: boolean;
+  recollectionScheduledAt?: Date;
 }
+
+export interface ISampleRouting {
+  department: LabDepartment;
+  routedAt?: Date;
+  routedBy?: Types.ObjectId;
+  receivedAt?: Date;
+  receivedBy?: Types.ObjectId;
+  location?: string;
+  status: SampleRoutingStatus;
+}
+
+export interface IResultAuthorization {
+  level: AuthorizationLevel;
+  authorizedBy: Types.ObjectId;
+  authorizedAt: Date;
+  notes?: string;
+}
+
+export interface IResultAmendment {
+  amendedBy: Types.ObjectId;
+  amendedAt: Date;
+  reason: string;
+  previousResults: ILabResultField[];
+  newResults: ILabResultField[];
+  version: number;
+}
+
+export interface IRepeatTest {
+  repeatedAt: Date;
+  repeatedBy: Types.ObjectId;
+  reason: string;
+  parameterNames?: string[];
+  dilutionFactor?: number;
+  notes?: string;
+}
+
+export interface IReflexTest {
+  triggeredAt: Date;
+  triggeredBy?: Types.ObjectId;
+  ruleName: string;
+  reason: string;
+  triggeredTestName: string;
+  triggeredOrderId?: Types.ObjectId;
+}
+
+export interface ITestPanelItem {
+  parameterName: string;
+  unit?: string;
+  referenceRange?: string;
+  criticalLow?: number;
+  criticalHigh?: number;
+}
+
+export interface ILabReferenceRange {
+  parameterName: string;
+  unit?: string;
+  minimumAge?: number;
+  maximumAge?: number;
+  sex?: 'MALE' | 'FEMALE' | 'ANY';
+  lowerValue?: number;
+  upperValue?: number;
+  displayRange: string;
+}
+
+/* =========================================================
+   LAB ORDER
+========================================================= */
 
 export interface ILabOrder {
   hospitalId: Types.ObjectId;
   patientId: Types.ObjectId;
   doctorId: Types.ObjectId;
   consultationId?: Types.ObjectId;
+
   accessionNumber: string;
   barcodeUrl?: string;
-  
-  // Test Catalog & Routing
+  qrCodeUrl?: string;
+
   testCatalogId?: Types.ObjectId;
   testName: string;
   testCategory: LabDepartment;
+  panelName?: string;
+
   priority: LabPriority;
   isStat: boolean;
+
   status: LabOrderStatus;
-  
-  // Phlebotomy & Specimen Management
+
   sampleType: string;
   sampleCollectionScheduledAt?: Date;
   sampleCollectedAt?: Date;
   phlebotomistId?: Types.ObjectId;
+
   specimenQuality?: SpecimenQuality;
+  specimenReceivedAt?: Date;
+
+  sampleRouting?: ISampleRouting;
+
   chainOfCustody: IChainOfCustody[];
   rejectionInfo?: ISpecimenRejection;
-  
-  // Results & Multi-Level Verification
+
   results: ILabResultField[];
+
   labTechnicianId?: Types.ObjectId;
   verifierId?: Types.ObjectId;
-  verifiedAt?: Date;
-  completedAt?: Date;
-  version: number;
-  amendmentHistory?: Array<{
-    amendedBy: Types.ObjectId;
-    amendedAt: Date;
-    reason: string;
-    previousResults: ILabResultField[];
-  }>;
 
-  // AI & Advanced Intelligence
-  aiPatternAlerts?: string[];
+  verifiedAt?: Date;
+  authorizedAt?: Date;
+  completedAt?: Date;
+
+  authorizationHistory: IResultAuthorization[];
+
+  version: number;
+  amendmentHistory: IResultAmendment[];
+
+  repeatTests: IRepeatTest[];
+  reflexTests: IReflexTest[];
+
+  aiPatternAlerts: string[];
   deltaCheckTriggered: boolean;
   criticalResultNotified: boolean;
+
+  duplicateTestDetected: boolean;
+  duplicateTestMessage?: string;
+
   predictedTatMinutes?: number;
+
   notes?: string;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -135,62 +254,122 @@ export interface ILabOrderDocument extends ILabOrder, Document {
   _id: Types.ObjectId;
 }
 
-// Test Catalog Interfaces
+/* =========================================================
+   TEST CATALOG
+========================================================= */
+
+export interface ITestCatalogParameter {
+  name: string;
+  unit?: string;
+  defaultRefRange?: string;
+  criticalLow?: number;
+  criticalHigh?: number;
+}
+
 export interface ITestCatalog {
   hospitalId: Types.ObjectId;
+
   code: string;
   name: string;
+
   department: LabDepartment;
   sampleType: string;
-  parameters: Array<{
-    name: string;
-    unit: string;
-    defaultRefRange: string;
-    criticalLow?: number;
-    criticalHigh?: number;
-  }>;
+
+  parameters: ITestCatalogParameter[];
+
+  isPanel: boolean;
+  panelTests?: string[];
+
+  estimatedTatMinutes?: number;
+
   isActive: boolean;
+
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ITestCatalogDocument extends ITestCatalog, Document {
   _id: Types.ObjectId;
 }
 
-// DTOs
+/* =========================================================
+   DTOs
+========================================================= */
+
 export interface CreateLabOrderDTO {
   patientId: string;
+
   doctorId?: string;
   consultationId?: string;
+
   testCatalogId?: string;
+
   testName: string;
   testCategory: LabDepartment;
+  panelName?: string;
+
   priority?: LabPriority;
   isStat?: boolean;
+
   sampleType: string;
+
   sampleCollectionScheduledAt?: string;
+
   notes?: string;
 }
 
 export interface RecordLabResultsDTO {
   results: ILabResultField[];
+
   specimenQuality?: SpecimenQuality;
+
   notes?: string;
 }
 
 export interface RejectSampleDTO {
   reason: string;
+
   quality: SpecimenQuality;
+
   requestRecollection: boolean;
+
+  recollectionScheduledAt?: string;
+}
+
+export interface AmendResultsDTO {
+  results: ILabResultField[];
+
+  reason: string;
+
+  notes?: string;
+}
+
+export interface RepeatTestDTO {
+  reason: string;
+
+  parameterNames?: string[];
+
+  dilutionFactor?: number;
+
+  notes?: string;
+}
+
+export interface AccessionSpecimenDTO {
+  location?: string;
 }
 
 export interface GetLabOrdersQueryDTO {
   patientId?: string;
   doctorId?: string;
+
   status?: LabOrderStatus;
   priority?: LabPriority;
   department?: LabDepartment;
+
   accessionNumber?: string;
-  isStat?: boolean;
+
+  isStat?: boolean | string;
+
   page?: string;
   limit?: string;
 }
