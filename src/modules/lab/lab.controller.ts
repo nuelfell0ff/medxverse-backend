@@ -3,6 +3,7 @@ import { LabService } from './lab.service.js';
 import {
   CreateLabOrderDTO,
   RecordLabResultsDTO,
+  RejectSampleDTO,
   GetLabOrdersQueryDTO,
 } from './lab.types.js';
 
@@ -22,11 +23,7 @@ export class LabController {
       const hospitalId = user.hospitalId || user.id;
 
       const order = await LabService.createOrder(hospitalId, user.id, authReq.body);
-
-      res.status(201).json({
-        success: true,
-        data: order,
-      });
+      res.status(201).json({ success: true, data: order });
     } catch (error: unknown) {
       next(error);
     }
@@ -39,11 +36,7 @@ export class LabController {
       const hospitalId = user.hospitalId || user.id;
 
       const result = await LabService.getOrders(hospitalId, authReq.query);
-
-      res.status(200).json({
-        success: true,
-        ...result,
-      });
+      res.status(200).json({ success: true, ...result });
     } catch (error: unknown) {
       next(error);
     }
@@ -54,14 +47,9 @@ export class LabController {
       const authReq = req as unknown as AuthenticatedRequest<{ id: string }>;
       const user = authReq.user!;
       const hospitalId = user.hospitalId || user.id;
-      const orderId = req.params.id;
 
-      const order = await LabService.getOrderById(hospitalId, orderId);
-
-      res.status(200).json({
-        success: true,
-        data: order,
-      });
+      const order = await LabService.getOrderById(hospitalId, req.params.id);
+      res.status(200).json({ success: true, data: order });
     } catch (error: unknown) {
       next(error);
     }
@@ -72,41 +60,66 @@ export class LabController {
       const authReq = req as unknown as AuthenticatedRequest<{ id: string }>;
       const user = authReq.user!;
       const hospitalId = user.hospitalId || user.id;
-      const orderId = req.params.id;
 
-      const updated = await LabService.markSampleCollected(hospitalId, orderId, user.id);
-
-      res.status(200).json({
-        success: true,
-        data: updated,
-      });
+      const updated = await LabService.collectSample(hospitalId, req.params.id, user.id);
+      res.status(200).json({ success: true, data: updated });
     } catch (error: unknown) {
       next(error);
     }
   }
 
-  static async submitResults(
-    req: Request<{ id: string }, any, RecordLabResultsDTO>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
+  static async accessionSpecimen(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as unknown as AuthenticatedRequest<{ id: string }, any, { location: string }>;
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
+
+      const updated = await LabService.accessionSpecimen(
+        hospitalId,
+        req.params.id,
+        user.id,
+        authReq.body.location || 'Central Processing'
+      );
+      res.status(200).json({ success: true, data: updated });
+    } catch (error: unknown) {
+      next(error);
+    }
+  }
+
+  static async rejectSample(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as unknown as AuthenticatedRequest<{ id: string }, any, RejectSampleDTO>;
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
+
+      const updated = await LabService.rejectSample(hospitalId, req.params.id, user.id, authReq.body);
+      res.status(200).json({ success: true, data: updated });
+    } catch (error: unknown) {
+      next(error);
+    }
+  }
+
+  static async submitResults(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as unknown as AuthenticatedRequest<{ id: string }, any, RecordLabResultsDTO>;
       const user = authReq.user!;
       const hospitalId = user.hospitalId || user.id;
-      const orderId = req.params.id;
 
-      const updated = await LabService.recordResults(
-        hospitalId,
-        orderId,
-        user.id,
-        authReq.body
-      );
+      const updated = await LabService.recordResults(hospitalId, req.params.id, user.id, authReq.body);
+      res.status(200).json({ success: true, data: updated });
+    } catch (error: unknown) {
+      next(error);
+    }
+  }
 
-      res.status(200).json({
-        success: true,
-        data: updated,
-      });
+  static async verifyResults(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as unknown as AuthenticatedRequest<{ id: string }>;
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
+
+      const updated = await LabService.verifyResults(hospitalId, req.params.id, user.id);
+      res.status(200).json({ success: true, data: updated });
     } catch (error: unknown) {
       next(error);
     }
