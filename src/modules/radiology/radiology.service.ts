@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 
 import { RadiologyOrderModel } from './radiology.model.js';
+import { Staff } from '../staff/staff.model.js';
 
 import {
   AssignRadiologyStaffInput,
@@ -40,6 +41,46 @@ export class RadiologyService {
     const random = Math.random().toString(36).substring(2, 7).toUpperCase();
 
     return `RAD-${timestamp}-${random}`;
+  }
+
+  /**
+   * Return a radiology order with every staff reference resolved.
+   *
+   * `assignments.userId` stores Staff document IDs, while `assignedBy`
+   * stores Account IDs for the authenticated user who made the assignment.
+   * Keeping this population in one place prevents the details page from
+   * receiving only raw ObjectIds after assignment/removal.
+   */
+  private populateOrder(orderId: string, hospitalId: string) {
+    return RadiologyOrderModel.findOne({
+      _id: orderId,
+      hospitalId,
+    })
+      .populate(
+        'patientId',
+        'firstName lastName mrn gender dateOfBirth phone email'
+      )
+      .populate(
+        'orderingDoctorId',
+        'firstName lastName role department'
+      )
+      .populate(
+        'radiologistId',
+        'firstName lastName role department'
+      )
+      .populate(
+        'assignments.userId',
+        'firstName middleName lastName title role jobTitle professionalTitle staffId contact employment'
+      )
+      .populate(
+        'assignments.assignedBy',
+        'firstName lastName role'
+      )
+      .populate(
+        'scheduling.modalityId',
+        'name modality manufacturer model status'
+      )
+      .exec();
   }
 
   public async createOrder(
@@ -227,7 +268,7 @@ export class RadiologyService {
         )
         .populate(
           'assignments.userId',
-          'firstName lastName role department'
+          'firstName middleName lastName title role jobTitle professionalTitle staffId contact employment'
         )
         .populate(
           'assignments.assignedBy',
@@ -259,35 +300,7 @@ export class RadiologyService {
     this.assertObjectId(orderId, 'order ID');
     this.assertObjectId(hospitalId, 'hospital ID');
 
-    return RadiologyOrderModel.findOne({
-      _id: orderId,
-      hospitalId,
-    })
-      .populate(
-        'patientId',
-        'firstName lastName mrn gender dateOfBirth phone email'
-      )
-      .populate(
-        'orderingDoctorId',
-        'firstName lastName role department'
-      )
-      .populate(
-        'radiologistId',
-        'firstName lastName role department'
-      )
-      .populate(
-        'assignments.userId',
-        'firstName lastName role department'
-      )
-      .populate(
-        'assignments.assignedBy',
-        'firstName lastName role'
-      )
-      .populate(
-        'scheduling.modalityId',
-        'name modality manufacturer model status'
-      )
-      .exec();
+    return this.populateOrder(orderId, hospitalId);
   }
 
   public async updateOrder(
@@ -432,6 +445,21 @@ export class RadiologyService {
       return null;
     }
 
+    // The assigned person is a Staff record, not an Account record.
+    // Validate tenant ownership so a staff member from another hospital
+    // can never be attached to this radiology order.
+    const staffMember = await Staff.findOne({
+      _id: input.userId,
+      hospitalId,
+      isActive: true,
+    })
+      .select('_id firstName middleName lastName role jobTitle professionalTitle staffId')
+      .lean();
+
+    if (!staffMember) {
+      throw new Error('Staff member not found or inactive in this hospital');
+    }
+
     const assignments = order.assignments || [];
 
     const existingIndex = assignments.findIndex(
@@ -452,17 +480,16 @@ export class RadiologyService {
       });
     }
 
-    if (input.role === AssignmentRole.RADIOLOGIST) {
-      order.radiologistId = new Types.ObjectId(
-        input.userId
-      );
-    }
+    // `radiologistId` is an Account reference used by the reporting
+    // workflow, while assignment.userId is a Staff reference. Do not copy
+    // a Staff ObjectId into the Account-backed radiologistId field.
 
     order.assignments = assignments;
 
     await order.save();
 
-    return order;
+    // Re-fetch and populate Staff references before returning to the client.
+    return this.populateOrder(orderId, hospitalId);
   }
 
   public async removeStaff(
@@ -501,7 +528,8 @@ export class RadiologyService {
 
     await order.save();
 
-    return order;
+    // Re-fetch and populate Staff references before returning to the client.
+    return this.populateOrder(orderId, hospitalId);
   }
 
   public async updateExaminationStatus(

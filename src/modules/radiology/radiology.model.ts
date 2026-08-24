@@ -128,9 +128,10 @@ const AssignmentSchema = new Schema(
     userId: {
       type: Schema.Types.ObjectId,
 
-      // IMPORTANT:
-      // Your application uses Account rather than User.
-      ref: 'Account',
+      // Radiology staff records are stored in the Staff collection.
+      // The frontend assigns Staff document IDs, so this must populate
+      // against Staff rather than Account.
+      ref: 'Staff',
 
       required: true,
     },

@@ -86,11 +86,28 @@ export enum AIStudyPriority {
   CRITICAL = 'CRITICAL',
 }
 
+export interface RadiologyAssignedStaff {
+  _id: Types.ObjectId;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  title?: string;
+  role?: string;
+  jobTitle?: string;
+  professionalTitle?: string;
+  staffId?: string;
+}
+
 export interface RadiologyAssignment {
-  userId: Types.ObjectId;
+  userId: Types.ObjectId | RadiologyAssignedStaff;
   role: AssignmentRole;
   assignedAt: Date;
-  assignedBy?: Types.ObjectId;
+  assignedBy?: Types.ObjectId | {
+    _id: Types.ObjectId;
+    firstName?: string;
+    lastName?: string;
+    role?: string;
+  };
   notes?: string;
 }
 
