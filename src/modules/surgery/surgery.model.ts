@@ -16,7 +16,7 @@ const SurgicalTeamMemberSchema = new Schema(
   {
     userId: {
       type: Schema.Types.ObjectId,
-      ref: 'Staff',
+      ref: 'Account',
       required: true,
       index: true,
     },
@@ -538,6 +538,8 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
 
     priority: {
       type: Number,
+      min: 0,
+      max: 1000,
       default: 0,
     },
 
@@ -559,7 +561,11 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
       required: true,
     },
 
-    estimatedDurationMinutes: Number,
+    estimatedDurationMinutes: {
+      type: Number,
+      min: 1,
+      max: 1440,
+    },
 
     actualStartTime: Date,
     actualEndTime: Date,
@@ -568,6 +574,14 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
       type: String,
       enum: Object.values(AnesthesiaType),
       required: true,
+    },
+
+    // Kept for compatibility with the current surgery detail page.
+    // The structured/canonical field remains anesthesiaRecord.notes.
+    anesthesiaNotes: {
+      type: String,
+      trim: true,
+      maxlength: 10000,
     },
 
     surgicalTeam: {
@@ -618,12 +632,6 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
     intraopDocs: IntraopDocumentationSchema,
 
     recoveryAssessment: RecoveryAssessmentSchema,
-
-    postOpNotes: {
-      type: String,
-      trim: true,
-      maxlength: 10000,
-    },
 
     cancellationReason: String,
 

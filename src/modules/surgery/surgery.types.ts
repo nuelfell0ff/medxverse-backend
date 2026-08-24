@@ -346,6 +346,8 @@ export interface ISurgeryCase {
   actualEndTime?: Date;
 
   anesthesiaType: AnesthesiaType;
+  /** Backward-compatible UI field; canonical notes also live in anesthesiaRecord.notes. */
+  anesthesiaNotes?: string;
 
   surgicalTeam: ISurgicalTeamMember[];
 
@@ -481,6 +483,9 @@ export interface AddVitalsLogInput {
 }
 
 export interface UpdateIntraopInput {
+  /** Optional preparation data sent by the surgery detail UI. These are persisted at case level. */
+  equipmentChecklist?: IEquipmentItem[];
+  consumablesUsed?: IConsumableItem[];
   procedureStartTime?: Date;
   procedureEndTime?: Date;
   incisionTime?: Date;
@@ -520,6 +525,8 @@ export interface UpdateAnesthesiaInput {
 }
 
 export interface CompleteSurgeryInput {
+  /** UI-compatible anesthesia notes; mirrored to anesthesiaRecord.notes. */
+  anesthesiaNotes?: string;
   postOpNotes?: string;
   intraopDocs?: UpdateIntraopInput;
 }
