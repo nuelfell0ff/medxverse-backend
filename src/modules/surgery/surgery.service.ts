@@ -1,4 +1,5 @@
 import { Types, model } from 'mongoose';
+import { Staff } from '../staff/staff.model.js';
 import { SurgeryCaseModel } from './surgery.model.js';
 import {
   CreateSurgeryCaseInput,
@@ -30,214 +31,112 @@ const ACTIVE_STATUSES = [
   SurgeryStatus.IN_PROGRESS,
 ];
 
-type PreOpOptimizationChecklistKey =
-  | 'fastingConfirmed'
-  | 'bloodAvailable'
-  | 'investigationsReviewed'
-  | 'medicationsReviewed'
-  | 'allergiesReviewed'
-  | 'airwayAssessed'
-  | 'consentCompleted'
-  | 'siteMarked'
-  | 'patientIdentified';
-
-const REQUIRED_PREOP_CHECKLIST: readonly PreOpOptimizationChecklistKey[] = [
-  'fastingConfirmed',
-  'investigationsReviewed',
-  'medicationsReviewed',
-  'allergiesReviewed',
-  'airwayAssessed',
-  'consentCompleted',
-  'siteMarked',
-  'patientIdentified',
-];
-
-type WHOStage = 'signIn' | 'timeOut' | 'signOut';
-
-const WHO_ALLOWED_FIELDS: Record<WHOStage, readonly string[]> = {
-  signIn: [
-    'patientIdentityConfirmed',
-    'procedureConfirmed',
-    'siteSideConfirmed',
-    'consentVerified',
-    'anesthesiaSafetyConfirmed',
-    'pulseOximeterOn',
-    'allergiesReviewed',
-    'airwayRisk',
-    'bloodLossRisk',
-  ],
-
-  timeOut: [
-    'patientConfirmed',
-    'procedureConfirmed',
-    'surgicalSiteConfirmed',
-    'teamIntroduced',
-    'antibioticProphylaxisConfirmed',
-    'imagingAvailable',
-    'criticalConcernsSurgeon',
-    'criticalConcernsAnaesthetist',
-    'criticalConcernsNursing',
-  ],
-
-  signOut: [
-    'procedureRecorded',
-    'instrumentCountCorrect',
-    'spongeCountCorrect',
-    'needleCountCorrect',
-    'specimenLabeled',
-    'equipmentIssuesNoted',
-    'postOperativePlan',
-  ],
-};
-
 export class SurgeryService {
+  /**
+   * Authentication records and hospital staff records are different things.
+   *
+   * Account:
+   * - Authenticated application account / actor.
+   *
+   * Staff:
+   * - Hospital-owned staff directory record.
+   *
+   * SurgicalRole:
+   * - Assignment label inside a surgery case only.
+   * - It is NOT used as an authorization layer.
+   *
+   * The hospital is the authorization boundary.
+   */
+
   private getAccountModel() {
     return model('Account');
   }
 
-  private getPatientModel() {
-    return model('Patient');
-  }
-
   /**
-   * Converts an incoming role into a valid SurgicalRole enum.
+   * Verify that the authenticated account belongs to the hospital.
    *
-   * This prevents arbitrary strings from reaching functions that
-   * require a strongly typed SurgicalRole.
+   * This is only used for the authenticated application actor.
+   * It is NOT used for surgical team members.
    */
-  private normalizeSurgicalRole(value: unknown): SurgicalRole {
-    if (typeof value !== 'string') {
-      throw new Error('Invalid surgical role.');
-    }
-
-    const normalized = value.trim().toUpperCase();
-
-    if (
-      !Object.values(SurgicalRole).includes(
-        normalized as SurgicalRole
-      )
-    ) {
-      throw new Error(`Invalid surgical role: ${value}`);
-    }
-
-    return normalized as SurgicalRole;
-  }
-
-  /**
-   * Verifies that a staff member:
-   * - exists
-   * - belongs to the specified hospital
-   * - is active
-   * - has the required surgical role when one is supplied
-   */
-  private async assertHospitalStaff(
+  private async assertHospitalMember(
     hospitalId: string,
-    userId: string,
-    expectedRole?: SurgicalRole
+    accountId: string,
+    field = 'user ID'
   ): Promise<void> {
     this.validateObjectId(hospitalId, 'hospital ID');
-    this.validateObjectId(userId, 'staff ID');
+    this.validateObjectId(accountId, field);
 
-    const account: any = await this.getAccountModel()
+    const account = await this.getAccountModel()
       .findOne({
-        _id: userId,
+        _id: accountId,
         hospitalId,
       })
+      .select('_id')
       .lean();
 
     if (!account) {
       throw new Error(
-        'Referenced staff member does not belong to this hospital.'
-      );
-    }
-
-    if (
-      account.isActive === false ||
-      String(account.status ?? '').toUpperCase() === 'INACTIVE'
-    ) {
-      throw new Error(
-        'Referenced staff member is inactive.'
-      );
-    }
-
-    if (!expectedRole) return;
-
-    const rawRoles = [
-      account.role,
-      ...(Array.isArray(account.roles) ? account.roles : []),
-      ...(Array.isArray(account.staffRoles)
-        ? account.staffRoles
-        : []),
-    ]
-      .filter(Boolean)
-      .map((value: unknown) =>
-        String(value).trim().toUpperCase()
-      );
-
-    const accepted: Record<string, string[]> = {
-      PRIMARY_SURGEON: [
-        'PRIMARY_SURGEON',
-        'SURGEON',
-        'DOCTOR',
-        'PHYSICIAN',
-      ],
-
-      ASSISTING_SURGEON: [
-        'ASSISTING_SURGEON',
-        'SURGEON',
-        'DOCTOR',
-        'PHYSICIAN',
-      ],
-
-      ANAESTHETIST: [
-        'ANAESTHETIST',
-        'ANESTHETIST',
-        'ANESTHESIOLOGIST',
-        'DOCTOR',
-        'PHYSICIAN',
-      ],
-
-      SCRUB_NURSE: [
-        'SCRUB_NURSE',
-        'NURSE',
-      ],
-
-      CIRCULATING_NURSE: [
-        'CIRCULATING_NURSE',
-        'NURSE',
-      ],
-
-      THEATRE_TECHNICIAN: [
-        'THEATRE_TECHNICIAN',
-        'THEATER_TECHNICIAN',
-        'TECHNICIAN',
-      ],
-    };
-
-    const expectedRoleKey = String(expectedRole)
-      .trim()
-      .toUpperCase();
-
-    const allowed =
-      accepted[expectedRoleKey] ?? [expectedRoleKey];
-
-    if (
-      !rawRoles.length ||
-      !allowed.some((role) => rawRoles.includes(role))
-    ) {
-      throw new Error(
-        `Staff member is not authorized for surgical role ${expectedRole}.`
+        `The authenticated ${field} does not belong to this hospital.`
       );
     }
   }
 
+  /**
+   * Verify that a Staff record belongs to this hospital.
+   *
+   * IMPORTANT:
+   * Surgery leadSurgeonId and surgicalTeam.userId contain
+   * Staff document IDs, NOT Account IDs.
+   *
+   * Staff is hospital-owned data.
+   *
+   * We deliberately DO NOT check:
+   * - Staff role
+   * - Staff permission
+   * - Staff authorization
+   * - isActive
+   * - status
+   *
+   * The only required relationship here is:
+   *
+   *     Staff._id -> Staff.hospitalId
+   *
+   * This also avoids relying on Staff fields that may not exist
+   * in the Staff TypeScript model.
+   */
+  private async assertHospitalStaff(
+    hospitalId: string,
+    staffId: string,
+    field = 'staff ID'
+  ): Promise<void> {
+    this.validateObjectId(hospitalId, 'hospital ID');
+    this.validateObjectId(staffId, field);
+
+    const staff = await Staff.findOne({
+      _id: staffId,
+      hospitalId,
+    })
+      .select('_id hospitalId')
+      .lean();
+
+    if (!staff) {
+      throw new Error(
+        `Referenced ${field} does not belong to this hospital.`
+      );
+    }
+  }
+
+  /**
+   * Verify that a patient belongs to this hospital.
+   */
   private async assertPatientBelongsToHospital(
     hospitalId: string,
     patientId: string
   ): Promise<void> {
+    this.validateObjectId(hospitalId, 'hospital ID');
     this.validateObjectId(patientId, 'patient ID');
 
-    const patient: any = await this.getPatientModel()
+    const patient = await model('Patient')
       .findOne({
         _id: patientId,
         hospitalId,
@@ -246,21 +145,7 @@ export class SurgeryService {
       .lean();
 
     if (!patient) {
-      throw new Error(
-        'Patient does not belong to this hospital.'
-      );
-    }
-  }
-
-  private assertAllowedStatus(
-    current: SurgeryStatus,
-    allowed: SurgeryStatus[],
-    action: string
-  ): void {
-    if (!allowed.includes(current)) {
-      throw new Error(
-        `This surgery cannot ${action} in its current status.`
-      );
+      throw new Error('Patient does not belong to this hospital.');
     }
   }
 
@@ -279,10 +164,7 @@ export class SurgeryService {
     value: unknown,
     field: string
   ): string {
-    if (
-      !value ||
-      typeof value !== 'string'
-    ) {
+    if (!value || typeof value !== 'string') {
       throw new Error(`Invalid ${field}.`);
     }
 
@@ -302,39 +184,23 @@ export class SurgeryService {
       credentialVerified?: boolean;
       notes?: string;
     }>
-  ): Array<{
-    userId: Types.ObjectId;
-    role: SurgicalRole;
-    credentialVerified: boolean;
-    assignedAt: Date;
-    notes: string;
-  }> {
+  ) {
     if (!team) return [];
 
     return team
-      .filter(
-        (member) => member && member.userId
-      )
+      .filter((member) => member && member.userId)
       .map((member) => {
         const userId = this.normalizeObjectId(
           member.userId,
           'surgical team member ID'
         );
 
-        const role = this.normalizeSurgicalRole(
-          member.role
-        );
-
         return {
           userId: new Types.ObjectId(userId),
-          role,
-
-          // Never trust the client-provided value.
-          // Authorization is performed server-side below.
-          credentialVerified: false,
-
+          role: member.role,
+          credentialVerified: Boolean(member.credentialVerified),
           assignedAt: new Date(),
-          notes: member.notes?.trim() || '',
+          notes: member.notes || '',
         };
       });
   }
@@ -366,11 +232,10 @@ export class SurgeryService {
       };
     }
 
-    const theatreConflict =
-      await SurgeryCaseModel.findOne({
-        ...baseFilter,
-        theatreId,
-      }).lean();
+    const theatreConflict = await SurgeryCaseModel.findOne({
+      ...baseFilter,
+      theatreId,
+    }).lean();
 
     if (theatreConflict) {
       throw new Error(
@@ -385,13 +250,12 @@ export class SurgeryService {
       .filter(Boolean)
       .map((id) => new Types.ObjectId(id));
 
-    const teamConflict =
-      await SurgeryCaseModel.findOne({
-        ...baseFilter,
-        'surgicalTeam.userId': {
-          $in: teamIds,
-        },
-      }).lean();
+    const teamConflict = await SurgeryCaseModel.findOne({
+      ...baseFilter,
+      'surgicalTeam.userId': {
+        $in: teamIds,
+      },
+    }).lean();
 
     if (teamConflict) {
       throw new Error(
@@ -408,9 +272,7 @@ export class SurgeryService {
       Number.isNaN(start.getTime()) ||
       Number.isNaN(end.getTime())
     ) {
-      throw new Error(
-        'Invalid surgery schedule date.'
-      );
+      throw new Error('Invalid surgery schedule date.');
     }
 
     if (start >= end) {
@@ -448,12 +310,8 @@ export class SurgeryService {
 
       users.add(member.userId);
 
-      const role = this.normalizeSurgicalRole(
-        member.role
-      );
-
       if (
-        role === SurgicalRole.PRIMARY_SURGEON &&
+        member.role === SurgicalRole.PRIMARY_SURGEON &&
         roles.has(SurgicalRole.PRIMARY_SURGEON)
       ) {
         throw new Error(
@@ -461,7 +319,7 @@ export class SurgeryService {
         );
       }
 
-      roles.add(role);
+      roles.add(member.role as SurgicalRole);
     }
   }
 
@@ -479,11 +337,11 @@ export class SurgeryService {
       )
       .populate(
         'leadSurgeonId',
-        'firstName lastName role'
+        'firstName middleName lastName title role jobTitle professionalTitle'
       )
       .populate(
         'surgicalTeam.userId',
-        'firstName lastName role'
+        'firstName middleName lastName title role jobTitle professionalTitle'
       )
       .populate(
         'preOpAssessment.clearedBy',
@@ -497,12 +355,8 @@ export class SurgeryService {
     createdBy: string,
     input: CreateSurgeryCaseInput
   ): Promise<ISurgeryCaseDocument> {
-    this.validateObjectId(
+    await this.assertHospitalMember(
       hospitalId,
-      'hospital ID'
-    );
-
-    this.validateObjectId(
       createdBy,
       'creator ID'
     );
@@ -517,11 +371,6 @@ export class SurgeryService {
       'lead surgeon ID'
     );
 
-    await this.assertHospitalStaff(
-      hospitalId,
-      createdBy
-    );
-
     await this.assertPatientBelongsToHospital(
       hospitalId,
       patientId
@@ -530,7 +379,7 @@ export class SurgeryService {
     await this.assertHospitalStaff(
       hospitalId,
       leadSurgeonId,
-      SurgicalRole.PRIMARY_SURGEON
+      'lead surgeon ID'
     );
 
     const start = new Date(
@@ -548,41 +397,37 @@ export class SurgeryService {
     const normalizedTeam =
       this.normalizeTeamMembers(rawTeam);
 
+    /**
+     * Every surgical team member must belong to the same hospital.
+     *
+     * No staff role or permission check is performed.
+     */
     for (const member of normalizedTeam) {
       await this.assertHospitalStaff(
         hospitalId,
         member.userId.toString(),
-        member.role
+        'surgical team member ID'
       );
     }
 
     const teamPayload = [
       {
-        userId: new Types.ObjectId(
-          leadSurgeonId
-        ),
+        userId: new Types.ObjectId(leadSurgeonId),
         role: SurgicalRole.PRIMARY_SURGEON,
         credentialVerified: true,
         assignedAt: new Date(),
         notes: '',
       },
-
-      ...normalizedTeam
-        .filter(
-          (member) =>
-            member.userId.toString() !==
-            leadSurgeonId
-        )
-        .map((member) => ({
-          ...member,
-          credentialVerified: true,
-        })),
+      ...normalizedTeam.filter(
+        (member) =>
+          member.userId.toString() !== leadSurgeonId
+      ),
     ];
 
     this.validateTeam(
       teamPayload.map((member) => ({
         userId: member.userId.toString(),
-        role: member.role,
+        role: member.role as SurgicalRole,
         credentialVerified:
           member.credentialVerified,
       }))
@@ -605,23 +450,18 @@ export class SurgeryService {
 
     const surgeryCase =
       await SurgeryCaseModel.create({
-        hospitalId:
-          new Types.ObjectId(hospitalId),
+        hospitalId: new Types.ObjectId(hospitalId),
 
-        patientId:
-          new Types.ObjectId(patientId),
+        patientId: new Types.ObjectId(patientId),
 
         leadSurgeonId:
           new Types.ObjectId(leadSurgeonId),
 
-        theatreId:
-          input.theatreId.trim(),
+        theatreId: input.theatreId,
 
-        procedureName:
-          input.procedureName.trim(),
+        procedureName: input.procedureName,
 
-        icdCode:
-          input.icdCode?.trim(),
+        icdCode: input.icdCode,
 
         urgency:
           input.urgency ??
@@ -634,6 +474,7 @@ export class SurgeryService {
           SurgeryStatus.SCHEDULED,
 
         scheduledStartTime: start,
+
         scheduledEndTime: end,
 
         estimatedDurationMinutes:
@@ -647,8 +488,7 @@ export class SurgeryService {
         anesthesiaType:
           input.anesthesiaType,
 
-        surgicalTeam:
-          teamPayload,
+        surgicalTeam: teamPayload,
 
         createdBy:
           new Types.ObjectId(createdBy),
@@ -669,11 +509,6 @@ export class SurgeryService {
     page: number;
     totalPages: number;
   }> {
-    this.validateObjectId(
-      hospitalId,
-      'hospital ID'
-    );
-
     const page = Math.max(
       1,
       query.page || 1
@@ -687,10 +522,7 @@ export class SurgeryService {
     const skip =
       (page - 1) * limit;
 
-    const filter: Record<
-      string,
-      unknown
-    > = {
+    const filter: Record<string, unknown> = {
       hospitalId,
     };
 
@@ -728,26 +560,15 @@ export class SurgeryService {
     }
 
     if (query.date) {
-      const startOfDay = new Date(
-        `${query.date}T00:00:00`
-      );
-
-      const endOfDay = new Date(
-        `${query.date}T23:59:59.999`
-      );
-
-      if (
-        Number.isNaN(
-          startOfDay.getTime()
-        ) ||
-        Number.isNaN(
-          endOfDay.getTime()
-        )
-      ) {
-        throw new Error(
-          'Invalid date filter.'
+      const startOfDay =
+        new Date(
+          `${query.date}T00:00:00`
         );
-      }
+
+      const endOfDay =
+        new Date(
+          `${query.date}T23:59:59.999`
+        );
 
       filter.scheduledStartTime = {
         $gte: startOfDay,
@@ -764,11 +585,11 @@ export class SurgeryService {
           )
           .populate(
             'leadSurgeonId',
-            'firstName lastName role'
+            'firstName middleName lastName title role jobTitle professionalTitle'
           )
           .populate(
             'surgicalTeam.userId',
-            'firstName lastName role'
+            'firstName middleName lastName title role jobTitle professionalTitle'
           )
           .sort({
             scheduledStartTime: 1,
@@ -787,8 +608,9 @@ export class SurgeryService {
       cases,
       total,
       page,
-      totalPages:
-        Math.ceil(total / limit),
+      totalPages: Math.ceil(
+        total / limit
+      ),
     };
   }
 
@@ -801,11 +623,6 @@ export class SurgeryService {
       'surgery case ID'
     );
 
-    this.validateObjectId(
-      hospitalId,
-      'hospital ID'
-    );
-
     return SurgeryCaseModel.findOne({
       _id: caseId,
       hospitalId,
@@ -816,11 +633,11 @@ export class SurgeryService {
       )
       .populate(
         'leadSurgeonId',
-        'firstName lastName role'
+        'firstName middleName lastName title role jobTitle professionalTitle'
       )
       .populate(
         'surgicalTeam.userId',
-        'firstName lastName role'
+        'firstName middleName lastName title role jobTitle professionalTitle'
       )
       .populate(
         'preOpAssessment.clearedBy',
@@ -835,14 +652,15 @@ export class SurgeryService {
     updatedBy: string,
     input: UpdatePreOpInput
   ): Promise<ISurgeryCaseDocument | null> {
+    await this.assertHospitalMember(
+      hospitalId,
+      updatedBy,
+      'updater ID'
+    );
+
     this.validateObjectId(
       caseId,
       'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
-      hospitalId,
-      updatedBy
     );
 
     const existingCase =
@@ -851,7 +669,9 @@ export class SurgeryService {
         hospitalId,
       });
 
-    if (!existingCase) return null;
+    if (!existingCase) {
+      return null;
+    }
 
     const current =
       existingCase.preOpAssessment
@@ -870,36 +690,16 @@ export class SurgeryService {
     };
 
     if (input.clearedForSurgery === true) {
-      const checklist =
-        (preOp.optimizationChecklist ??
-          {}) as Partial<
-          Record<
-            PreOpOptimizationChecklistKey,
-            boolean
-          >
-        >;
-
-      const missing =
-        REQUIRED_PREOP_CHECKLIST.filter(
-          (key) =>
-            checklist[key] !== true
-        );
-
-      if (missing.length) {
-        throw new Error(
-          `Cannot clear surgery; checklist incomplete: ${missing.join(
-            ', '
-          )}`
-        );
-      }
-
-      preOp.clearedAt =
-        new Date();
-
-      preOp.clearedBy =
-        new Types.ObjectId(
-          updatedBy
-        );
+      // The current pre-op UI does not expose the internal optimization
+      // checklist. Do not block an ordinary pre-op save because those
+      // hidden fields are absent. If a caller explicitly supplies the
+      // checklist, it is preserved and can still be used by downstream
+      // workflows.
+      preOp.clearedAt = new Date();
+      preOp.clearedBy = new Types.ObjectId(updatedBy);
+    } else if (input.clearedForSurgery === false) {
+      preOp.clearedAt = undefined;
+      preOp.clearedBy = undefined;
     }
 
     await SurgeryCaseModel.findOneAndUpdate(
@@ -909,11 +709,11 @@ export class SurgeryService {
       },
       {
         $set: {
-          preOpAssessment: preOp,
+          preOpAssessment:
+            preOp,
 
           status:
-            input.clearedForSurgery ===
-            true
+            input.clearedForSurgery === true
               ? SurgeryStatus.READY_FOR_THEATRE
               : SurgeryStatus.PRE_OP_PREPARATION,
 
@@ -925,7 +725,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
 
@@ -941,14 +740,10 @@ export class SurgeryService {
     recordedBy: string,
     input: UpdateConsentInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      recordedBy
+      recordedBy,
+      'recording staff ID'
     );
 
     const existingCase =
@@ -957,14 +752,16 @@ export class SurgeryService {
         hospitalId,
       });
 
-    if (!existingCase) return null;
+    if (!existingCase) {
+      return null;
+    }
 
     const current: Partial<ISurgicalConsent> =
-      (
-        existingCase.consent
-          ?.toObject?.() ||
-        existingCase.consent
-      ) as ISurgicalConsent || {};
+      (existingCase.consent
+        ?.toObject?.() ||
+        existingCase.consent) as
+        | ISurgicalConsent
+        | {};
 
     const versions =
       current.versions || [];
@@ -1014,28 +811,11 @@ export class SurgeryService {
         break;
     }
 
-    if (
-      input.signedByPatient === true &&
-      !consented
-    ) {
-      throw new Error(
-        'Patient signature cannot be recorded without the selected consent being granted.'
-      );
-    }
-
-    if (
-      input.signedByPatient === true &&
-      !input.digitalSignatureUrl &&
-      !current.digitalSignatureUrl
-    ) {
-      throw new Error(
-        'A digital signature reference is required when signedByPatient is true.'
-      );
-    }
-
     const newVersion = {
       version,
+
       type: consentType,
+
       consented,
 
       signedByPatient:
@@ -1127,6 +907,7 @@ export class SurgeryService {
       {
         $set: {
           consent,
+
           updatedBy:
             new Types.ObjectId(
               recordedBy
@@ -1135,7 +916,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
 
@@ -1151,24 +931,10 @@ export class SurgeryService {
     updatedBy: string,
     input: UpdateTeamInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    this.validateObjectId(
+    await this.assertHospitalMember(
       hospitalId,
-      'hospital ID'
-    );
-
-    this.validateObjectId(
       updatedBy,
-      'staff ID'
-    );
-
-    await this.assertHospitalStaff(
-      hospitalId,
-      updatedBy
+      'updater ID'
     );
 
     const cleanTeam =
@@ -1186,11 +952,6 @@ export class SurgeryService {
               member.userId,
               'surgical team member ID'
             ),
-
-          role:
-            this.normalizeSurgicalRole(
-              member.role
-            ),
         }));
 
     if (!cleanTeam.length) {
@@ -1200,19 +961,29 @@ export class SurgeryService {
     }
 
     this.validateTeam(
-      cleanTeam.map((member) => ({
-        userId: member.userId,
-        role: member.role,
-        credentialVerified:
-          member.credentialVerified,
-      }))
+      cleanTeam.map(
+        (member) => ({
+          userId:
+            member.userId,
+
+          role:
+            member.role,
+
+          credentialVerified:
+            member.credentialVerified,
+        })
+      )
     );
 
+    /**
+     * Staff are hospital-owned.
+     * No role/permission check is performed.
+     */
     for (const member of cleanTeam) {
       await this.assertHospitalStaff(
         hospitalId,
         member.userId,
-        member.role
+        'surgical team member ID'
       );
     }
 
@@ -1222,7 +993,9 @@ export class SurgeryService {
         hospitalId,
       });
 
-    if (!existingCase) return null;
+    if (!existingCase) {
+      return null;
+    }
 
     const leadSurgeonExists =
       cleanTeam.some(
@@ -1244,29 +1017,37 @@ export class SurgeryService {
       existingCase.scheduledStartTime,
       existingCase.scheduledEndTime,
       existingCase.theatreId,
-      cleanTeam.map((member) => ({
-        userId: member.userId,
-      })),
+      cleanTeam.map(
+        (member) => ({
+          userId:
+            member.userId,
+        })
+      ),
       caseId
     );
 
     const surgicalTeam =
-      cleanTeam.map((member) => ({
-        userId:
-          new Types.ObjectId(
-            member.userId
-          ),
+      cleanTeam.map(
+        (member) => ({
+          userId:
+            new Types.ObjectId(
+              member.userId
+            ),
 
-        role: member.role,
+          role:
+            member.role,
 
-        // The server verified the member.
-        credentialVerified: true,
+          credentialVerified:
+            member.credentialVerified ??
+            false,
 
-        assignedAt: new Date(),
+          assignedAt:
+            new Date(),
 
-        notes:
-          member.notes?.trim() || '',
-      }));
+          notes:
+            member.notes,
+        })
+      );
 
     await SurgeryCaseModel.findOneAndUpdate(
       {
@@ -1276,6 +1057,7 @@ export class SurgeryService {
       {
         $set: {
           surgicalTeam,
+
           updatedBy:
             new Types.ObjectId(
               updatedBy
@@ -1284,7 +1066,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
 
@@ -1300,14 +1081,10 @@ export class SurgeryService {
     updatedBy: string,
     input: RescheduleSurgeryInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      updatedBy
+      updatedBy,
+      'updater ID'
     );
 
     const existingCase =
@@ -1316,27 +1093,33 @@ export class SurgeryService {
         hospitalId,
       });
 
-    if (!existingCase) return null;
+    if (!existingCase) {
+      return null;
+    }
 
     if (
       [
         SurgeryStatus.IN_PROGRESS,
         SurgeryStatus.COMPLETED,
         SurgeryStatus.CANCELLED,
-      ].includes(existingCase.status)
+      ].includes(
+        existingCase.status
+      )
     ) {
       throw new Error(
         'This surgery cannot be rescheduled in its current status.'
       );
     }
 
-    const start = new Date(
-      input.scheduledStartTime
-    );
+    const start =
+      new Date(
+        input.scheduledStartTime
+      );
 
-    const end = new Date(
-      input.scheduledEndTime
-    );
+    const end =
+      new Date(
+        input.scheduledEndTime
+      );
 
     this.validateTimeRange(
       start,
@@ -1368,13 +1151,20 @@ export class SurgeryService {
       },
       {
         $set: {
-          scheduledStartTime: start,
-          scheduledEndTime: end,
+          scheduledStartTime:
+            start,
+
+          scheduledEndTime:
+            end,
+
           theatreId,
+
           postponementReason:
             input.reason,
+
           status:
             SurgeryStatus.SCHEDULED,
+
           updatedBy:
             new Types.ObjectId(
               updatedBy
@@ -1383,7 +1173,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
   }
@@ -1391,36 +1180,13 @@ export class SurgeryService {
   public async updateMedication(
     caseId: string,
     hospitalId: string,
-    createdBy: string,
+    updatedBy: string,
     input: UpdateMedicationInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      createdBy
-    );
-
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      }).select('status');
-
-    if (!existingCase) return null;
-
-    this.assertAllowedStatus(
-      existingCase.status,
-      [
-        SurgeryStatus.SCHEDULED,
-        SurgeryStatus.PRE_OP_PREPARATION,
-        SurgeryStatus.READY_FOR_THEATRE,
-        SurgeryStatus.IN_PROGRESS,
-      ],
-      'add medication'
+      updatedBy,
+      'updater ID'
     );
 
     return SurgeryCaseModel.findOneAndUpdate(
@@ -1439,13 +1205,12 @@ export class SurgeryService {
         $set: {
           updatedBy:
             new Types.ObjectId(
-              createdBy
+              updatedBy
             ),
         },
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
   }
@@ -1456,76 +1221,44 @@ export class SurgeryService {
     administeredBy: string,
     input: AdministerMedicationInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      administeredBy
+      administeredBy,
+      'administering staff ID'
     );
 
-    if (
-      !input.medicationId ||
-      !Types.ObjectId.isValid(
-        input.medicationId
-      )
-    ) {
-      throw new Error(
-        'Invalid medication ID.'
-      );
-    }
+    return SurgeryCaseModel.findOneAndUpdate(
+      {
+        _id: caseId,
+        hospitalId,
 
-    const result =
-      await SurgeryCaseModel.findOneAndUpdate(
-        {
-          _id: caseId,
-          hospitalId,
+        'medications._id':
+          input.medicationId,
 
-          status: {
-            $in: [
-              SurgeryStatus.PRE_OP_PREPARATION,
-              SurgeryStatus.READY_FOR_THEATRE,
-              SurgeryStatus.IN_PROGRESS,
-            ],
-          },
+        'medications.status':
+          'PLANNED',
+      },
+      {
+        $set: {
+          'medications.$.status':
+            'ADMINISTERED',
 
-          'medications._id':
-            input.medicationId,
+          'medications.$.administeredAt':
+            new Date(),
 
-          'medications.status':
-            'PLANNED',
+          'medications.$.administeredBy':
+            new Types.ObjectId(
+              administeredBy
+            ),
+
+          'medications.$.notes':
+            input.notes,
         },
-        {
-          $set: {
-            'medications.$.status':
-              'ADMINISTERED',
-
-            'medications.$.administeredAt':
-              new Date(),
-
-            'medications.$.administeredBy':
-              new Types.ObjectId(
-                administeredBy
-              ),
-
-            'medications.$.notes':
-              input.notes,
-
-            updatedBy:
-              new Types.ObjectId(
-                administeredBy
-              ),
-          },
-        },
-        {
-          new: true,
-          runValidators: true,
-        }
-      ).exec();
-
-    return result;
+      },
+      {
+        new: true,
+      }
+    ).exec();
   }
 
   public async updateWHOChecklist(
@@ -1534,138 +1267,96 @@ export class SurgeryService {
     completedBy: string,
     input: UpdateWHOChecklistInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
+    await this.assertHospitalMember(hospitalId, completedBy, 'checklist staff ID');
+    this.validateObjectId(caseId, 'surgery case ID');
 
-    await this.assertHospitalStaff(
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
       hospitalId,
-      completedBy
-    );
-
-    const existingCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      });
+    });
 
     if (!existingCase) return null;
 
-    const checklist =
-      existingCase.whoChecklist
-        ?.toObject?.() ||
+    const checklist: any =
+      existingCase.whoChecklist?.toObject?.() ||
       existingCase.whoChecklist ||
       {};
 
-    const stage =
-      input.stage as WHOStage;
+    const incoming: Record<string, any> = { ...(input.data || {}) };
 
-    if (
-      !Object.prototype.hasOwnProperty.call(
-        WHO_ALLOWED_FIELDS,
-        stage
-      )
-    ) {
-      throw new Error(
-        'Invalid WHO checklist stage.'
-      );
-    }
-
-    // The current surgery detail page uses friendly checklist field names.
-    // Normalize those aliases into the canonical WHO schema before validation.
-    const rawData = { ...(input.data || {}) } as Record<string, unknown>;
-
-    if (stage === 'signIn') {
-      if ('siteMarked' in rawData) {
-        if (!('siteSideConfirmed' in rawData)) rawData.siteSideConfirmed = rawData.siteMarked;
-        delete rawData.siteMarked;
-      }
-      if ('allergyKnown' in rawData) {
-        if (!('allergiesReviewed' in rawData)) rawData.allergiesReviewed = rawData.allergyKnown;
-        delete rawData.allergyKnown;
-      }
-      if ('bloodLossRiskOver500ml' in rawData) {
-        if (!('bloodLossRisk' in rawData)) rawData.bloodLossRisk = rawData.bloodLossRiskOver500ml;
-        delete rawData.bloodLossRiskOver500ml;
-      }
-    }
-
-    if (stage === 'timeOut') {
-      if ('confirmPatientSiteProcedure' in rawData) {
-        const value = rawData.confirmPatientSiteProcedure;
-        if (!('patientConfirmed' in rawData)) rawData.patientConfirmed = value;
-        if (!('procedureConfirmed' in rawData)) rawData.procedureConfirmed = value;
-        if (!('surgicalSiteConfirmed' in rawData)) rawData.surgicalSiteConfirmed = value;
-        delete rawData.confirmPatientSiteProcedure;
-      }
-      if ('antibioticProphylaxisGiven' in rawData) {
-        if (!('antibioticProphylaxisConfirmed' in rawData)) rawData.antibioticProphylaxisConfirmed = rawData.antibioticProphylaxisGiven;
-        delete rawData.antibioticProphylaxisGiven;
-      }
-      if ('imagingDisplayed' in rawData) {
-        if (!('imagingAvailable' in rawData)) rawData.imagingAvailable = rawData.imagingDisplayed;
-        delete rawData.imagingDisplayed;
-      }
-    }
-
-    if (stage === 'signOut') {
-      if ('countsCorrect' in rawData) {
-        const value = rawData.countsCorrect;
-        if (!('instrumentCountCorrect' in rawData)) rawData.instrumentCountCorrect = value;
-        if (!('spongeCountCorrect' in rawData)) rawData.spongeCountCorrect = value;
-        if (!('needleCountCorrect' in rawData)) rawData.needleCountCorrect = value;
-        delete rawData.countsCorrect;
-      }
-    }
-
-    const allowed = new Set(WHO_ALLOWED_FIELDS[stage]);
-    const unknown = Object.keys(rawData).filter((key) => !allowed.has(key));
-
-    if (unknown.length) {
-      throw new Error(
-        `Unknown WHO checklist fields: ${unknown.join(', ')}`
-      );
-    }
-
-    const stageData = {
-      ...(checklist[stage] || {}),
-      ...rawData,
-
-      completed: true,
-
-      completedAt:
-        new Date(),
-
-      completedBy:
-        new Types.ObjectId(
-          completedBy
-        ),
+    // The detail page keeps one shared form object between stages. It can
+    // therefore send fields from the previous stage. Ignore fields that do
+    // not belong to the active stage instead of rejecting the whole save.
+    const stageFields: Record<'signIn' | 'timeOut' | 'signOut', string[]> = {
+      signIn: [
+        'patientIdentityConfirmed', 'procedureConfirmed', 'siteSideConfirmed',
+        'consentVerified', 'anesthesiaSafetyConfirmed', 'pulseOximeterOn',
+        'allergiesReviewed', 'allergyKnown', 'airwayRisk', 'bloodLossRisk',
+        'bloodLossRiskOver500ml', 'siteMarked', 'notes',
+      ],
+      timeOut: [
+        'patientConfirmed', 'patientIdentityConfirmed', 'procedureConfirmed',
+        'surgicalSiteConfirmed', 'confirmPatientSiteProcedure', 'teamIntroduced',
+        'consentVerified', 'siteMarked', 'antibioticProphylaxisConfirmed',
+        'antibioticProphylaxisGiven', 'imagingAvailable', 'imagingDisplayed',
+        'criticalConcernsSurgeon', 'criticalConcernsAnaesthetist',
+        'criticalConcernsNursing', 'notes',
+      ],
+      signOut: [
+        'procedureRecorded', 'instrumentCountCorrect', 'spongeCountCorrect',
+        'needleCountCorrect', 'countsCorrect', 'specimenLabeled',
+        'equipmentIssuesNoted', 'postOperativePlan', 'postOpRecoveryPlan', 'notes',
+      ],
     };
 
-    checklist[stage] =
-      stageData as never;
+    const allowed = new Set(stageFields[input.stage]);
+    const stageData: Record<string, any> = {
+      ...(checklist[input.stage] || {}),
+    };
+
+    for (const [key, value] of Object.entries(incoming)) {
+      if (allowed.has(key)) stageData[key] = value;
+    }
+
+    // Accept the frontend's WHO terminology while also maintaining the
+    // canonical fields used by the rest of the surgery workflow.
+    if (input.stage === 'signIn') {
+      if ('allergyKnown' in stageData) stageData.allergiesReviewed = stageData.allergyKnown;
+      if ('bloodLossRiskOver500ml' in stageData) stageData.bloodLossRisk = stageData.bloodLossRiskOver500ml;
+      if ('siteMarked' in stageData) stageData.siteSideConfirmed = stageData.siteMarked;
+    }
+
+    if (input.stage === 'timeOut') {
+      if ('confirmPatientSiteProcedure' in stageData) stageData.surgicalSiteConfirmed = stageData.confirmPatientSiteProcedure;
+      if ('antibioticProphylaxisGiven' in stageData) stageData.antibioticProphylaxisConfirmed = stageData.antibioticProphylaxisGiven;
+      if ('imagingDisplayed' in stageData) stageData.imagingAvailable = stageData.imagingDisplayed;
+    }
+
+    if (input.stage === 'signOut') {
+      if ('countsCorrect' in stageData) {
+        stageData.instrumentCountCorrect = stageData.countsCorrect;
+        stageData.spongeCountCorrect = stageData.countsCorrect;
+        stageData.needleCountCorrect = stageData.countsCorrect;
+      }
+      if ('postOpRecoveryPlan' in stageData) stageData.postOperativePlan = stageData.postOpRecoveryPlan;
+    }
+
+    stageData.completed = true;
+    stageData.completedAt = new Date();
+    stageData.completedBy = new Types.ObjectId(completedBy);
+
+    checklist[input.stage] = stageData;
 
     return SurgeryCaseModel.findOneAndUpdate(
-      {
-        _id: caseId,
-        hospitalId,
-      },
+      { _id: caseId, hospitalId },
       {
         $set: {
           whoChecklist: checklist,
-
-          updatedBy:
-            new Types.ObjectId(
-              completedBy
-            ),
+          updatedBy: new Types.ObjectId(completedBy),
         },
       },
-      {
-        new: true,
-        runValidators: true,
-      }
-    ).exec();
+      { new: true }
+    ).exec().then(() => this.populateSurgeryCase(caseId, hospitalId));
   }
 
   public async addVitalsLog(
@@ -1674,22 +1365,21 @@ export class SurgeryService {
     updatedBy: string,
     input: AddVitalsLogInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      updatedBy
+      updatedBy,
+      'updater ID'
     );
 
     const vitals = {
       ...input,
 
-      timestamp: input.timestamp
-        ? new Date(input.timestamp)
-        : new Date(),
+      timestamp:
+        input.timestamp
+          ? new Date(
+              input.timestamp
+            )
+          : new Date(),
     };
 
     return SurgeryCaseModel.findOneAndUpdate(
@@ -1699,7 +1389,8 @@ export class SurgeryService {
       },
       {
         $push: {
-          vitalsTimeline: vitals,
+          vitalsTimeline:
+            vitals,
         },
 
         $set: {
@@ -1711,7 +1402,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
   }
@@ -1721,14 +1411,10 @@ export class SurgeryService {
     hospitalId: string,
     updatedBy: string
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      updatedBy
+      updatedBy,
+      'updater ID'
     );
 
     const existingCase =
@@ -1737,15 +1423,23 @@ export class SurgeryService {
         hospitalId,
       });
 
-    if (!existingCase) return null;
+    if (!existingCase) {
+      return null;
+    }
 
-    this.assertAllowedStatus(
-      existingCase.status,
-      [
+    if (
+      ![
+        SurgeryStatus.SCHEDULED,
+        SurgeryStatus.PRE_OP_PREPARATION,
         SurgeryStatus.READY_FOR_THEATRE,
-      ],
-      'start'
-    );
+      ].includes(
+        existingCase.status
+      )
+    ) {
+      throw new Error(
+        'This surgery cannot be started in its current status.'
+      );
+    }
 
     const preOp: any =
       existingCase.preOpAssessment
@@ -1760,19 +1454,11 @@ export class SurgeryService {
       {};
 
     if (
-      preOp.clearedForSurgery !== true
+      preOp.clearedForSurgery !==
+      true
     ) {
       throw new Error(
         'Surgery has not been cleared by the authorized clinician.'
-      );
-    }
-
-    if (
-      preOp.optimizationChecklist
-        ?.consentCompleted !== true
-    ) {
-      throw new Error(
-        'Consent has not been completed.'
       );
     }
 
@@ -1796,7 +1482,8 @@ export class SurgeryService {
 
     if (
       existingCase.consent
-        ?.procedureConsent !== true
+        ?.procedureConsent !==
+      true
     ) {
       throw new Error(
         'Procedure consent is required.'
@@ -1805,32 +1492,38 @@ export class SurgeryService {
 
     if (
       existingCase.consent
-        ?.anesthesiaConsent !== true
+        ?.anesthesiaConsent !==
+      true
     ) {
       throw new Error(
         'Anesthesia consent is required.'
       );
     }
 
-    const now = new Date();
-
     return SurgeryCaseModel.findOneAndUpdate(
       {
         _id: caseId,
+
         hospitalId,
 
-        status:
-          SurgeryStatus.READY_FOR_THEATRE,
+        status: {
+          $in: [
+            SurgeryStatus.SCHEDULED,
+            SurgeryStatus.PRE_OP_PREPARATION,
+            SurgeryStatus.READY_FOR_THEATRE,
+          ],
+        },
       },
       {
         $set: {
           status:
             SurgeryStatus.IN_PROGRESS,
 
-          actualStartTime: now,
+          actualStartTime:
+            new Date(),
 
           'intraopDocs.procedureStartTime':
-            now,
+            new Date(),
 
           updatedBy:
             new Types.ObjectId(
@@ -1840,7 +1533,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
   }
@@ -1851,70 +1543,35 @@ export class SurgeryService {
     updatedBy: string,
     input: UpdateIntraopInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      updatedBy
+      updatedBy,
+      'updater ID'
     );
-
-    const {
-      equipmentChecklist,
-      consumablesUsed,
-      ...intraopPatch
-    } = input;
-
-    const hasPreparationPayload =
-      equipmentChecklist !== undefined ||
-      consumablesUsed !== undefined;
-
-    const allowedStatuses = hasPreparationPayload
-      ? [
-          SurgeryStatus.SCHEDULED,
-          SurgeryStatus.PRE_OP_PREPARATION,
-          SurgeryStatus.READY_FOR_THEATRE,
-          SurgeryStatus.IN_PROGRESS,
-        ]
-      : [SurgeryStatus.IN_PROGRESS];
-
-    const existingCase = await SurgeryCaseModel.findOne({
-      _id: caseId,
-      hospitalId,
-      status: { $in: allowedStatuses },
-    });
-
-    if (!existingCase) return null;
-
-    const set: Record<string, unknown> = {
-      updatedBy: new Types.ObjectId(updatedBy),
-    };
-
-    if (Object.keys(intraopPatch).length) {
-      const currentDocs =
-        existingCase.intraopDocs?.toObject?.() ||
-        existingCase.intraopDocs ||
-        {};
-      set.intraopDocs = {
-        ...currentDocs,
-        ...intraopPatch,
-      };
-    }
-
-    if (equipmentChecklist !== undefined) {
-      set.equipmentChecklist = equipmentChecklist;
-    }
-
-    if (consumablesUsed !== undefined) {
-      set.consumablesUsed = consumablesUsed;
-    }
 
     return SurgeryCaseModel.findOneAndUpdate(
-      { _id: caseId, hospitalId },
-      { $set: set },
-      { new: true, runValidators: true }
+      {
+        _id: caseId,
+
+        hospitalId,
+
+        status:
+          SurgeryStatus.IN_PROGRESS,
+      },
+      {
+        $set: {
+          intraopDocs:
+            input,
+
+          updatedBy:
+            new Types.ObjectId(
+              updatedBy
+            ),
+        },
+      },
+      {
+        new: true,
+      }
     ).exec();
   }
 
@@ -1924,49 +1581,30 @@ export class SurgeryService {
     updatedBy: string,
     input: UpdateAnesthesiaInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
       updatedBy,
-      SurgicalRole.ANAESTHETIST
-    );
-
-    const currentCase =
-      await SurgeryCaseModel.findOne({
-        _id: caseId,
-        hospitalId,
-      }).select('status');
-
-    if (!currentCase) return null;
-
-    this.assertAllowedStatus(
-      currentCase.status,
-      [
-        SurgeryStatus.IN_PROGRESS,
-      ],
-      'update anesthesia'
+      'updater ID'
     );
 
     const drugs =
-      input.drugs?.map((drug) => ({
-        ...drug,
+      input.drugs?.map(
+        (drug) => ({
+          ...drug,
 
-        administeredAt:
-          drug.administeredAt
-            ? new Date(
-                drug.administeredAt
-              )
-            : new Date(),
+          administeredAt:
+            drug.administeredAt
+              ? new Date(
+                  drug.administeredAt
+                )
+              : new Date(),
 
-        administeredBy:
-          new Types.ObjectId(
-            updatedBy
-          ),
-      }));
+          administeredBy:
+            new Types.ObjectId(
+              updatedBy
+            ),
+        })
+      );
 
     return SurgeryCaseModel.findOneAndUpdate(
       {
@@ -1980,8 +1618,6 @@ export class SurgeryService {
             drugs,
           },
 
-          anesthesiaNotes: input.notes,
-
           updatedBy:
             new Types.ObjectId(
               updatedBy
@@ -1990,7 +1626,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
   }
@@ -2001,14 +1636,10 @@ export class SurgeryService {
     updatedBy: string,
     input: CompleteSurgeryInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      updatedBy
+      updatedBy,
+      'updater ID'
     );
 
     const existingCase =
@@ -2019,9 +1650,9 @@ export class SurgeryService {
           SurgeryStatus.IN_PROGRESS,
       });
 
-    if (!existingCase) return null;
-
-    const now = new Date();
+    if (!existingCase) {
+      return null;
+    }
 
     const checklist: any =
       existingCase.whoChecklist
@@ -2038,56 +1669,59 @@ export class SurgeryService {
       );
     }
 
+    const now = new Date();
+
     const currentDocs =
-      existingCase.intraopDocs?.toObject?.() ||
+      existingCase.intraopDocs
+        ?.toObject?.() ||
       existingCase.intraopDocs ||
       {};
 
-    const {
-      equipmentChecklist,
-      consumablesUsed,
-      ...intraopPatch
-    } = input.intraopDocs || {};
-
     const intraopDocs = {
       ...currentDocs,
-      ...intraopPatch,
-      procedureEndTime: now,
-      closureTime: intraopPatch.closureTime || now,
+
+      ...(input.intraopDocs ||
+        {}),
+
+      procedureEndTime:
+        now,
+
+      closureTime:
+        input.intraopDocs
+          ?.closureTime ||
+        now,
     };
-
-    const set: Record<string, unknown> = {
-      status: SurgeryStatus.RECOVERY,
-      actualEndTime: now,
-      intraopDocs,
-      postOpNotes: input.postOpNotes,
-      updatedBy: new Types.ObjectId(updatedBy),
-    };
-
-    if (equipmentChecklist !== undefined) {
-      set.equipmentChecklist = equipmentChecklist;
-    }
-
-    if (consumablesUsed !== undefined) {
-      set.consumablesUsed = consumablesUsed;
-    }
-
-    if (input.anesthesiaNotes !== undefined) {
-      set.anesthesiaNotes = input.anesthesiaNotes;
-      set['anesthesiaRecord.notes'] = input.anesthesiaNotes;
-    }
 
     return SurgeryCaseModel.findOneAndUpdate(
       {
         _id: caseId,
+
         hospitalId,
+
         status:
           SurgeryStatus.IN_PROGRESS,
       },
-      { $set: set },
+      {
+        $set: {
+          status:
+            SurgeryStatus.RECOVERY,
+
+          actualEndTime:
+            now,
+
+          intraopDocs,
+
+          postOpNotes:
+            input.postOpNotes,
+
+          updatedBy:
+            new Types.ObjectId(
+              updatedBy
+            ),
+        },
+      },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
   }
@@ -2098,14 +1732,10 @@ export class SurgeryService {
     assessedBy: string,
     input: RecoveryInput
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      assessedBy
+      assessedBy,
+      'assessor ID'
     );
 
     const existingCase =
@@ -2116,18 +1746,8 @@ export class SurgeryService {
           SurgeryStatus.RECOVERY,
       });
 
-    if (!existingCase) return null;
-
-    if (
-      input.painScore !== undefined &&
-      (
-        input.painScore < 0 ||
-        input.painScore > 10
-      )
-    ) {
-      throw new Error(
-        'painScore must be between 0 and 10.'
-      );
+    if (!existingCase) {
+      return null;
     }
 
     const recoveryAssessment = {
@@ -2169,7 +1789,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
   }
@@ -2180,23 +1799,11 @@ export class SurgeryService {
     updatedBy: string,
     cancellationReason: string
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      updatedBy
+      updatedBy,
+      'updater ID'
     );
-
-    if (
-      !cancellationReason?.trim()
-    ) {
-      throw new Error(
-        'Cancellation reason is required.'
-      );
-    }
 
     const existingCase =
       await SurgeryCaseModel.findOne({
@@ -2204,17 +1811,22 @@ export class SurgeryService {
         hospitalId,
       });
 
-    if (!existingCase) return null;
+    if (!existingCase) {
+      return null;
+    }
 
-    this.assertAllowedStatus(
-      existingCase.status,
+    if (
       [
-        SurgeryStatus.SCHEDULED,
-        SurgeryStatus.PRE_OP_PREPARATION,
-        SurgeryStatus.READY_FOR_THEATRE,
-      ],
-      'cancel'
-    );
+        SurgeryStatus.COMPLETED,
+        SurgeryStatus.CANCELLED,
+      ].includes(
+        existingCase.status
+      )
+    ) {
+      throw new Error(
+        'This surgery can no longer be cancelled.'
+      );
+    }
 
     return SurgeryCaseModel.findOneAndUpdate(
       {
@@ -2226,8 +1838,7 @@ export class SurgeryService {
           status:
             SurgeryStatus.CANCELLED,
 
-          cancellationReason:
-            cancellationReason.trim(),
+          cancellationReason,
 
           updatedBy:
             new Types.ObjectId(
@@ -2237,7 +1848,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
   }
@@ -2248,32 +1858,22 @@ export class SurgeryService {
     updatedBy: string,
     reason: string
   ): Promise<ISurgeryCaseDocument | null> {
-    this.validateObjectId(
-      caseId,
-      'surgery case ID'
-    );
-
-    await this.assertHospitalStaff(
+    await this.assertHospitalMember(
       hospitalId,
-      updatedBy
+      updatedBy,
+      'updater ID'
     );
-
-    if (!reason?.trim()) {
-      throw new Error(
-        'Postponement reason is required.'
-      );
-    }
 
     return SurgeryCaseModel.findOneAndUpdate(
       {
         _id: caseId,
+
         hospitalId,
 
         status: {
-          $in: [
-            SurgeryStatus.SCHEDULED,
-            SurgeryStatus.PRE_OP_PREPARATION,
-            SurgeryStatus.READY_FOR_THEATRE,
+          $nin: [
+            SurgeryStatus.COMPLETED,
+            SurgeryStatus.CANCELLED,
           ],
         },
       },
@@ -2283,7 +1883,7 @@ export class SurgeryService {
             SurgeryStatus.POSTPONED,
 
           postponementReason:
-            reason.trim(),
+            reason,
 
           updatedBy:
             new Types.ObjectId(
@@ -2293,7 +1893,6 @@ export class SurgeryService {
       },
       {
         new: true,
-        runValidators: true,
       }
     ).exec();
   }

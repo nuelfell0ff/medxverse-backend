@@ -215,8 +215,12 @@ export interface IWHOSignIn {
   anesthesiaSafetyConfirmed?: boolean;
   pulseOximeterOn?: boolean;
   allergiesReviewed?: boolean;
+  allergyKnown?: boolean;
   airwayRisk?: boolean;
   bloodLossRisk?: boolean;
+  bloodLossRiskOver500ml?: boolean;
+  siteMarked?: boolean;
+  notes?: string;
 }
 
 export interface IWHOTimeOut {
@@ -224,11 +228,17 @@ export interface IWHOTimeOut {
   completedAt?: Date;
   completedBy?: Types.ObjectId;
   patientConfirmed?: boolean;
+  patientIdentityConfirmed?: boolean;
   procedureConfirmed?: boolean;
   surgicalSiteConfirmed?: boolean;
+  confirmPatientSiteProcedure?: boolean;
+  consentVerified?: boolean;
+  siteMarked?: boolean;
   teamIntroduced?: boolean;
   antibioticProphylaxisConfirmed?: boolean;
+  antibioticProphylaxisGiven?: boolean;
   imagingAvailable?: boolean;
+  imagingDisplayed?: boolean;
   criticalConcernsSurgeon?: string;
   criticalConcernsAnaesthetist?: string;
   criticalConcernsNursing?: string;
@@ -245,6 +255,9 @@ export interface IWHOSignOut {
   specimenLabeled?: boolean;
   equipmentIssuesNoted?: string;
   postOperativePlan?: string;
+  postOpRecoveryPlan?: string;
+  countsCorrect?: boolean;
+  notes?: string;
 }
 
 export interface IWHOChecklist {
@@ -346,8 +359,6 @@ export interface ISurgeryCase {
   actualEndTime?: Date;
 
   anesthesiaType: AnesthesiaType;
-  /** Backward-compatible UI field; canonical notes also live in anesthesiaRecord.notes. */
-  anesthesiaNotes?: string;
 
   surgicalTeam: ISurgicalTeamMember[];
 
@@ -483,9 +494,6 @@ export interface AddVitalsLogInput {
 }
 
 export interface UpdateIntraopInput {
-  /** Optional preparation data sent by the surgery detail UI. These are persisted at case level. */
-  equipmentChecklist?: IEquipmentItem[];
-  consumablesUsed?: IConsumableItem[];
   procedureStartTime?: Date;
   procedureEndTime?: Date;
   incisionTime?: Date;
@@ -525,8 +533,6 @@ export interface UpdateAnesthesiaInput {
 }
 
 export interface CompleteSurgeryInput {
-  /** UI-compatible anesthesia notes; mirrored to anesthesiaRecord.notes. */
-  anesthesiaNotes?: string;
   postOpNotes?: string;
   intraopDocs?: UpdateIntraopInput;
 }
