@@ -1,42 +1,103 @@
 import { Router } from 'express';
+
 import { StaffController } from './staff.controller.js';
-import { protect, restrictTo } from '../../middlewares/auth.middleware.js';
+
+import {
+  protect,
+  restrictTo,
+} from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
-// Require authentication for all staff routes
+/**
+ * All staff endpoints require authentication.
+ */
 router.use(protect);
 
-// GET / - Read staff list (accessible to Hospital admins, Receptionists, Doctors, and Nurses for lookups)
-// POST / - Create staff (restricted to Hospital account admins)
+/**
+ * Staff dashboard.
+ *
+ * Must come before /:id.
+ */
+router.get(
+  '/dashboard',
+  restrictTo(
+    'HOSPITAL',
+    'ADMIN'
+  ),
+  StaffController.getDashboard
+);
+
+/**
+ * Credential expiry monitoring.
+ */
+router.get(
+  '/credentials/expiring',
+  restrictTo(
+    'HOSPITAL',
+    'ADMIN'
+  ),
+  StaffController.getExpiringCredentials
+);
+
+/**
+ * Staff directory/list.
+ *
+ * Healthcare workers can be visible to authorized
+ * clinical users for internal lookup.
+ */
 router
   .route('/')
   .get(
-    restrictTo('HOSPITAL', 'ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE'),
+    restrictTo(
+      'HOSPITAL',
+      'ADMIN',
+      'RECEPTIONIST',
+      'DOCTOR',
+      'NURSE'
+    ),
     StaffController.getStaff
   )
   .post(
-    restrictTo('HOSPITAL', 'ADMIN'),
+    restrictTo(
+      'HOSPITAL',
+      'ADMIN'
+    ),
     StaffController.createStaff
   );
 
-// GET /:id - Read single staff detail
-// PATCH /:id - Update staff details (restricted to Hospital admins)
+/**
+ * Single staff profile.
+ */
 router
   .route('/:id')
   .get(
-    restrictTo('HOSPITAL', 'ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE'),
+    restrictTo(
+      'HOSPITAL',
+      'ADMIN',
+      'RECEPTIONIST',
+      'DOCTOR',
+      'NURSE'
+    ),
     StaffController.getStaffById
   )
   .patch(
-    restrictTo('HOSPITAL', 'ADMIN'),
+    restrictTo(
+      'HOSPITAL',
+      'ADMIN'
+    ),
     StaffController.updateStaff
   );
 
-// Toggle active/inactive status (restricted to Hospital admins)
+/**
+ * Activate/deactivate staff.
+ */
 router.patch(
   '/:id/toggle-status',
-  restrictTo('HOSPITAL', 'ADMIN'),
+  restrictTo(
+    'HOSPITAL',
+    'ADMIN'
+  ),
   StaffController.toggleStaffStatus
 );
 

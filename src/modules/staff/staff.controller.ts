@@ -1,48 +1,125 @@
 import { Response } from 'express';
+
 import { AuthRequest } from '../../middlewares/auth.middleware.js';
+
 import { StaffService } from './staff.service.js';
-import { StaffRole } from './staff.types.js';
+
+import {
+  StaffCategory,
+  StaffClassification,
+  StaffRole,
+  StaffStatus,
+} from './staff.types.js';
 
 export class StaffController {
-  public static async createStaff(req: AuthRequest, res: Response): Promise<void> {
+  /**
+   * POST /
+   */
+  public static async createStaff(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
     try {
       const hospitalId = req.account?.accountId;
+
       if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
         return;
       }
 
-      const staff = await StaffService.createStaff(hospitalId, req.body);
+      const staff = await StaffService.createStaff(
+        hospitalId,
+        req.body
+      );
+
       res.status(201).json({
         success: true,
-        message: 'Staff member created successfully',
+        message: 'Healthcare worker created successfully',
         data: staff,
       });
     } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: error.message || 'Failed to create staff member',
+        message:
+          error.message ||
+          'Failed to create healthcare worker',
       });
     }
   }
 
-  public static async getStaff(req: AuthRequest, res: Response): Promise<void> {
+  /**
+   * GET /
+   */
+  public static async getStaff(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
     try {
       const hospitalId = req.account?.accountId;
+
       if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
         return;
       }
 
-      const { role, search, isActive } = req.query;
+      const {
+        role,
+        category,
+        classification,
+        departmentId,
+        unitId,
+        status,
+        search,
+        isActive,
+      } = req.query;
 
       const filters = {
-        role: role ? (role as StaffRole) : undefined,
-        search: search ? String(search) : undefined,
-        isActive: isActive !== undefined ? isActive === 'true' : undefined,
+        role: role
+          ? (String(role) as StaffRole)
+          : undefined,
+
+        category: category
+          ? (String(category) as StaffCategory)
+          : undefined,
+
+        classification: classification
+          ? (String(classification) as StaffClassification)
+          : undefined,
+
+        departmentId: departmentId
+          ? String(departmentId)
+          : undefined,
+
+        unitId: unitId
+          ? String(unitId)
+          : undefined,
+
+        status: status
+          ? (String(status) as StaffStatus)
+          : undefined,
+
+        search: search
+          ? String(search)
+          : undefined,
+
+        isActive:
+          isActive !== undefined
+            ? String(isActive) === 'true'
+            : undefined,
       };
 
-      const staff = await StaffService.getHospitalStaff(hospitalId, filters);
+      const staff =
+        await StaffService.getHospitalStaff(
+          hospitalId,
+          filters
+        );
+
       res.status(200).json({
         success: true,
         count: staff.length,
@@ -51,21 +128,119 @@ export class StaffController {
     } catch (error: any) {
       res.status(500).json({
         success: false,
-        message: error.message || 'Failed to fetch staff list',
+        message:
+          error.message ||
+          'Failed to fetch staff list',
       });
     }
   }
 
-  public static async getStaffById(req: AuthRequest, res: Response): Promise<void> {
+  /**
+   * GET /dashboard
+   */
+  public static async getDashboard(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
     try {
       const hospitalId = req.account?.accountId;
+
       if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
         return;
       }
 
-      const id = req.params.id as string;
-      const staff = await StaffService.getStaffById(id, hospitalId);
+      const dashboard =
+        await StaffService.getStaffDashboard(
+          hospitalId
+        );
+
+      res.status(200).json({
+        success: true,
+        data: dashboard,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        message:
+          error.message ||
+          'Failed to fetch staff dashboard',
+      });
+    }
+  }
+
+  /**
+   * GET /credentials/expiring
+   */
+  public static async getExpiringCredentials(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
+    try {
+      const hospitalId = req.account?.accountId;
+
+      if (!hospitalId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
+        return;
+      }
+
+      const days = req.query.days
+        ? Number(req.query.days)
+        : 30;
+
+      const credentials =
+        await StaffService.getExpiringCredentials(
+          hospitalId,
+          Number.isFinite(days) ? days : 30
+        );
+
+      res.status(200).json({
+        success: true,
+        count: credentials.length,
+        data: credentials,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        message:
+          error.message ||
+          'Failed to fetch expiring credentials',
+      });
+    }
+  }
+
+  /**
+   * GET /:id
+   */
+  public static async getStaffById(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
+    try {
+      const hospitalId = req.account?.accountId;
+
+      if (!hospitalId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
+        return;
+      }
+
+      const id = String(req.params.id);
+
+      const staff =
+        await StaffService.getStaffById(
+          id,
+          hospitalId
+        );
+
       res.status(200).json({
         success: true,
         data: staff,
@@ -73,53 +248,96 @@ export class StaffController {
     } catch (error: any) {
       res.status(404).json({
         success: false,
-        message: error.message || 'Staff member not found',
+        message:
+          error.message ||
+          'Staff member not found',
       });
     }
   }
 
-  public static async updateStaff(req: AuthRequest, res: Response): Promise<void> {
+  /**
+   * PATCH /:id
+   */
+  public static async updateStaff(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
     try {
       const hospitalId = req.account?.accountId;
+
       if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
         return;
       }
 
-      const id = req.params.id as string;
-      const staff = await StaffService.updateStaff(id, hospitalId, req.body);
+      const id = String(req.params.id);
+
+      const staff =
+        await StaffService.updateStaff(
+          id,
+          hospitalId,
+          req.body
+        );
+
       res.status(200).json({
         success: true,
-        message: 'Staff member updated successfully',
+        message: 'Healthcare worker updated successfully',
         data: staff,
       });
     } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: error.message || 'Failed to update staff member',
+        message:
+          error.message ||
+          'Failed to update healthcare worker',
       });
     }
   }
 
-  public static async toggleStaffStatus(req: AuthRequest, res: Response): Promise<void> {
+  /**
+   * PATCH /:id/toggle-status
+   */
+  public static async toggleStaffStatus(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
     try {
       const hospitalId = req.account?.accountId;
+
       if (!hospitalId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
         return;
       }
 
-      const id = req.params.id as string;
-      const staff = await StaffService.toggleStaffStatus(id, hospitalId);
+      const id = String(req.params.id);
+
+      const staff =
+        await StaffService.toggleStaffStatus(
+          id,
+          hospitalId
+        );
+
       res.status(200).json({
         success: true,
-        message: `Staff status updated to ${staff.isActive ? 'Active' : 'Inactive'}`,
+        message: `Staff status updated to ${
+          staff.isActive
+            ? 'Active'
+            : 'Inactive'
+        }`,
         data: staff,
       });
     } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: error.message || 'Failed to update status',
+        message:
+          error.message ||
+          'Failed to update staff status',
       });
     }
   }
