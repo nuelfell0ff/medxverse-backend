@@ -9,3 +9,5 @@ UEAmK8rQSQetOUzA
   "email": "admin@stnicholas.com",
   "password": "Password123!"
 }
+
+One thing I would do next is split the expanded profile into a dedicated /staff/[id] Staff Profile page with tabs for Overview, Credentials, Employment, Clinical Privileges, CPD/Training, Attendance, Leave, On-Call, Performance, Incidents, and Communications. That will let the staff module actually cover all 30 requirements without making the main staff list unwieldy.

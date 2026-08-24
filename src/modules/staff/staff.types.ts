@@ -1,5 +1,8 @@
 import { Document, Types } from 'mongoose';
 
+/**
+ * Staff roles
+ */
 export enum StaffRole {
   DOCTOR = 'DOCTOR',
   NURSE = 'NURSE',
@@ -18,6 +21,9 @@ export enum StaffRole {
   OTHER = 'OTHER',
 }
 
+/**
+ * Staff categories
+ */
 export enum StaffCategory {
   CLINICAL = 'CLINICAL',
   ALLIED_HEALTH = 'ALLIED_HEALTH',
@@ -25,6 +31,9 @@ export enum StaffCategory {
   SUPPORT = 'SUPPORT',
 }
 
+/**
+ * Staff classification
+ */
 export enum StaffClassification {
   CONSULTANT = 'CONSULTANT',
   SPECIALIST = 'SPECIALIST',
@@ -35,6 +44,12 @@ export enum StaffClassification {
   GENERAL = 'GENERAL',
 }
 
+/**
+ * Employment type
+ *
+ * IMPORTANT:
+ * These values must match the Mongoose enum exactly.
+ */
 export enum EmploymentType {
   FULL_TIME = 'FULL_TIME',
   PART_TIME = 'PART_TIME',
@@ -45,6 +60,9 @@ export enum EmploymentType {
   VOLUNTEER = 'VOLUNTEER',
 }
 
+/**
+ * Staff status
+ */
 export enum StaffStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
@@ -53,6 +71,9 @@ export enum StaffStatus {
   TERMINATED = 'TERMINATED',
 }
 
+/**
+ * Credential status
+ */
 export enum CredentialStatus {
   PENDING = 'PENDING',
   VERIFIED = 'VERIFIED',
@@ -60,6 +81,9 @@ export enum CredentialStatus {
   REJECTED = 'REJECTED',
 }
 
+/**
+ * Clinical privilege status
+ */
 export enum PrivilegeStatus {
   ACTIVE = 'ACTIVE',
   EXPIRED = 'EXPIRED',
@@ -67,6 +91,9 @@ export enum PrivilegeStatus {
   PENDING_RENEWAL = 'PENDING_RENEWAL',
 }
 
+/**
+ * Training status
+ */
 export enum TrainingStatus {
   PENDING = 'PENDING',
   IN_PROGRESS = 'IN_PROGRESS',
@@ -74,6 +101,9 @@ export enum TrainingStatus {
   EXPIRED = 'EXPIRED',
 }
 
+/**
+ * Leave status
+ */
 export enum LeaveStatus {
   PENDING = 'PENDING',
   APPROVED = 'APPROVED',
@@ -81,6 +111,9 @@ export enum LeaveStatus {
   CANCELLED = 'CANCELLED',
 }
 
+/**
+ * Attendance status
+ */
 export enum AttendanceStatus {
   PRESENT = 'PRESENT',
   ABSENT = 'ABSENT',
@@ -89,6 +122,9 @@ export enum AttendanceStatus {
   ON_LEAVE = 'ON_LEAVE',
 }
 
+/**
+ * Availability status
+ */
 export enum AvailabilityStatus {
   AVAILABLE = 'AVAILABLE',
   UNAVAILABLE = 'UNAVAILABLE',
@@ -96,6 +132,9 @@ export enum AvailabilityStatus {
   ON_LEAVE = 'ON_LEAVE',
 }
 
+/**
+ * Staff contact
+ */
 export interface IStaffContact {
   phone?: string;
   alternatePhone?: string;
@@ -106,6 +145,9 @@ export interface IStaffContact {
   country?: string;
 }
 
+/**
+ * Emergency contact
+ */
 export interface IEmergencyContact {
   name: string;
   relationship: string;
@@ -115,6 +157,13 @@ export interface IEmergencyContact {
   address?: string;
 }
 
+/**
+ * Professional registration
+ *
+ * IMPORTANT:
+ * Backend uses `regulatoryBody`.
+ * Do NOT use `registrationBody`.
+ */
 export interface IProfessionalRegistration {
   regulatoryBody: string;
   registrationNumber: string;
@@ -128,6 +177,9 @@ export interface IProfessionalRegistration {
   notes?: string;
 }
 
+/**
+ * Qualification
+ */
 export interface IQualification {
   qualification: string;
   institution: string;
@@ -141,6 +193,9 @@ export interface IQualification {
   verifiedBy?: Types.ObjectId;
 }
 
+/**
+ * Certification
+ */
 export interface ICertification {
   name: string;
   issuingOrganization: string;
@@ -151,6 +206,9 @@ export interface ICertification {
   documentUrl?: string;
 }
 
+/**
+ * Specialty
+ */
 export interface ISpecialty {
   specialty: string;
   subSpecialty?: string;
@@ -158,6 +216,9 @@ export interface ISpecialty {
   yearsOfExperience?: number;
 }
 
+/**
+ * Professional experience
+ */
 export interface IProfessionalExperience {
   organization: string;
   position: string;
@@ -168,6 +229,9 @@ export interface IProfessionalExperience {
   reasonForLeaving?: string;
 }
 
+/**
+ * Clinical privilege
+ */
 export interface IClinicalPrivilege {
   privilege: string;
   department?: string;
@@ -178,23 +242,44 @@ export interface IClinicalPrivilege {
   notes?: string;
 }
 
+/**
+ * Employment
+ *
+ * These names match StaffSchema.employment exactly.
+ */
 export interface IEmployment {
   employeeNumber?: string;
+
   employmentType: EmploymentType;
+
   classification: StaffClassification;
+
   jobTitle?: string;
+
   departmentId?: Types.ObjectId;
+
   unitId?: Types.ObjectId;
+
   startDate?: Date;
+
   endDate?: Date;
+
   contractStartDate?: Date;
+
   contractEndDate?: Date;
+
   salary?: number;
+
   currency?: string;
+
   supervisorId?: Types.ObjectId;
+
   contractDocumentUrl?: string;
 }
 
+/**
+ * Training record
+ */
 export interface ITrainingRecord {
   name: string;
   provider?: string;
@@ -207,6 +292,9 @@ export interface ITrainingRecord {
   cpdPoints?: number;
 }
 
+/**
+ * Performance record
+ */
 export interface IPerformanceRecord {
   reviewDate: Date;
   reviewerId?: Types.ObjectId;
@@ -216,6 +304,9 @@ export interface IPerformanceRecord {
   goals?: string[];
 }
 
+/**
+ * Availability
+ */
 export interface IAvailability {
   dayOfWeek: number;
   startTime?: string;
@@ -223,6 +314,9 @@ export interface IAvailability {
   status: AvailabilityStatus;
 }
 
+/**
+ * On-call assignment
+ */
 export interface IOnCallAssignment {
   date: Date;
   startTime?: string;
@@ -232,6 +326,9 @@ export interface IOnCallAssignment {
   notes?: string;
 }
 
+/**
+ * Leave record
+ */
 export interface ILeaveRecord {
   leaveType: string;
   startDate: Date;
@@ -242,6 +339,9 @@ export interface ILeaveRecord {
   approvedAt?: Date;
 }
 
+/**
+ * Attendance record
+ */
 export interface IAttendanceRecord {
   date: Date;
   clockIn?: Date;
@@ -251,6 +351,9 @@ export interface IAttendanceRecord {
   notes?: string;
 }
 
+/**
+ * Incident record
+ */
 export interface IIncidentRecord {
   incidentType: string;
   date: Date;
@@ -261,6 +364,9 @@ export interface IIncidentRecord {
   resolution?: string;
 }
 
+/**
+ * Staff communication
+ */
 export interface IStaffCommunication {
   subject: string;
   message: string;
@@ -269,12 +375,15 @@ export interface IStaffCommunication {
   readAt?: Date;
 }
 
+/**
+ * Complete staff document
+ */
 export interface IStaff {
   hospitalId: Types.ObjectId;
 
   /**
    * Internal hospital-wide staff identifier.
-   * Example: HSP-000001
+   * Example: ST-000001
    */
   staffId: string;
 
@@ -297,87 +406,131 @@ export interface IStaff {
   specialties: ISpecialty[];
 
   contact: IStaffContact;
+
   emergencyContact?: IEmergencyContact;
 
   professionalRegistrations: IProfessionalRegistration[];
+
   qualifications: IQualification[];
+
   certifications: ICertification[];
+
   professionalExperience: IProfessionalExperience[];
 
   clinicalPrivileges: IClinicalPrivilege[];
 
+  /**
+   * Employment is required by the backend model.
+   */
   employment: IEmployment;
 
   trainingRecords: ITrainingRecord[];
+
   performanceRecords: IPerformanceRecord[];
 
   availability: IAvailability[];
+
   onCallAssignments: IOnCallAssignment[];
 
   leaveRecords: ILeaveRecord[];
+
   attendanceRecords: IAttendanceRecord[];
 
   incidents: IIncidentRecord[];
+
   communications: IStaffCommunication[];
 
   clinicalActivityCount: number;
+
   activePatientCaseload: number;
 
   status: StaffStatus;
+
   isActive: boolean;
 
   createdAt: Date;
+
   updatedAt: Date;
 }
 
+/**
+ * Mongoose staff document
+ */
 export interface IStaffDocument extends IStaff, Document {
   _id: Types.ObjectId;
 }
 
+/**
+ * Create staff DTO
+ *
+ * IMPORTANT:
+ * `employment` is optional at the request-contract level so the
+ * service can safely normalize/validate it before creating the
+ * MongoDB document.
+ */
 export interface CreateStaffDTO {
   firstName: string;
+
   middleName?: string;
+
   lastName: string;
 
   title?: string;
+
   profilePhotoUrl?: string;
+
   dateOfBirth?: Date;
+
   gender?: string;
 
   role: StaffRole;
+
   category?: StaffCategory;
+
   classification?: StaffClassification;
 
   professionalTitle?: string;
+
   jobTitle?: string;
 
   specialties?: ISpecialty[];
 
   contact?: IStaffContact;
+
   emergencyContact?: IEmergencyContact;
 
   professionalRegistrations?: IProfessionalRegistration[];
+
   qualifications?: IQualification[];
+
   certifications?: ICertification[];
+
   professionalExperience?: IProfessionalExperience[];
 
   clinicalPrivileges?: IClinicalPrivilege[];
 
-  employment: IEmployment;
+  employment?: IEmployment;
 
   trainingRecords?: ITrainingRecord[];
+
   performanceRecords?: IPerformanceRecord[];
 
   availability?: IAvailability[];
+
   onCallAssignments?: IOnCallAssignment[];
 
   leaveRecords?: ILeaveRecord[];
+
   attendanceRecords?: IAttendanceRecord[];
 
   incidents?: IIncidentRecord[];
+
   communications?: IStaffCommunication[];
 }
 
+/**
+ * Update staff DTO
+ */
 export type UpdateStaffDTO = Partial<
   Omit<
     IStaff,
@@ -390,13 +543,23 @@ export type UpdateStaffDTO = Partial<
   >
 >;
 
+/**
+ * Staff list filters
+ */
 export interface StaffListFilters {
   role?: StaffRole;
+
   category?: StaffCategory;
+
   classification?: StaffClassification;
+
   departmentId?: string;
+
   unitId?: string;
+
   status?: StaffStatus;
+
   isActive?: boolean;
+
   search?: string;
 }
