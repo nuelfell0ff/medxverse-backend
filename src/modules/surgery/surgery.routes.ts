@@ -2,157 +2,192 @@ import { Router } from 'express';
 import { surgeryController } from './surgery.controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
 
-const requireSurgeryRoles =
-  (...allowed: string[]) =>
-  (req: any, res: any, next: any) => {
-    const role = String(req.user?.role ?? '').toUpperCase();
-    const roles = Array.isArray(req.user?.roles)
-      ? req.user.roles.map((r: unknown) => String(r).toUpperCase())
-      : [];
-    const allowedUpper = allowed.map((r) => r.toUpperCase());
-
-    if (!allowedUpper.some((r) => r === role || roles.includes(r))) {
-      return res.status(403).json({
-        success: false,
-        message: 'You are not authorized to perform this surgical action.',
-      });
-    }
-    next();
-  };
-
 const router = Router();
 
+/**
+ * Surgery module authentication
+ *
+ * The hospital is the authorization boundary.
+ * Individual staff roles such as SURGEON, NURSE, ANAESTHETIST, etc.
+ * are NOT used as route-level permissions.
+ *
+ * Staff are hospital-owned records and can participate in surgery
+ * workflows according to the hospital's operational workflow.
+ */
 router.use(authenticate);
 
+/**
+ * Create / schedule surgery
+ */
 router.post(
   '/',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'THEATRE_MANAGER', 'THEATRE_NURSE'),
   (req, res, next) =>
     surgeryController.scheduleCase(req, res, next)
 );
 
+/**
+ * Create emergency surgery
+ */
 router.post(
   '/emergency',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'THEATRE_MANAGER', 'THEATRE_NURSE'),
   (req, res, next) =>
     surgeryController.scheduleEmergencyCase(req, res, next)
 );
 
+/**
+ * Get surgery cases
+ */
 router.get(
   '/',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'ANAESTHETIST', 'ANESTHETIST', 'NURSE', 'THEATRE_NURSE', 'THEATRE_MANAGER'),
   (req, res, next) =>
     surgeryController.getCases(req, res, next)
 );
 
+/**
+ * Get single surgery case
+ *
+ * IMPORTANT:
+ * The controller/service must scope this lookup to the authenticated
+ * hospital. A user from Hospital A must never be able to retrieve
+ * Hospital B's surgery case simply by knowing its ID.
+ */
 router.get(
   '/:id',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'ANAESTHETIST', 'ANESTHETIST', 'NURSE', 'THEATRE_NURSE', 'THEATRE_MANAGER'),
   (req, res, next) =>
     surgeryController.getCaseById(req, res, next)
 );
 
+/**
+ * Pre-operative assessment
+ */
 router.patch(
   '/:id/pre-op',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'ANAESTHETIST', 'ANESTHETIST', 'NURSE'),
   (req, res, next) =>
     surgeryController.updatePreOp(req, res, next)
 );
 
+/**
+ * Surgical consent
+ */
 router.patch(
   '/:id/consent',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR'),
   (req, res, next) =>
     surgeryController.updateConsent(req, res, next)
 );
 
+/**
+ * Surgical team
+ */
 router.patch(
   '/:id/team',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'THEATRE_MANAGER'),
   (req, res, next) =>
     surgeryController.updateTeam(req, res, next)
 );
 
+/**
+ * Reschedule surgery
+ */
 router.patch(
   '/:id/reschedule',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'THEATRE_MANAGER'),
   (req, res, next) =>
     surgeryController.rescheduleCase(req, res, next)
 );
 
+/**
+ * Add medication
+ */
 router.post(
   '/:id/medications',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'ANAESTHETIST', 'ANESTHETIST'),
   (req, res, next) =>
     surgeryController.addMedication(req, res, next)
 );
 
+/**
+ * Administer medication
+ */
 router.patch(
   '/:id/medications/administer',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'ANAESTHETIST', 'ANESTHETIST', 'NURSE'),
   (req, res, next) =>
     surgeryController.administerMedication(req, res, next)
 );
 
+/**
+ * WHO surgical safety checklist
+ */
 router.patch(
   '/:id/who-checklist',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'ANAESTHETIST', 'ANESTHETIST', 'NURSE'),
   (req, res, next) =>
     surgeryController.updateWHOChecklist(req, res, next)
 );
 
+/**
+ * Intra-operative vitals
+ */
 router.post(
   '/:id/vitals',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'ANAESTHETIST', 'ANESTHETIST', 'NURSE'),
   (req, res, next) =>
     surgeryController.addVitalsLog(req, res, next)
 );
 
+/**
+ * Start surgery
+ */
 router.patch(
   '/:id/start',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'ANAESTHETIST', 'ANESTHETIST'),
   (req, res, next) =>
     surgeryController.startSurgery(req, res, next)
 );
 
+/**
+ * Intra-operative documentation
+ */
 router.patch(
   '/:id/intraop-docs',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR'),
   (req, res, next) =>
     surgeryController.updateIntraopDocs(req, res, next)
 );
 
+/**
+ * Anaesthesia documentation
+ */
 router.patch(
   '/:id/anesthesia',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'ANAESTHETIST', 'ANESTHETIST'),
   (req, res, next) =>
     surgeryController.updateAnesthesia(req, res, next)
 );
 
+/**
+ * Complete surgery
+ */
 router.patch(
   '/:id/complete',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR'),
   (req, res, next) =>
     surgeryController.completeSurgery(req, res, next)
 );
 
+/**
+ * Recovery / PACU
+ */
 router.patch(
   '/:id/recovery',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'ANAESTHETIST', 'ANESTHETIST', 'NURSE'),
   (req, res, next) =>
     surgeryController.updateRecovery(req, res, next)
 );
 
+/**
+ * Cancel surgery
+ */
 router.patch(
   '/:id/cancel',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'THEATRE_MANAGER'),
   (req, res, next) =>
     surgeryController.cancelCase(req, res, next)
 );
 
+/**
+ * Postpone surgery
+ */
 router.patch(
   '/:id/postpone',
-  requireSurgeryRoles('ADMIN', 'HOSPITAL_ADMIN', 'SURGEON', 'DOCTOR', 'THEATRE_MANAGER'),
   (req, res, next) =>
     surgeryController.postponeCase(req, res, next)
 );
