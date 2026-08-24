@@ -16,7 +16,7 @@ const SurgicalTeamMemberSchema = new Schema(
   {
     userId: {
       type: Schema.Types.ObjectId,
-      ref: 'Account',
+      ref: 'Staff',
       required: true,
       index: true,
     },
@@ -39,21 +39,21 @@ const SurgicalTeamMemberSchema = new Schema(
       default: '',
     },
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const PreOpVitalsSchema = new Schema(
   {
-    bpSystolic: { type: Number, min: 0, max: 400 },
-    bpDiastolic: { type: Number, min: 0, max: 250 },
-    heartRate: { type: Number, min: 0, max: 300 },
-    tempCelsius: { type: Number, min: 20, max: 45 },
-    spO2: { type: Number, min: 0, max: 100 },
-    respiratoryRate: { type: Number, min: 0, max: 100 },
-    weightKg: { type: Number, min: 0, max: 1000 },
-    heightCm: { type: Number, min: 0, max: 300 },
+    bpSystolic: Number,
+    bpDiastolic: Number,
+    heartRate: Number,
+    tempCelsius: Number,
+    spO2: Number,
+    respiratoryRate: Number,
+    weightKg: Number,
+    heightCm: Number,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const PreOpAssessmentSchema = new Schema(
@@ -116,7 +116,7 @@ const PreOpAssessmentSchema = new Schema(
 
     notes: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const ConsentVersionSchema = new Schema(
@@ -151,7 +151,7 @@ const ConsentVersionSchema = new Schema(
     },
     notes: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const SurgicalConsentSchema = new Schema(
@@ -192,7 +192,7 @@ const SurgicalConsentSchema = new Schema(
       default: [],
     },
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const MedicationSchema = new Schema({
@@ -247,7 +247,7 @@ const EquipmentItemSchema = new Schema(
     quantity: Number,
     notes: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const InstrumentItemSchema = new Schema(
@@ -272,7 +272,7 @@ const InstrumentItemSchema = new Schema(
     },
     notes: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const ConsumableItemSchema = new Schema(
@@ -296,7 +296,7 @@ const ConsumableItemSchema = new Schema(
     expiryDate: Date,
     notes: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const WHOSignInSchema = new Schema(
@@ -320,7 +320,7 @@ const WHOSignInSchema = new Schema(
     airwayRisk: Boolean,
     bloodLossRisk: Boolean,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const WHOTimeOutSchema = new Schema(
@@ -344,7 +344,7 @@ const WHOTimeOutSchema = new Schema(
     criticalConcernsAnaesthetist: String,
     criticalConcernsNursing: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const WHOSignOutSchema = new Schema(
@@ -366,7 +366,7 @@ const WHOSignOutSchema = new Schema(
     equipmentIssuesNoted: String,
     postOperativePlan: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const WHOChecklistSchema = new Schema(
@@ -384,7 +384,7 @@ const WHOChecklistSchema = new Schema(
       default: () => ({ completed: false }),
     },
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const IntraopVitalsSchema = new Schema(
@@ -393,12 +393,12 @@ const IntraopVitalsSchema = new Schema(
       type: Date,
       default: Date.now,
     },
-    bpSystolic: { type: Number, min: 0, max: 400 },
-    bpDiastolic: { type: Number, min: 0, max: 250 },
-    heartRate: { type: Number, min: 0, max: 300 },
-    spO2: { type: Number, min: 0, max: 100 },
+    bpSystolic: Number,
+    bpDiastolic: Number,
+    heartRate: Number,
+    spO2: Number,
     respRate: Number,
-    tempCelsius: { type: Number, min: 20, max: 45 },
+    tempCelsius: Number,
     etCO2: Number,
     ecgRhythm: String,
     oxygenFlow: String,
@@ -406,7 +406,7 @@ const IntraopVitalsSchema = new Schema(
     anesthesiaEvent: String,
     notes: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const AnesthesiaDrugSchema = new Schema({
@@ -443,7 +443,7 @@ const AnesthesiaRecordSchema = new Schema(
     recoveryAssessment: String,
     notes: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const IntraopDocumentationSchema = new Schema(
@@ -466,7 +466,7 @@ const IntraopDocumentationSchema = new Schema(
     complications: String,
     surgeonNotes: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const RecoveryAssessmentSchema = new Schema(
@@ -485,7 +485,7 @@ const RecoveryAssessmentSchema = new Schema(
     },
     notes: String,
   },
-  { _id: false, strict: true }
+  { _id: false }
 );
 
 const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
@@ -538,8 +538,6 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
 
     priority: {
       type: Number,
-      min: 0,
-      max: 1000,
       default: 0,
     },
 
@@ -561,7 +559,7 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
       required: true,
     },
 
-    estimatedDurationMinutes: { type: Number, min: 1, max: 1440 },
+    estimatedDurationMinutes: Number,
 
     actualStartTime: Date,
     actualEndTime: Date,
