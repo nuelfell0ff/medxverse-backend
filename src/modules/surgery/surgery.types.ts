@@ -27,6 +27,8 @@ export enum AnesthesiaType {
   COMBINED = 'COMBINED',
 }
 
+export type SurgeryAccessRole = string;
+
 export enum SurgicalRole {
   PRIMARY_SURGEON = 'PRIMARY_SURGEON',
   ASSISTING_SURGEON = 'ASSISTING_SURGEON',
@@ -363,6 +365,8 @@ export interface ISurgeryCase {
   anesthesiaRecord?: IAnesthesiaRecord;
   intraopDocs?: IIntraopDocumentation;
   recoveryAssessment?: IRecoveryAssessment;
+
+  postOpNotes?: string;
 
   cancellationReason?: string;
   postponementReason?: string;

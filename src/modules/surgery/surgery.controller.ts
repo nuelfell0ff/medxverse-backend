@@ -1,5 +1,31 @@
 import { Request, Response, NextFunction } from 'express';
 import { surgeryService } from './surgery.service.js';
+
+const asNonEmptyString = (value: unknown, field: string): string => {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${field} is required.`);
+  }
+  return value.trim();
+};
+
+const asDate = (value: unknown, field: string): Date => {
+  if (typeof value !== 'string' && !(value instanceof Date)) {
+    throw new Error(`${field} is required.`);
+  }
+  const date = new Date(value as string | Date);
+  if (Number.isNaN(date.getTime())) throw new Error(`Invalid ${field}.`);
+  return date;
+};
+
+const asFiniteNumber = (value: unknown, field: string, min?: number, max?: number): number | undefined => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error(`Invalid ${field}.`);
+  if (min !== undefined && n < min) throw new Error(`${field} is below the allowed minimum.`);
+  if (max !== undefined && n > max) throw new Error(`${field} exceeds the allowed maximum.`);
+  return n;
+};
+
 import {
   SurgeryStatus,
   UrgencyLevel,
@@ -23,7 +49,6 @@ export class SurgeryController {
       .map((member: any) => ({
         userId: member.userId,
         role: member.role,
-        credentialVerified: Boolean(member.credentialVerified),
         notes: member.notes || '',
       }));
   }
@@ -49,18 +74,18 @@ export class SurgeryController {
         authReq.user.hospitalId,
         authReq.user._id,
         {
-          patientId: req.body.patientId,
-          leadSurgeonId,
-          theatreId: req.body.theatreId,
-          procedureName: req.body.procedureName,
-          icdCode: req.body.icdCode,
+          patientId: asNonEmptyString(req.body.patientId, 'patientId'),
+          leadSurgeonId: asNonEmptyString(leadSurgeonId, 'leadSurgeonId'),
+          theatreId: asNonEmptyString(req.body.theatreId, 'theatreId'),
+          procedureName: asNonEmptyString(req.body.procedureName, 'procedureName'),
+          icdCode: typeof req.body.icdCode === 'string' ? req.body.icdCode.trim() : undefined,
           urgency: req.body.urgency as UrgencyLevel,
-          priority: req.body.priority,
-          scheduledStartTime: new Date(req.body.scheduledStartTime),
-          scheduledEndTime: new Date(req.body.scheduledEndTime),
+          priority: asFiniteNumber(req.body.priority, 'priority', 0, 1000),
+          scheduledStartTime: asDate(req.body.scheduledStartTime, 'scheduledStartTime'),
+          scheduledEndTime: asDate(req.body.scheduledEndTime, 'scheduledEndTime'),
           anesthesiaType: req.body.anesthesiaType as AnesthesiaType,
           surgicalTeam: this.parseTeamMembers(req.body.surgicalTeam),
-          estimatedDurationMinutes: req.body.estimatedDurationMinutes,
+          estimatedDurationMinutes: asFiniteNumber(req.body.estimatedDurationMinutes, 'estimatedDurationMinutes', 1, 1440),
         }
       );
 
@@ -94,18 +119,18 @@ export class SurgeryController {
         authReq.user.hospitalId,
         authReq.user._id,
         {
-          patientId: req.body.patientId,
-          leadSurgeonId,
-          theatreId: req.body.theatreId,
-          procedureName: req.body.procedureName,
-          icdCode: req.body.icdCode,
+          patientId: asNonEmptyString(req.body.patientId, 'patientId'),
+          leadSurgeonId: asNonEmptyString(leadSurgeonId, 'leadSurgeonId'),
+          theatreId: asNonEmptyString(req.body.theatreId, 'theatreId'),
+          procedureName: asNonEmptyString(req.body.procedureName, 'procedureName'),
+          icdCode: typeof req.body.icdCode === 'string' ? req.body.icdCode.trim() : undefined,
           urgency: UrgencyLevel.EMERGENCY,
-          priority: req.body.priority ?? 100,
-          scheduledStartTime: new Date(req.body.scheduledStartTime),
-          scheduledEndTime: new Date(req.body.scheduledEndTime),
+          priority: asFiniteNumber(req.body.priority ?? 100, 'priority', 0, 1000),
+          scheduledStartTime: asDate(req.body.scheduledStartTime, 'scheduledStartTime'),
+          scheduledEndTime: asDate(req.body.scheduledEndTime, 'scheduledEndTime'),
           anesthesiaType: req.body.anesthesiaType as AnesthesiaType,
           surgicalTeam: this.parseTeamMembers(req.body.surgicalTeam),
-          estimatedDurationMinutes: req.body.estimatedDurationMinutes,
+          estimatedDurationMinutes: asFiniteNumber(req.body.estimatedDurationMinutes, 'estimatedDurationMinutes', 1, 1440),
         }
       );
 
@@ -323,6 +348,7 @@ export class SurgeryController {
       const updated = await surgeryService.updateMedication(
         req.params.id,
         authReq.user.hospitalId,
+        authReq.user._id,
         req.body
       );
 
@@ -414,6 +440,13 @@ export class SurgeryController {
   ): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
+
+      req.body.bpSystolic = asFiniteNumber(req.body.bpSystolic, 'bpSystolic', 0, 400);
+      req.body.bpDiastolic = asFiniteNumber(req.body.bpDiastolic, 'bpDiastolic', 0, 250);
+      req.body.heartRate = asFiniteNumber(req.body.heartRate, 'heartRate', 0, 300);
+      req.body.spO2 = asFiniteNumber(req.body.spO2, 'spO2', 0, 100);
+      req.body.respRate = asFiniteNumber(req.body.respRate, 'respRate', 0, 100);
+      req.body.tempCelsius = asFiniteNumber(req.body.tempCelsius, 'tempCelsius', 20, 45);
 
       const updated = await surgeryService.addVitalsLog(
         req.params.id,
@@ -610,7 +643,7 @@ export class SurgeryController {
         req.params.id,
         authReq.user.hospitalId,
         authReq.user._id,
-        req.body.cancellationReason || 'No reason specified.'
+        asNonEmptyString(req.body.cancellationReason || '', 'cancellationReason')
       );
 
       if (!updated) {
@@ -642,7 +675,7 @@ export class SurgeryController {
         req.params.id,
         authReq.user.hospitalId,
         authReq.user._id,
-        req.body.reason || 'No reason specified.'
+        asNonEmptyString(req.body.reason || '', 'reason')
       );
 
       if (!updated) {
