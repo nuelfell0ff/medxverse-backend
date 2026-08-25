@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 
 import {
   LabOrderModel,
+  TestCatalogModel,
 } from './lab.model.js';
 
 import {
@@ -20,13 +21,40 @@ import {
   SampleRoutingStatus,
   AuthorizationLevel,
   SpecimenQuality,
+  LabBillingStatus,
 } from './lab.types.js';
+
+import {
+  createCharge,
+} from '../billing/billing.service.js';
+
+import {
+  BillingSourceModule,
+  ChargeCategory,
+} from '../billing/billing.types.js';
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
 const ACCOUNT_SELECT = 'name email phone accountType';
+
+/* =========================================================
+   BILLING HELPERS
+========================================================= */
+
+const buildLabServiceCode = (codeOrName: string) => {
+  const normalized = codeOrName
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return normalized.startsWith('LAB_') ? normalized : `LAB_${normalized}`;
+};
+
+const getBillingErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : 'Unable to capture laboratory charge.';
 
 /* =========================================================
    SERVICE
@@ -139,6 +167,85 @@ export class LabService {
     ]);
 
     return order;
+  }
+
+  /* =========================================================
+     BILLING CAPTURE
+  ========================================================= */
+
+  private static async captureBillingForOrder(
+    order: ILabOrderDocument,
+    chargedBy?: string
+  ): Promise<ILabOrderDocument> {
+    try {
+      let catalogueCode: string | undefined;
+
+      if (order.testCatalogId) {
+        const catalog = await TestCatalogModel.findById(order.testCatalogId)
+          .select('code')
+          .lean();
+
+        if (catalog && !Array.isArray(catalog) && typeof catalog === 'object') {
+          catalogueCode =
+            'code' in catalog && typeof catalog.code === 'string'
+            ? catalog.code
+            : undefined;
+        } else {
+            catalogueCode = undefined;
+        }
+      }
+
+      const serviceCode = buildLabServiceCode(
+        catalogueCode || order.testName
+      );
+
+      const charge = await createCharge({
+        hospitalId: order.hospitalId,
+        patientId: order.patientId,
+        serviceCode,
+        description: order.panelName
+          ? `${order.testName} - ${order.panelName}`
+          : order.testName,
+        category: ChargeCategory.LABORATORY,
+        sourceModule: BillingSourceModule.LABORATORY,
+        sourceId: order._id,
+        departmentName: order.testCategory,
+        chargedBy,
+        chargeDate: order.createdAt,
+      });
+
+      order.billingStatus = LabBillingStatus.CAPTURED;
+      order.billingChargeId = charge._id;
+      order.billingServiceCode = serviceCode;
+      order.billingAmount = charge.netAmount;
+      order.billingCurrency = charge.currency;
+      order.billingError = undefined;
+      order.billingCapturedAt = new Date();
+
+      await order.save();
+      return order;
+    } catch (error: unknown) {
+      order.billingStatus = LabBillingStatus.FAILED;
+      order.billingError = getBillingErrorMessage(error);
+      await order.save();
+      return order;
+    }
+  }
+
+  static async captureBilling(
+    hospitalId: string,
+    orderId: string,
+    chargedBy?: string
+  ): Promise<ILabOrderDocument> {
+    const order = await this.getOrderById(hospitalId, orderId);
+
+    if (order.billingStatus === LabBillingStatus.CAPTURED) {
+      return order;
+    }
+
+    return this.populateOrder(
+      await this.captureBillingForOrder(order, chargedBy)
+    );
   }
 
   /* =========================================================
@@ -452,6 +559,11 @@ export class LabService {
               dto.notes?.trim() ||
               undefined,
           });
+
+        await this.captureBillingForOrder(
+          order,
+          requestingUserId
+        );
 
         return await this.populateOrder(
           order

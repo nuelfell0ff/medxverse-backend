@@ -11,6 +11,7 @@ import {
   EntryMethod,
   SampleRoutingStatus,
   AuthorizationLevel,
+  LabBillingStatus,
 } from './lab.types.js';
 
 /* =========================================================
@@ -602,6 +603,43 @@ const LabOrderSchema = new Schema<ILabOrderDocument>(
     predictedTatMinutes: {
       type: Number,
       min: 0,
+    },
+
+    billingStatus: {
+      type: String,
+      enum: Object.values(LabBillingStatus),
+      default: LabBillingStatus.NOT_ATTEMPTED,
+      index: true,
+    },
+
+    billingChargeId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Charge',
+    },
+
+    billingServiceCode: {
+      type: String,
+      trim: true,
+    },
+
+    billingAmount: {
+      type: Number,
+      min: 0,
+    },
+
+    billingCurrency: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+
+    billingError: {
+      type: String,
+      trim: true,
+    },
+
+    billingCapturedAt: {
+      type: Date,
     },
 
     notes: {

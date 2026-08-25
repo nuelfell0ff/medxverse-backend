@@ -281,6 +281,33 @@ export class LabController {
   }
 
   /* =========================================================
+     BILLING
+  ========================================================= */
+
+  static async captureBilling(
+    req: Request<{ id: string }>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { userId, hospitalId } = LabController.getAuthContext(req);
+
+      const updated = await LabService.captureBilling(
+        hospitalId,
+        req.params.id,
+        userId
+      );
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /* =========================================================
      RECORD RESULTS
   ========================================================= */
 

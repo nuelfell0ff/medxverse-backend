@@ -19,6 +19,12 @@ export enum LabOrderStatus {
   CANCELLED = 'CANCELLED',
 }
 
+export enum LabBillingStatus {
+  NOT_ATTEMPTED = 'NOT_ATTEMPTED',
+  CAPTURED = 'CAPTURED',
+  FAILED = 'FAILED',
+}
+
 export enum LabPriority {
   ROUTINE = 'ROUTINE',
   URGENT = 'URGENT',
@@ -243,6 +249,15 @@ export interface ILabOrder {
   duplicateTestMessage?: string;
 
   predictedTatMinutes?: number;
+
+  /** Centralized billing integration. */
+  billingStatus: LabBillingStatus;
+  billingChargeId?: Types.ObjectId;
+  billingServiceCode?: string;
+  billingAmount?: number;
+  billingCurrency?: string;
+  billingError?: string;
+  billingCapturedAt?: Date;
 
   notes?: string;
 
