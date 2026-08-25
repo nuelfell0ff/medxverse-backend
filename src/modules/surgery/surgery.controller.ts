@@ -567,6 +567,41 @@ export class SurgeryController {
     }
   }
 
+  public async captureBilling(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated = await surgeryService.captureBilling(
+        req.params.id,
+        authReq.user.hospitalId,
+        authReq.user._id,
+        {
+          force: Boolean(req.body?.force),
+        }
+      );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Surgical case not found.',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Surgery billing capture completed.',
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   public async updateRecovery(
     req: Request,
     res: Response,

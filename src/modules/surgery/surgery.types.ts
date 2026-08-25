@@ -69,6 +69,21 @@ export enum MedicationStatus {
   CANCELLED = 'CANCELLED',
 }
 
+export enum SurgeryBillingStatus {
+  NOT_ATTEMPTED = 'NOT_ATTEMPTED',
+  CAPTURED = 'CAPTURED',
+  PARTIAL = 'PARTIAL',
+  FAILED = 'FAILED',
+}
+
+export interface ISurgeryBilling {
+  status: SurgeryBillingStatus;
+  chargeIds: Types.ObjectId[];
+  errors: string[];
+  lastAttemptAt?: Date;
+  capturedAt?: Date;
+}
+
 export enum EquipmentStatus {
   AVAILABLE = 'AVAILABLE',
   IN_USE = 'IN_USE',
@@ -379,6 +394,8 @@ export interface ISurgeryCase {
   intraopDocs?: IIntraopDocumentation;
   recoveryAssessment?: IRecoveryAssessment;
 
+  billing?: ISurgeryBilling;
+
   postOpNotes?: string;
 
   cancellationReason?: string;
@@ -535,6 +552,10 @@ export interface UpdateAnesthesiaInput {
 export interface CompleteSurgeryInput {
   postOpNotes?: string;
   intraopDocs?: UpdateIntraopInput;
+}
+
+export interface CaptureSurgeryBillingInput {
+  force?: boolean;
 }
 
 export interface RecoveryInput {

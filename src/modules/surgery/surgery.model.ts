@@ -501,6 +501,27 @@ const RecoveryAssessmentSchema = new Schema(
   { _id: false }
 );
 
+const SurgeryBillingSchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: ['NOT_ATTEMPTED', 'CAPTURED', 'PARTIAL', 'FAILED'],
+      default: 'NOT_ATTEMPTED',
+    },
+    chargeIds: {
+      type: [Schema.Types.ObjectId],
+      default: [],
+    },
+    errors: {
+      type: [String],
+      default: [],
+    },
+    lastAttemptAt: Date,
+    capturedAt: Date,
+  },
+  { _id: false }
+);
+
 const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
   {
     hospitalId: {
@@ -631,6 +652,15 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
     intraopDocs: IntraopDocumentationSchema,
 
     recoveryAssessment: RecoveryAssessmentSchema,
+
+    billing: {
+      type: SurgeryBillingSchema,
+      default: () => ({
+        status: 'NOT_ATTEMPTED',
+        chargeIds: [],
+        errors: [],
+      }),
+    },
 
     postOpNotes: {
       type: String,

@@ -1,5 +1,8 @@
+import { createHash } from 'crypto';
 import { Types, model } from 'mongoose';
 import { Staff } from '../staff/staff.model.js';
+import { createCharge, resolvePrice } from '../billing/billing.service.js';
+import { BillingSourceModule, ChargeCategory } from '../billing/billing.types.js';
 import { SurgeryCaseModel } from './surgery.model.js';
 import {
   CreateSurgeryCaseInput,
@@ -22,6 +25,8 @@ import {
   RescheduleSurgeryInput,
   UrgencyLevel,
   ConsentType,
+  SurgeryBillingStatus,
+  CaptureSurgeryBillingInput,
 } from './surgery.types.js';
 
 const ACTIVE_STATUSES = [
@@ -1630,6 +1635,160 @@ export class SurgeryService {
     ).exec();
   }
 
+  private makeBillingSourceId(caseId: string, serviceCode: string): Types.ObjectId {
+    const hex = createHash('sha256')
+      .update(`${caseId}:${serviceCode}`)
+      .digest('hex')
+      .slice(0, 24);
+
+    return new Types.ObjectId(hex);
+  }
+
+  private billingCode(value: string): string {
+    return value
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 70);
+  }
+
+  /**
+   * Captures surgery charges after the clinical procedure has actually been
+   * completed. Pricing is resolved centrally by the Billing module, so the
+   * Surgery module never owns procedure prices.
+   *
+   * Missing catalogue entries do not roll back or break the clinical surgery
+   * workflow. Instead, the surgery billing block records the exact errors and
+   * can be retried through the billing endpoint after the hospital configures
+   * the missing catalogue prices.
+   */
+  public async captureBilling(
+    caseId: string,
+    hospitalId: string,
+    capturedBy: string,
+    _input: CaptureSurgeryBillingInput = {}
+  ): Promise<ISurgeryCaseDocument | null> {
+    await this.assertHospitalMember(hospitalId, capturedBy, 'billing actor ID');
+
+    const existingCase = await SurgeryCaseModel.findOne({
+      _id: caseId,
+      hospitalId,
+    });
+
+    if (!existingCase) return null;
+
+    if (![SurgeryStatus.RECOVERY, SurgeryStatus.COMPLETED].includes(existingCase.status)) {
+      throw new Error('Surgery billing can only be captured after the procedure has entered recovery or completed.');
+    }
+
+    const billing: {
+      status: SurgeryBillingStatus;
+      chargeIds: Types.ObjectId[];
+      errors: string[];
+      lastAttemptAt: Date;
+      capturedAt?: Date;
+    } = {
+      status: SurgeryBillingStatus.NOT_ATTEMPTED,
+      chargeIds: [] as Types.ObjectId[],
+      errors: [] as string[],
+      lastAttemptAt: new Date(),
+    };
+
+    const procedureCode = `SURGERY_${this.billingCode(existingCase.procedureName)}`;
+
+    const items: Array<{
+      code: string;
+      description: string;
+      category: ChargeCategory;
+      quantity?: number;
+      notes?: string;
+    }> = [
+      {
+        code: procedureCode,
+        description: `Surgical procedure: ${existingCase.procedureName}`,
+        category: ChargeCategory.SURGERY,
+      },
+      {
+        code: `SURGERY_PROFESSIONAL_${this.billingCode(existingCase.procedureName)}`,
+        description: `Professional surgical fee: ${existingCase.procedureName}`,
+        category: ChargeCategory.PROFESSIONAL_FEE,
+      },
+      {
+        code: `ANAESTHESIA_${this.billingCode(existingCase.anesthesiaType)}`,
+        description: `Anaesthesia: ${existingCase.anesthesiaType}`,
+        category: ChargeCategory.ANAESTHESIA,
+      },
+    ];
+
+    for (const item of existingCase.consumablesUsed || []) {
+      const code = `SURGERY_CONSUMABLE_${this.billingCode(item.itemName)}`;
+      items.push({
+        code,
+        description: `Surgical consumable: ${item.itemName}`,
+        category: ChargeCategory.CONSUMABLE,
+        quantity: Number(item.quantityUsed || 1),
+        notes: item.lotNumber ? `Lot: ${item.lotNumber}` : undefined,
+      });
+    }
+
+    for (const item of items) {
+      try {
+        const resolvedPrice = await resolvePrice({
+          hospitalId,
+          code: item.code,
+          departmentName: 'Surgery',
+          category: item.category,
+          serviceDate: existingCase.actualEndTime || existingCase.updatedAt || new Date(),
+        });
+
+        const charge = await createCharge({
+          hospitalId,
+          patientId: String(existingCase.patientId),
+          description: item.description,
+          category: item.category,
+          sourceModule: BillingSourceModule.SURGERY,
+          sourceId: this.makeBillingSourceId(caseId, item.code),
+          serviceCode: item.code,
+          catalogueItemId: resolvedPrice.catalogueItemId,
+          departmentName: 'Surgery',
+          quantity: item.quantity ?? 1,
+          unitPrice: resolvedPrice.price,
+          notes: item.notes,
+          chargeDate: existingCase.actualEndTime || existingCase.updatedAt || new Date(),
+        });
+
+        if (charge?._id) {
+          billing.chargeIds.push(new Types.ObjectId(String(charge._id)));
+        }
+      } catch (error: any) {
+        billing.errors.push(
+          `${item.code}: ${error?.message || 'Unable to create billing charge.'}`
+        );
+      }
+    }
+
+    if (billing.errors.length === 0) {
+      billing.status = SurgeryBillingStatus.CAPTURED;
+      billing.capturedAt = new Date();
+    } else if (billing.chargeIds.length > 0) {
+      billing.status = SurgeryBillingStatus.PARTIAL;
+    } else {
+      billing.status = SurgeryBillingStatus.FAILED;
+    }
+
+    return SurgeryCaseModel.findOneAndUpdate(
+      { _id: caseId, hospitalId },
+      {
+        $set: {
+          billing,
+          updatedBy: new Types.ObjectId(capturedBy),
+        },
+      },
+      { new: true }
+    ).exec();
+  }
+
   public async completeSurgery(
     caseId: string,
     hospitalId: string,
@@ -1692,38 +1851,47 @@ export class SurgeryService {
         now,
     };
 
-    return SurgeryCaseModel.findOneAndUpdate(
+    const completedCase = await SurgeryCaseModel.findOneAndUpdate(
       {
         _id: caseId,
-
         hospitalId,
-
-        status:
-          SurgeryStatus.IN_PROGRESS,
+        status: SurgeryStatus.IN_PROGRESS,
       },
       {
         $set: {
-          status:
-            SurgeryStatus.RECOVERY,
-
-          actualEndTime:
-            now,
-
+          status: SurgeryStatus.RECOVERY,
+          actualEndTime: now,
           intraopDocs,
-
-          postOpNotes:
-            input.postOpNotes,
-
-          updatedBy:
-            new Types.ObjectId(
-              updatedBy
-            ),
+          postOpNotes: input.postOpNotes,
+          updatedBy: new Types.ObjectId(updatedBy),
         },
       },
-      {
-        new: true,
-      }
+      { new: true }
     ).exec();
+
+    if (!completedCase) return null;
+
+    // Billing is intentionally non-blocking: a missing price catalogue entry
+    // must never prevent the clinical surgery from completing.
+    try {
+      return (await this.captureBilling(caseId, hospitalId, updatedBy)) || completedCase;
+    } catch (error: any) {
+      await SurgeryCaseModel.findOneAndUpdate(
+        { _id: caseId, hospitalId },
+        {
+          $set: {
+            billing: {
+              status: SurgeryBillingStatus.FAILED,
+              chargeIds: [],
+              errors: [error?.message || 'Unable to capture surgery billing.'],
+              lastAttemptAt: new Date(),
+            },
+          },
+        }
+      ).exec();
+
+      return completedCase;
+    }
   }
 
   public async updateRecovery(

@@ -105,6 +105,12 @@ router.patch(
     surgeryController.completeSurgery(req, res, next)
 );
 
+router.post(
+  '/:id/billing',
+  (req, res, next) =>
+    surgeryController.captureBilling(req, res, next)
+);
+
 router.patch(
   '/:id/recovery',
   (req, res, next) =>
