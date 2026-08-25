@@ -1,136 +1,21 @@
-import { Request, Response, NextFunction } from 'express';
-import { billingService } from './billing.service.js';
-import { InvoiceStatus, LineItemCategory, PaymentMethod } from './billing.types.js';
-
-export interface AuthenticatedRequest extends Request {
-  user: {
-    _id: string;
-    hospitalId: string;
-    [key: string]: unknown;
-  };
-}
-
-export class BillingController {
-  public async createInvoice(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const createdById = authReq.user._id;
-
-      const { patientId, items, discount, tax, dueDate, notes } = req.body;
-
-      const invoice = await billingService.createInvoice({
-        hospitalId,
-        patientId,
-        items: items as {
-          description: string;
-          category: LineItemCategory;
-          quantity: number;
-          unitPrice: number;
-          referenceId?: string;
-        }[],
-        discount,
-        tax,
-        dueDate: dueDate ? new Date(dueDate) : undefined,
-        createdById,
-        notes,
-      });
-
-      res.status(201).json({ success: true, data: invoice });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async getInvoices(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-
-      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
-      const status = req.query.status as InvoiceStatus | undefined;
-      const patientId = req.query.patientId as string | undefined;
-      const startDate = req.query.startDate as string | undefined;
-      const endDate = req.query.endDate as string | undefined;
-
-      const result = await billingService.getInvoices(hospitalId, {
-        page,
-        limit,
-        status,
-        patientId,
-        startDate,
-        endDate,
-      });
-
-      res.status(200).json({ success: true, data: result });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async getInvoiceById(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const id = req.params.id as string;
-
-      const invoice = await billingService.getInvoiceById(id, hospitalId);
-
-      if (!invoice) {
-        res.status(404).json({ success: false, message: 'Invoice not found' });
-        return;
-      }
-
-      res.status(200).json({ success: true, data: invoice });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async recordPayment(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const receivedBy = authReq.user._id;
-      const id = req.params.id as string;
-
-      const { amount, paymentMethod, paymentReference, notes } = req.body;
-
-      const updated = await billingService.recordPayment(id, hospitalId, {
-        amount,
-        paymentMethod: paymentMethod as PaymentMethod,
-        paymentReference,
-        receivedBy,
-        notes,
-      });
-
-      res.status(200).json({ success: true, data: updated });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async cancelInvoice(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const id = req.params.id as string;
-
-      const { reason } = req.body;
-
-      const updated = await billingService.cancelInvoice(id, hospitalId, reason);
-
-      if (!updated) {
-        res.status(404).json({ success: false, message: 'Invoice not found or cannot be cancelled' });
-        return;
-      }
-
-      res.status(200).json({ success: true, data: updated });
-    } catch (error) {
-      next(error);
-    }
-  }
-}
-
-export const billingController = new BillingController();
+import {Request,Response} from 'express';
+import * as BillingService from './billing.service.js';
+const userId=(req:Request)=>{const u=(req as any).user;return u?._id||u?.id||u?.staffId};
+const hospitalId=(req:Request)=>{const u=(req as any).user;const id=u?.hospitalId||u?.hospital?._id||req.body?.hospitalId||req.query?.hospitalId;if(!id)throw new Error('Hospital ID is required.');return String(id)};
+const fail=(res:Response,e:unknown)=>{const message=e instanceof Error?e.message:'An unexpected error occurred.';const s=message.toLowerCase().includes('not found')?404:message.toLowerCase().includes('already')?409:400;return res.status(s).json({success:false,message})};
+export const createBillingAccount=async(req:Request,res:Response)=>{try{return res.status(201).json({success:true,message:'Billing account created successfully.',data:await BillingService.createBillingAccount({...req.body,hospitalId:req.body?.hospitalId||hospitalId(req)},userId(req))})}catch(e){return fail(res,e)}};
+export const getBillingAccount=async(req:Request,res:Response)=>{try{return res.json({success:true,data:await BillingService.getBillingAccount(req.params.id)})}catch(e){return fail(res,e)}};
+export const getPatientBillingAccount=async(req:Request,res:Response)=>{try{return res.json({success:true,data:await BillingService.getPatientBillingAccount(hospitalId(req),req.params.patientId)})}catch(e){return fail(res,e)}};
+export const getPatientBilling=async(req:Request,res:Response)=>{try{return res.json({success:true,data:await BillingService.getPatientBilling(hospitalId(req),req.params.patientId)})}catch(e){return fail(res,e)}};
+export const createPricingCatalogueItem=async(req:Request,res:Response)=>{try{return res.status(201).json({success:true,message:'Pricing catalogue item created successfully.',data:await BillingService.createPricingCatalogueItem({...req.body,hospitalId:req.body?.hospitalId||hospitalId(req)},userId(req))})}catch(e){return fail(res,e)}};
+export const getPricingCatalogue=async(req:Request,res:Response)=>{try{return res.json({success:true,data:await BillingService.getPricingCatalogue(hospitalId(req),req.query as any)})}catch(e){return fail(res,e)}};
+export const updatePricingCatalogueItem=async(req:Request,res:Response)=>{try{return res.json({success:true,message:'Pricing catalogue item updated successfully.',data:await BillingService.updatePricingCatalogueItem(req.params.id,req.body,userId(req))})}catch(e){return fail(res,e)}};
+export const createCharge=async(req:Request,res:Response)=>{try{return res.status(201).json({success:true,message:'Charge posted successfully.',data:await BillingService.createCharge({...req.body,hospitalId:req.body?.hospitalId||hospitalId(req),chargedBy:req.body?.chargedBy||userId(req)})})}catch(e){return fail(res,e)}};
+export const getCharges=async(req:Request,res:Response)=>{try{return res.json({success:true,data:await BillingService.getCharges(hospitalId(req),req.query as any)})}catch(e){return fail(res,e)}};
+export const createPayment=async(req:Request,res:Response)=>{try{return res.status(201).json({success:true,message:'Payment recorded successfully.',data:await BillingService.createPayment({...req.body,hospitalId:req.body?.hospitalId||hospitalId(req),receivedBy:req.body?.receivedBy||userId(req)})})}catch(e){return fail(res,e)}};
+export const getPayments=async(req:Request,res:Response)=>{try{return res.json({success:true,data:await BillingService.getPayments(hospitalId(req),req.query as any)})}catch(e){return fail(res,e)}};
+export const reconcilePayment=async(req:Request,res:Response)=>{try{return res.json({success:true,message:'Payment reconciliation updated successfully.',data:await BillingService.reconcilePayment(req.params.id,{...req.body,reconciledBy:req.body?.reconciledBy||userId(req)})})}catch(e){return fail(res,e)}};
+export const createRefund=async(req:Request,res:Response)=>{try{return res.status(201).json({success:true,message:'Refund request created successfully.',data:await BillingService.createRefund({...req.body,hospitalId:req.body?.hospitalId||hospitalId(req),requestedBy:req.body?.requestedBy||userId(req)})})}catch(e){return fail(res,e)}};
+export const decideRefund=async(req:Request,res:Response)=>{try{return res.json({success:true,message:req.body?.approved?'Refund approved.':'Refund rejected.',data:await BillingService.decideRefund(req.params.id,Boolean(req.body?.approved),userId(req),req.body?.rejectionReason)})}catch(e){return fail(res,e)}};
+export const completeRefund=async(req:Request,res:Response)=>{try{return res.json({success:true,message:'Refund completed successfully.',data:await BillingService.completeRefund(req.params.id)})}catch(e){return fail(res,e)}};
+export const createPaymentPlan=async(req:Request,res:Response)=>{try{return res.status(201).json({success:true,message:'Payment plan created successfully.',data:await BillingService.createPaymentPlan({...req.body,hospitalId:req.body?.hospitalId||hospitalId(req),createdBy:req.body?.createdBy||userId(req)})})}catch(e){return fail(res,e)}};

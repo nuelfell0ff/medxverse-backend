@@ -1,71 +1,31 @@
-import { Schema, model } from 'mongoose';
-import {
-  IInvoiceDocument,
-  InvoiceStatus,
-  PaymentMethod,
-  LineItemCategory,
-} from './billing.types.js';
+import mongoose,{Model,Schema,Types} from 'mongoose';
+import {BillingAccountStatus,BillingSourceModule,ChargeCategory,ChargeStatus,PaymentMethod,PaymentPlanFrequency,PaymentPlanStatus,PaymentStatus,ReconciliationStatus,RefundStatus} from './billing.types.js';
 
-const InvoiceLineItemSchema = new Schema(
-  {
-    description: { type: String, required: true, trim: true },
-    category: {
-      type: String,
-      enum: Object.values(LineItemCategory),
-      required: true,
-    },
-    quantity: { type: Number, required: true, min: 1 },
-    unitPrice: { type: Number, required: true, min: 0 },
-    totalPrice: { type: Number, required: true, min: 0 },
-    referenceId: { type: String, trim: true },
-  },
-  { _id: false }
-);
+export interface IBillingAccount { _id?:Types.ObjectId; hospitalId:Types.ObjectId; patientId:Types.ObjectId; billingId:string; accountName?:string; status:BillingAccountStatus; notes?:string; createdBy?:Types.ObjectId; updatedBy?:Types.ObjectId; createdAt?:Date; updatedAt?:Date }
+const BillingAccountSchema=new Schema<IBillingAccount>({hospitalId:{type:Schema.Types.ObjectId,required:true,index:true},patientId:{type:Schema.Types.ObjectId,required:true,ref:'Patient',index:true},billingId:{type:String,required:true,unique:true,index:true,uppercase:true,trim:true},accountName:{type:String,trim:true},status:{type:String,enum:Object.values(BillingAccountStatus),default:BillingAccountStatus.ACTIVE,index:true},notes:String,createdBy:{type:Schema.Types.ObjectId,ref:'Staff'},updatedBy:{type:Schema.Types.ObjectId,ref:'Staff'}},{timestamps:true});
+BillingAccountSchema.index({hospitalId:1,patientId:1},{unique:true});
+export const BillingAccountModel:Model<IBillingAccount>=mongoose.models.BillingAccount||mongoose.model<IBillingAccount>('BillingAccount',BillingAccountSchema);
 
-const PaymentRecordSchema = new Schema(
-  {
-    transactionId: { type: String, required: true, trim: true },
-    amount: { type: Number, required: true, min: 0.01 },
-    paymentMethod: {
-      type: String,
-      enum: Object.values(PaymentMethod),
-      required: true,
-    },
-    paymentReference: { type: String, trim: true },
-    receivedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    paidAt: { type: Date, default: Date.now, required: true },
-    notes: { type: String, trim: true },
-  },
-  { _id: false }
-);
+export interface IPricingCatalogueItem { _id?:Types.ObjectId; hospitalId:Types.ObjectId; code:string; name:string; category:ChargeCategory; departmentId?:Types.ObjectId; departmentName?:string; price:number; currency:string; description?:string; effectiveFrom?:Date; effectiveTo?:Date; isActive:boolean; createdBy?:Types.ObjectId; updatedBy?:Types.ObjectId; createdAt?:Date; updatedAt?:Date }
+const PricingCatalogueSchema=new Schema<IPricingCatalogueItem>({hospitalId:{type:Schema.Types.ObjectId,required:true,index:true},code:{type:String,required:true,trim:true,uppercase:true},name:{type:String,required:true,trim:true},category:{type:String,enum:Object.values(ChargeCategory),required:true,index:true},departmentId:{type:Schema.Types.ObjectId},departmentName:String,price:{type:Number,required:true,min:0},currency:{type:String,default:'NGN',uppercase:true,trim:true},description:String,effectiveFrom:Date,effectiveTo:Date,isActive:{type:Boolean,default:true,index:true},createdBy:{type:Schema.Types.ObjectId,ref:'Staff'},updatedBy:{type:Schema.Types.ObjectId,ref:'Staff'}},{timestamps:true});
+PricingCatalogueSchema.index({hospitalId:1,code:1,departmentId:1},{unique:true});
+export const PricingCatalogueModel:Model<IPricingCatalogueItem>=mongoose.models.PricingCatalogue||mongoose.model<IPricingCatalogueItem>('PricingCatalogue',PricingCatalogueSchema);
 
-const InvoiceSchema = new Schema<IInvoiceDocument>(
-  {
-    hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
-    patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-    invoiceNumber: { type: String, required: true, unique: true, trim: true, index: true },
-    status: {
-      type: String,
-      enum: Object.values(InvoiceStatus),
-      default: InvoiceStatus.PENDING,
-      required: true,
-      index: true,
-    },
-    items: { type: [InvoiceLineItemSchema], required: true },
-    subtotal: { type: Number, required: true, min: 0 },
-    discount: { type: Number, default: 0, min: 0 },
-    tax: { type: Number, default: 0, min: 0 },
-    totalAmount: { type: Number, required: true, min: 0 },
-    amountPaid: { type: Number, default: 0, min: 0 },
-    balanceDue: { type: Number, required: true, min: 0 },
-    payments: [PaymentRecordSchema],
-    dueDate: { type: Date },
-    createdById: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    notes: { type: String, trim: true },
-  },
-  { timestamps: true }
-);
+export interface ICharge { _id?:Types.ObjectId; hospitalId:Types.ObjectId; patientId:Types.ObjectId; billingAccountId:Types.ObjectId; catalogueItemId?:Types.ObjectId; serviceCode?:string; description:string; category:ChargeCategory; sourceModule:BillingSourceModule; sourceId?:Types.ObjectId; departmentId?:Types.ObjectId; departmentName?:string; quantity:number; unitPrice:number; grossAmount:number; discountAmount:number; taxAmount:number; netAmount:number; amountPaid:number; status:ChargeStatus; notes?:string; chargedBy?:Types.ObjectId; chargeDate:Date; voidedAt?:Date; voidedBy?:Types.ObjectId; voidReason?:string; createdAt?:Date; updatedAt?:Date }
+const ChargeSchema=new Schema<ICharge>({hospitalId:{type:Schema.Types.ObjectId,required:true,index:true},patientId:{type:Schema.Types.ObjectId,required:true,ref:'Patient',index:true},billingAccountId:{type:Schema.Types.ObjectId,required:true,ref:'BillingAccount',index:true},catalogueItemId:{type:Schema.Types.ObjectId,ref:'PricingCatalogue'},serviceCode:{type:String,trim:true,uppercase:true},description:{type:String,required:true,trim:true},category:{type:String,enum:Object.values(ChargeCategory),required:true,index:true},sourceModule:{type:String,enum:Object.values(BillingSourceModule),default:BillingSourceModule.MANUAL,index:true},sourceId:{type:Schema.Types.ObjectId},departmentId:{type:Schema.Types.ObjectId},departmentName:String,quantity:{type:Number,min:.01,default:1},unitPrice:{type:Number,required:true,min:0},grossAmount:{type:Number,required:true,min:0},discountAmount:{type:Number,min:0,default:0},taxAmount:{type:Number,min:0,default:0},netAmount:{type:Number,required:true,min:0},amountPaid:{type:Number,min:0,default:0},status:{type:String,enum:Object.values(ChargeStatus),default:ChargeStatus.POSTED,index:true},notes:String,chargedBy:{type:Schema.Types.ObjectId,ref:'Staff'},chargeDate:{type:Date,default:Date.now,index:true},voidedAt:Date,voidedBy:{type:Schema.Types.ObjectId,ref:'Staff'},voidReason:String},{timestamps:true});
+ChargeSchema.index({hospitalId:1,patientId:1,chargeDate:-1}); ChargeSchema.index({sourceModule:1,sourceId:1});
+export const ChargeModel:Model<ICharge>=mongoose.models.BillingCharge||mongoose.model<ICharge>('BillingCharge',ChargeSchema);
 
-InvoiceSchema.index({ hospitalId: 1, status: 1, createdAt: -1 });
+export interface IPayment { _id?:Types.ObjectId; hospitalId:Types.ObjectId; patientId:Types.ObjectId; billingAccountId:Types.ObjectId; receiptNumber:string; amount:number; method:PaymentMethod; status:PaymentStatus; reference?:string; provider?:string; providerTransactionId?:string; notes?:string; receivedBy?:Types.ObjectId; paidAt:Date; reconciliationStatus:ReconciliationStatus; reconciledBy?:Types.ObjectId; reconciledAt?:Date; reconciliationReference?:string; reconciliationNotes?:string; refundedAmount:number; createdAt?:Date; updatedAt?:Date }
+const PaymentSchema=new Schema<IPayment>({hospitalId:{type:Schema.Types.ObjectId,required:true,index:true},patientId:{type:Schema.Types.ObjectId,required:true,ref:'Patient',index:true},billingAccountId:{type:Schema.Types.ObjectId,required:true,ref:'BillingAccount',index:true},receiptNumber:{type:String,required:true,unique:true,index:true,uppercase:true},amount:{type:Number,required:true,min:.01},method:{type:String,enum:Object.values(PaymentMethod),required:true,index:true},status:{type:String,enum:Object.values(PaymentStatus),default:PaymentStatus.CONFIRMED,index:true},reference:{type:String,trim:true,index:true},provider:String,providerTransactionId:{type:String,trim:true,index:true},notes:String,receivedBy:{type:Schema.Types.ObjectId,ref:'Staff'},paidAt:{type:Date,default:Date.now,index:true},reconciliationStatus:{type:String,enum:Object.values(ReconciliationStatus),default:ReconciliationStatus.UNRECONCILED,index:true},reconciledBy:{type:Schema.Types.ObjectId,ref:'Staff'},reconciledAt:Date,reconciliationReference:String,reconciliationNotes:String,refundedAmount:{type:Number,min:0,default:0}},{timestamps:true});
+export const PaymentModel:Model<IPayment>=mongoose.models.BillingPayment||mongoose.model<IPayment>('BillingPayment',PaymentSchema);
 
-export const InvoiceModel = model<IInvoiceDocument>('Invoice', InvoiceSchema);
+export interface IRefund { _id?:Types.ObjectId; hospitalId:Types.ObjectId; patientId:Types.ObjectId; billingAccountId:Types.ObjectId; paymentId:Types.ObjectId; amount:number; reason:string; status:RefundStatus; requestedBy?:Types.ObjectId; approvedBy?:Types.ObjectId; approvedAt?:Date; completedAt?:Date; rejectedReason?:string; createdAt?:Date; updatedAt?:Date }
+const RefundSchema=new Schema<IRefund>({hospitalId:{type:Schema.Types.ObjectId,required:true,index:true},patientId:{type:Schema.Types.ObjectId,required:true,ref:'Patient'},billingAccountId:{type:Schema.Types.ObjectId,required:true,ref:'BillingAccount'},paymentId:{type:Schema.Types.ObjectId,required:true,ref:'BillingPayment'},amount:{type:Number,required:true,min:.01},reason:{type:String,required:true,trim:true},status:{type:String,enum:Object.values(RefundStatus),default:RefundStatus.PENDING,index:true},requestedBy:{type:Schema.Types.ObjectId,ref:'Staff'},approvedBy:{type:Schema.Types.ObjectId,ref:'Staff'},approvedAt:Date,completedAt:Date,rejectedReason:String},{timestamps:true});
+export const RefundModel:Model<IRefund>=mongoose.models.BillingRefund||mongoose.model<IRefund>('BillingRefund',RefundSchema);
+
+export interface IPaymentPlanInstallment { _id?:Types.ObjectId; dueDate:Date; amount:number; paidAmount:number; status:'PENDING'|'PARTIAL'|'PAID'|'OVERDUE'; paidAt?:Date }
+export interface IPaymentPlan { _id?:Types.ObjectId; hospitalId:Types.ObjectId; patientId:Types.ObjectId; billingAccountId:Types.ObjectId; totalAmount:number; installmentAmount:number; frequency:PaymentPlanFrequency; startDate:Date; endDate?:Date; status:PaymentPlanStatus; installments:IPaymentPlanInstallment[]; notes?:string; createdBy?:Types.ObjectId; createdAt?:Date; updatedAt?:Date }
+const InstallmentSchema=new Schema<IPaymentPlanInstallment>({dueDate:{type:Date,required:true},amount:{type:Number,required:true,min:0},paidAmount:{type:Number,min:0,default:0},status:{type:String,enum:['PENDING','PARTIAL','PAID','OVERDUE'],default:'PENDING'},paidAt:Date},{_id:true});
+const PaymentPlanSchema=new Schema<IPaymentPlan>({hospitalId:{type:Schema.Types.ObjectId,required:true,index:true},patientId:{type:Schema.Types.ObjectId,required:true,ref:'Patient'},billingAccountId:{type:Schema.Types.ObjectId,required:true,ref:'BillingAccount'},totalAmount:{type:Number,required:true,min:.01},installmentAmount:{type:Number,required:true,min:.01},frequency:{type:String,enum:Object.values(PaymentPlanFrequency),required:true},startDate:{type:Date,required:true},endDate:Date,status:{type:String,enum:Object.values(PaymentPlanStatus),default:PaymentPlanStatus.ACTIVE,index:true},installments:{type:[InstallmentSchema],default:[]},notes:String,createdBy:{type:Schema.Types.ObjectId,ref:'Staff'}},{timestamps:true});
+export const PaymentPlanModel:Model<IPaymentPlan>=mongoose.models.PaymentPlan||mongoose.model<IPaymentPlan>('PaymentPlan',PaymentPlanSchema);

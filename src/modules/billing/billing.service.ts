@@ -1,172 +1,29 @@
-import { Types } from 'mongoose';
-import { InvoiceModel } from './billing.model.js';
-import {
-  CreateInvoiceInput,
-  GetInvoicesQuery,
-  IInvoiceDocument,
-  InvoiceStatus,
-  RecordPaymentInput,
-} from './billing.types.js';
+import {Types} from 'mongoose';
+import {BillingAccountModel,ChargeModel,PaymentModel,PaymentPlanModel,PricingCatalogueModel,RefundModel} from './billing.model.js';
+import {BillingAccountStatus,BillingListQuery,BillingSourceModule,ChargeStatus,CreateBillingAccountInput,CreateChargeInput,CreatePaymentInput,CreatePaymentPlanInput,CreatePricingCatalogueItemInput,CreateRefundInput,PaymentMethod,PaymentPlanFrequency,PaymentPlanStatus,PaymentStatus,ReconcilePaymentInput,ReconciliationStatus,RefundStatus,UpdatePricingCatalogueItemInput} from './billing.types.js';
 
-export class BillingService {
-  private generateInvoiceNumber(): string {
-    const prefix = 'INV';
-    const timestamp = Date.now().toString().slice(-6);
-    const random = Math.floor(1000 + Math.random() * 9000);
-    return `${prefix}-${timestamp}-${random}`;
-  }
+const oid=(v:string|Types.ObjectId,f:string)=>{if(v instanceof Types.ObjectId)return v;if(!Types.ObjectId.isValid(v))throw new Error(`Invalid ${f}`);return new Types.ObjectId(v)};
+const money=(v:number)=>{const n=Number(v);if(!Number.isFinite(n)||n<0)throw new Error('Amount must be a valid non-negative number.');return Math.round((n+Number.EPSILON)*100)/100};
+const number=(p:string)=>`${p}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
 
-  private generateTransactionId(): string {
-    const prefix = 'TXN';
-    const timestamp = Date.now().toString().slice(-6);
-    const random = Math.floor(1000 + Math.random() * 9000);
-    return `${prefix}-${timestamp}-${random}`;
-  }
+export const createBillingAccount=async(input:CreateBillingAccountInput,userId?:string)=>{const hospitalId=oid(String(input.hospitalId),'hospital ID'),patientId=oid(String(input.patientId),'patient ID');const existing=await BillingAccountModel.findOne({hospitalId,patientId});if(existing)return existing;return BillingAccountModel.create({hospitalId,patientId,billingId:number('BILL'),accountName:input.accountName?.trim(),status:BillingAccountStatus.ACTIVE,notes:input.notes?.trim(),createdBy:userId?oid(userId,'user ID'):undefined})};
+export const getBillingSummary=async(accountId:string)=>{const id=oid(accountId,'billing account ID');const [c,p,r]=await Promise.all([ChargeModel.aggregate([{$match:{billingAccountId:id,status:{$ne:ChargeStatus.VOIDED}}},{$group:{_id:null,gross:{$sum:'$grossAmount'},discount:{$sum:'$discountAmount'},tax:{$sum:'$taxAmount'},net:{$sum:'$netAmount'}}}]),PaymentModel.aggregate([{$match:{billingAccountId:id,status:{$in:[PaymentStatus.CONFIRMED,PaymentStatus.PARTIALLY_REFUNDED]}}},{$group:{_id:null,total:{$sum:'$amount'}}}]),RefundModel.aggregate([{$match:{billingAccountId:id,status:RefundStatus.COMPLETED}},{$group:{_id:null,total:{$sum:'$amount'}}}])]);const net=money(c[0]?.net||0),paid=money(p[0]?.total||0),refunded=money(r[0]?.total||0);return{totalCharges:money(c[0]?.gross||0),totalDiscounts:money(c[0]?.discount||0),totalTax:money(c[0]?.tax||0),netCharges:net,totalPaid:paid,totalRefunded:refunded,outstandingBalance:money(Math.max(0,net-paid+refunded)),availableCredit:money(Math.max(0,paid-refunded-net))}};
+export const getBillingAccount=async(id:string)=>{const a=await BillingAccountModel.findById(id).lean();if(!a)throw new Error('Billing account not found.');return{...a,summary:await getBillingSummary(String(a._id))}};
+export const getPatientBillingAccount=async(hospitalId:string,patientId:string)=>{let a=await BillingAccountModel.findOne({hospitalId:oid(hospitalId,'hospital ID'),patientId:oid(patientId,'patient ID')}).lean();if(!a)a=(await createBillingAccount({hospitalId,patientId})).toObject();return{...a,summary:await getBillingSummary(String(a._id))}};
+export const getPatientBilling=async(hospitalId:string,patientId:string)=>{const account=await getPatientBillingAccount(hospitalId,patientId),id=String(account._id);const [charges,payments,refunds,paymentPlans]=await Promise.all([ChargeModel.find({billingAccountId:id}).sort({chargeDate:-1}).populate('chargedBy','firstName lastName role').lean(),PaymentModel.find({billingAccountId:id}).sort({paidAt:-1}).populate('receivedBy','firstName lastName role').lean(),RefundModel.find({billingAccountId:id}).sort({createdAt:-1}).lean(),PaymentPlanModel.find({billingAccountId:id}).sort({createdAt:-1}).lean()]);return{account,summary:await getBillingSummary(id),charges,payments,refunds,paymentPlans}};
 
-  public async createInvoice(input: CreateInvoiceInput): Promise<IInvoiceDocument> {
-    const formattedItems = input.items.map((item) => ({
-      ...item,
-      totalPrice: item.quantity * item.unitPrice,
-    }));
+export const createPricingCatalogueItem=async(input:CreatePricingCatalogueItemInput,userId?:string)=>PricingCatalogueModel.create({hospitalId:oid(String(input.hospitalId),'hospital ID'),code:input.code.trim().toUpperCase(),name:input.name.trim(),category:input.category,departmentId:input.departmentId?oid(String(input.departmentId),'department ID'):undefined,departmentName:input.departmentName?.trim(),price:money(input.price),currency:input.currency?.trim().toUpperCase()||'NGN',description:input.description?.trim(),effectiveFrom:input.effectiveFrom?new Date(input.effectiveFrom):undefined,effectiveTo:input.effectiveTo?new Date(input.effectiveTo):undefined,createdBy:userId?oid(userId,'user ID'):undefined});
+export const getPricingCatalogue=async(hospitalId:string,q:BillingListQuery)=>{const page=Math.max(1,Number(q.page)||1),limit=Math.min(100,Math.max(1,Number(q.limit)||25));const f:any={hospitalId:oid(hospitalId,'hospital ID')};if(q.category)f.category=q.category;if(q.search?.trim())f.$or=[{code:{$regex:q.search.trim(),$options:'i'}},{name:{$regex:q.search.trim(),$options:'i'}},{departmentName:{$regex:q.search.trim(),$options:'i'}}];const[items,total]=await Promise.all([PricingCatalogueModel.find(f).sort({isActive:-1,name:1}).skip((page-1)*limit).limit(limit).lean(),PricingCatalogueModel.countDocuments(f)]);return{items,total,page,totalPages:Math.ceil(total/limit)}};
+export const updatePricingCatalogueItem=async(id:string,input:UpdatePricingCatalogueItemInput,userId?:string)=>{const u:any={...input};if(input.code!==undefined)u.code=input.code.trim().toUpperCase();if(input.name!==undefined)u.name=input.name.trim();if(input.price!==undefined)u.price=money(input.price);if(input.departmentId!==undefined)u.departmentId=input.departmentId?oid(String(input.departmentId),'department ID'):null;if(userId)u.updatedBy=oid(userId,'user ID');const item=await PricingCatalogueModel.findByIdAndUpdate(id,u,{new:true,runValidators:true});if(!item)throw new Error('Pricing catalogue item not found.');return item};
 
-    const subtotal = formattedItems.reduce((acc, curr) => acc + curr.totalPrice, 0);
-    const discount = input.discount || 0;
-    const tax = input.tax || 0;
-    const totalAmount = Math.max(0, subtotal - discount + tax);
-    const invoiceNumber = this.generateInvoiceNumber();
+export const createCharge=async(input:CreateChargeInput)=>{const hospitalId=oid(String(input.hospitalId),'hospital ID'),patientId=oid(String(input.patientId),'patient ID');let account=input.billingAccountId?await BillingAccountModel.findById(input.billingAccountId):await BillingAccountModel.findOne({hospitalId,patientId});if(!account)account=await createBillingAccount({hospitalId,patientId});if(account.status===BillingAccountStatus.CLOSED)throw new Error('Billing account is closed.');const quantity=Number(input.quantity??1);if(quantity<=0)throw new Error('Quantity must be greater than zero.');const unitPrice=money(input.unitPrice),gross=money(quantity*unitPrice),discount=money(input.discountAmount??0),tax=money(input.taxAmount??0);if(discount>gross)throw new Error('Discount cannot exceed the gross charge.');if(input.sourceId&&input.sourceModule&&input.sourceModule!==BillingSourceModule.MANUAL){const existing=await ChargeModel.findOne({hospitalId,sourceModule:input.sourceModule,sourceId:oid(String(input.sourceId),'source ID'),status:{$ne:ChargeStatus.VOIDED}});if(existing)return existing}return ChargeModel.create({hospitalId,patientId,billingAccountId:account._id,catalogueItemId:input.catalogueItemId?oid(String(input.catalogueItemId),'catalogue item ID'):undefined,serviceCode:input.serviceCode?.trim().toUpperCase(),description:input.description.trim(),category:input.category,sourceModule:input.sourceModule||BillingSourceModule.MANUAL,sourceId:input.sourceId?oid(String(input.sourceId),'source ID'):undefined,departmentId:input.departmentId?oid(String(input.departmentId),'department ID'):undefined,departmentName:input.departmentName?.trim(),quantity,unitPrice,grossAmount:gross,discountAmount:discount,taxAmount:tax,netAmount:money(gross-discount+tax),status:ChargeStatus.POSTED,notes:input.notes?.trim(),chargedBy:input.chargedBy?oid(String(input.chargedBy),'charged by ID'):undefined,chargeDate:input.chargeDate?new Date(input.chargeDate):new Date()})};
+export const getCharges=async(hospitalId:string,q:BillingListQuery)=>{const page=Math.max(1,Number(q.page)||1),limit=Math.min(100,Math.max(1,Number(q.limit)||25));const f:any={hospitalId:oid(hospitalId,'hospital ID')};if(q.patientId)f.patientId=oid(q.patientId,'patient ID');if(q.billingAccountId)f.billingAccountId=oid(q.billingAccountId,'billing account ID');if(q.category)f.category=q.category;if(q.status)f.status=q.status;if(q.sourceModule)f.sourceModule=q.sourceModule;if(q.startDate||q.endDate)f.chargeDate={$gte:q.startDate?new Date(`${q.startDate}T00:00:00.000`):undefined,$lte:q.endDate?new Date(`${q.endDate}T23:59:59.999`):undefined};if(q.search?.trim())f.$or=[{description:{$regex:q.search.trim(),$options:'i'}},{serviceCode:{$regex:q.search.trim(),$options:'i'}}];const[items,total]=await Promise.all([ChargeModel.find(f).populate('patientId','firstName lastName mrn').populate('billingAccountId','billingId').sort({chargeDate:-1}).skip((page-1)*limit).limit(limit).lean(),ChargeModel.countDocuments(f)]);return{items,total,page,totalPages:Math.ceil(total/limit)}};
 
-    return InvoiceModel.create({
-      hospitalId: input.hospitalId,
-      patientId: input.patientId,
-      invoiceNumber,
-      items: formattedItems,
-      subtotal,
-      discount,
-      tax,
-      totalAmount,
-      amountPaid: 0,
-      balanceDue: totalAmount,
-      status: InvoiceStatus.PENDING,
-      dueDate: input.dueDate,
-      createdById: input.createdById,
-      notes: input.notes,
-    });
-  }
-
-  public async getInvoices(
-    hospitalId: string,
-    query: GetInvoicesQuery
-  ): Promise<{ invoices: IInvoiceDocument[]; total: number; page: number; totalPages: number }> {
-    const page = Math.max(1, query.page || 1);
-    const limit = Math.min(50, Math.max(1, query.limit || 20));
-    const skip = (page - 1) * limit;
-
-    const filter: Record<string, unknown> = { hospitalId };
-
-    if (query.status) filter.status = query.status;
-    if (query.patientId) filter.patientId = query.patientId;
-
-    if (query.startDate || query.endDate) {
-      filter.createdAt = {};
-      if (query.startDate) {
-        (filter.createdAt as Record<string, unknown>).$gte = new Date(query.startDate);
-      }
-      if (query.endDate) {
-        (filter.createdAt as Record<string, unknown>).$lte = new Date(query.endDate);
-      }
-    }
-
-    const [invoices, total] = await Promise.all([
-      InvoiceModel.find(filter)
-        .populate('patientId', 'firstName lastName mrn phone email')
-        .populate('createdById', 'firstName lastName role')
-        .populate('payments.receivedBy', 'firstName lastName role')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
-      InvoiceModel.countDocuments(filter),
-    ]);
-
-    return {
-      invoices,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-    };
-  }
-
-  public async getInvoiceById(invoiceId: string, hospitalId: string): Promise<IInvoiceDocument | null> {
-    return InvoiceModel.findOne({ _id: invoiceId, hospitalId })
-      .populate('patientId', 'firstName lastName mrn phone email address')
-      .populate('createdById', 'firstName lastName role')
-      .populate('payments.receivedBy', 'firstName lastName role')
-      .exec();
-  }
-
-  public async recordPayment(
-    invoiceId: string,
-    hospitalId: string,
-    input: RecordPaymentInput
-  ): Promise<IInvoiceDocument | null> {
-    const invoice = await InvoiceModel.findOne({ _id: invoiceId, hospitalId });
-    if (!invoice) {
-      throw new Error('Invoice not found.');
-    }
-
-    if (invoice.status === InvoiceStatus.PAID) {
-      throw new Error('Invoice is already fully paid.');
-    }
-
-    if (input.amount > invoice.balanceDue) {
-      throw new Error(`Payment amount (${input.amount}) exceeds balance due (${invoice.balanceDue}).`);
-    }
-
-    const paymentRecord = {
-      transactionId: this.generateTransactionId(),
-      amount: input.amount,
-      paymentMethod: input.paymentMethod,
-      paymentReference: input.paymentReference,
-      receivedBy: new Types.ObjectId(input.receivedBy),
-      paidAt: new Date(),
-      notes: input.notes,
-    };
-
-    const newAmountPaid = invoice.amountPaid + input.amount;
-    const newBalanceDue = Math.max(0, invoice.totalAmount - newAmountPaid);
-    const newStatus =
-      newBalanceDue === 0 ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID;
-
-    return InvoiceModel.findOneAndUpdate(
-      { _id: invoiceId, hospitalId },
-      {
-        $set: {
-          amountPaid: newAmountPaid,
-          balanceDue: newBalanceDue,
-          status: newStatus,
-        },
-        $push: { payments: paymentRecord },
-      },
-      { new: true }
-    ).exec();
-  }
-
-  public async cancelInvoice(
-    invoiceId: string,
-    hospitalId: string,
-    reason?: string
-  ): Promise<IInvoiceDocument | null> {
-    return InvoiceModel.findOneAndUpdate(
-      { _id: invoiceId, hospitalId, status: InvoiceStatus.PENDING },
-      {
-        $set: {
-          status: InvoiceStatus.CANCELLED,
-          notes: reason ? `Cancelled: ${reason}` : 'Cancelled',
-        },
-      },
-      { new: true }
-    ).exec();
-  }
-}
-
-export const billingService = new BillingService();
+const allocate=async(accountId:string,amount:number)=>{let remaining=money(amount);const charges=await ChargeModel.find({billingAccountId:oid(accountId,'billing account ID'),status:{$in:[ChargeStatus.POSTED,ChargeStatus.PARTIALLY_PAID]},$expr:{$lt:['$amountPaid','$netAmount']}}).sort({chargeDate:1,createdAt:1});for(const c of charges){if(remaining<=0)break;const due=money(c.netAmount-c.amountPaid),take=money(Math.min(due,remaining));c.amountPaid=money(c.amountPaid+take);c.status=c.amountPaid>=c.netAmount?ChargeStatus.PAID:ChargeStatus.PARTIALLY_PAID;await c.save();remaining=money(remaining-take)}};
+export const createPayment=async(input:CreatePaymentInput)=>{const hospitalId=oid(String(input.hospitalId),'hospital ID'),patientId=oid(String(input.patientId),'patient ID');let account=input.billingAccountId?await BillingAccountModel.findById(input.billingAccountId):await BillingAccountModel.findOne({hospitalId,patientId});if(!account)account=await createBillingAccount({hospitalId,patientId});const amount=money(input.amount);if(amount<=0)throw new Error('Payment amount must be greater than zero.');const p=await PaymentModel.create({hospitalId,patientId,billingAccountId:account._id,receiptNumber:number('RCT'),amount,method:input.method,status:PaymentStatus.CONFIRMED,reference:input.reference?.trim(),provider:input.provider?.trim(),providerTransactionId:input.providerTransactionId?.trim(),notes:input.notes?.trim(),receivedBy:input.receivedBy?oid(String(input.receivedBy),'received by ID'):undefined,paidAt:input.paidAt?new Date(input.paidAt):new Date(),reconciliationStatus:input.method===PaymentMethod.CASH?ReconciliationStatus.RECONCILED:ReconciliationStatus.UNRECONCILED});await allocate(String(account._id),amount);return p};
+export const getPayments=async(hospitalId:string,q:BillingListQuery)=>{const page=Math.max(1,Number(q.page)||1),limit=Math.min(100,Math.max(1,Number(q.limit)||25));const f:any={hospitalId:oid(hospitalId,'hospital ID')};if(q.patientId)f.patientId=oid(q.patientId,'patient ID');if(q.billingAccountId)f.billingAccountId=oid(q.billingAccountId,'billing account ID');if(q.paymentMethod)f.method=q.paymentMethod;if(q.paymentStatus)f.status=q.paymentStatus;if(q.startDate||q.endDate)f.paidAt={$gte:q.startDate?new Date(`${q.startDate}T00:00:00.000`):undefined,$lte:q.endDate?new Date(`${q.endDate}T23:59:59.999`):undefined};const[items,total]=await Promise.all([PaymentModel.find(f).populate('patientId','firstName lastName mrn').populate('receivedBy','firstName lastName role').sort({paidAt:-1}).skip((page-1)*limit).limit(limit).lean(),PaymentModel.countDocuments(f)]);return{items,total,page,totalPages:Math.ceil(total/limit)}};
+export const reconcilePayment=async(id:string,input:ReconcilePaymentInput)=>{const p=await PaymentModel.findById(id);if(!p)throw new Error('Payment not found.');p.reconciliationStatus=input.status;if(input.status===ReconciliationStatus.RECONCILED){p.reconciledAt=new Date();p.reconciledBy=input.reconciledBy?oid(String(input.reconciledBy),'reconciled by ID'):undefined}p.reconciliationReference=input.reconciliationReference?.trim();p.reconciliationNotes=input.notes?.trim();return p.save()};
+export const createRefund=async(input:CreateRefundInput)=>{const p=await PaymentModel.findById(input.paymentId);if(!p)throw new Error('Payment not found.');const amount=money(input.amount),refundable=money(p.amount-p.refundedAmount);if(amount<=0||amount>refundable)throw new Error('Refund amount exceeds the refundable payment balance.');return RefundModel.create({hospitalId:oid(String(input.hospitalId),'hospital ID'),patientId:oid(String(input.patientId),'patient ID'),billingAccountId:oid(String(input.billingAccountId),'billing account ID'),paymentId:p._id,amount,reason:input.reason.trim(),status:RefundStatus.PENDING,requestedBy:input.requestedBy?oid(String(input.requestedBy),'requested by ID'):undefined})};
+export const decideRefund=async(id:string,approved:boolean,userId?:string,rejectionReason?:string)=>{const r=await RefundModel.findById(id);if(!r)throw new Error('Refund not found.');if(r.status!==RefundStatus.PENDING)throw new Error('Only pending refunds can be decided.');if(!approved){r.status=RefundStatus.REJECTED;r.rejectedReason=rejectionReason?.trim()||'Refund rejected.';return r.save()}r.status=RefundStatus.APPROVED;r.approvedBy=userId?oid(userId,'approved by ID'):undefined;r.approvedAt=new Date();return r.save()};
+export const completeRefund=async(id:string)=>{const r=await RefundModel.findById(id);if(!r)throw new Error('Refund not found.');if(r.status!==RefundStatus.APPROVED)throw new Error('Only approved refunds can be completed.');const p=await PaymentModel.findById(r.paymentId);if(!p)throw new Error('Original payment not found.');if(r.amount>p.amount-p.refundedAmount)throw new Error('Refund exceeds remaining refundable amount.');p.refundedAmount=money(p.refundedAmount+r.amount);p.status=p.refundedAmount>=p.amount?PaymentStatus.REFUNDED:PaymentStatus.PARTIALLY_REFUNDED;await p.save();r.status=RefundStatus.COMPLETED;r.completedAt=new Date();return r.save()};
+export const createPaymentPlan=async(input:CreatePaymentPlanInput)=>{const total=money(input.totalAmount),installment=money(input.installmentAmount);if(installment<=0||installment>total)throw new Error('Invalid installment amount.');const start=new Date(input.startDate);if(Number.isNaN(start.getTime()))throw new Error('Invalid start date.');const installments:any[]=[];let remaining=total,current=new Date(start);while(remaining>0){const amount=money(Math.min(installment,remaining));installments.push({dueDate:new Date(current),amount,paidAmount:0,status:'PENDING'});remaining=money(remaining-amount);if(remaining<=0)break;if(input.frequency===PaymentPlanFrequency.WEEKLY)current.setDate(current.getDate()+7);else if(input.frequency===PaymentPlanFrequency.BIWEEKLY)current.setDate(current.getDate()+14);else current.setMonth(current.getMonth()+1)}return PaymentPlanModel.create({hospitalId:oid(String(input.hospitalId),'hospital ID'),patientId:oid(String(input.patientId),'patient ID'),billingAccountId:oid(String(input.billingAccountId),'billing account ID'),totalAmount:total,installmentAmount:installment,frequency:input.frequency,startDate:start,endDate:input.endDate?new Date(input.endDate):installments.at(-1)?.dueDate,status:PaymentPlanStatus.ACTIVE,installments,notes:input.notes?.trim(),createdBy:input.createdBy?oid(String(input.createdBy),'created by ID'):undefined})};
