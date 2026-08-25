@@ -12,6 +12,7 @@ import {
   PregnancyScreeningStatus,
   ContrastStatus,
   AIStudyPriority,
+  RadiologyBillingStatus,
 } from './radiology.types.js';
 
 /* =========================================================
@@ -684,6 +685,40 @@ const AIAnalysisSchema = new Schema(
 );
 
 /* =========================================================
+   BILLING
+========================================================= */
+
+const RadiologyBillingSchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: Object.values(RadiologyBillingStatus),
+      default: RadiologyBillingStatus.NOT_ATTEMPTED,
+      index: true,
+    },
+
+    chargeIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'Charge',
+      },
+    ],
+
+    errors: {
+      type: [String],
+      default: [],
+    },
+
+    lastAttemptAt: Date,
+
+    capturedAt: Date,
+  },
+  {
+    _id: false,
+  }
+);
+
+/* =========================================================
    RADIOLOGY ORDER
 ========================================================= */
 
@@ -854,6 +889,15 @@ const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
 
     aiAnalysis: {
       type: AIAnalysisSchema,
+    },
+
+    billing: {
+      type: RadiologyBillingSchema,
+      default: () => ({
+        status: RadiologyBillingStatus.NOT_ATTEMPTED,
+        chargeIds: [],
+        errors: [],
+      }),
     },
   },
   {

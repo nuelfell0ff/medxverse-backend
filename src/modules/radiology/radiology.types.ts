@@ -86,6 +86,13 @@ export enum AIStudyPriority {
   CRITICAL = 'CRITICAL',
 }
 
+export enum RadiologyBillingStatus {
+  NOT_ATTEMPTED = 'NOT_ATTEMPTED',
+  CAPTURED = 'CAPTURED',
+  PARTIAL = 'PARTIAL',
+  FAILED = 'FAILED',
+}
+
 export interface RadiologyAssignedStaff {
   _id: Types.ObjectId;
   firstName?: string;
@@ -249,6 +256,14 @@ export interface AIAnalysis {
   qualityNotes?: string;
 }
 
+export interface RadiologyBilling {
+  status: RadiologyBillingStatus;
+  chargeIds: Types.ObjectId[];
+  errors: string[];
+  lastAttemptAt?: Date;
+  capturedAt?: Date;
+}
+
 export interface IRadiologyOrder {
   hospitalId: Types.ObjectId;
   patientId: Types.ObjectId;
@@ -278,6 +293,7 @@ export interface IRadiologyOrder {
   queuePosition?: number;
   queueStatus?: ExaminationQueueStatus;
   aiAnalysis?: AIAnalysis;
+  billing?: RadiologyBilling;
   createdAt: Date;
   updatedAt: Date;
 }

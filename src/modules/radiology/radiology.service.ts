@@ -1,7 +1,10 @@
+import { createHash } from 'crypto';
 import { Types } from 'mongoose';
 
 import { RadiologyOrderModel } from './radiology.model.js';
 import { Staff } from '../staff/staff.model.js';
+import { createCharge } from '../billing/billing.service.js';
+import { BillingSourceModule, ChargeCategory } from '../billing/billing.types.js';
 
 import {
   AssignRadiologyStaffInput,
@@ -24,6 +27,7 @@ import {
   SignRadiologyReportInput,
   ReportStatus,
   CriticalResultStatus,
+  RadiologyBillingStatus,
 } from './radiology.types.js';
 
 const isValidObjectId = (value: string): boolean =>
@@ -41,6 +45,162 @@ export class RadiologyService {
     const random = Math.random().toString(36).substring(2, 7).toUpperCase();
 
     return `RAD-${timestamp}-${random}`;
+  }
+
+  /**
+   * Convert the radiology procedure into the centralized Billing catalogue
+   * code. Example: `CT Brain` -> `RADIOLOGY_CT_BRAIN`.
+   */
+  private getBillingServiceCode(order: IRadiologyOrderDocument): string {
+    const procedure = order.procedureName
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+    if (!procedure) {
+      throw new Error('Radiology procedure name cannot be converted into a billing service code.');
+    }
+
+    return procedure.startsWith('RADIOLOGY_')
+      ? procedure
+      : `RADIOLOGY_${procedure}`;
+  }
+
+  /**
+   * Billing source IDs must be Mongo ObjectIds. The main radiology charge
+   * uses the examination ID directly; the optional contrast charge gets a
+   * deterministic ObjectId derived from the examination ID so retries cannot
+   * create duplicate contrast charges.
+   */
+  private getContrastBillingSourceId(orderId: string): string {
+    return createHash('sha256')
+      .update(`radiology:${orderId}:contrast`)
+      .digest('hex')
+      .slice(0, 24);
+  }
+
+  /**
+   * Capture all applicable radiology charges through the centralized Billing
+   * service. Billing failures are deliberately non-blocking: the examination
+   * workflow remains successful and the failure is recorded on the order for
+   * retry through the manual billing endpoint.
+   */
+  public async captureBilling(
+    orderId: string,
+    hospitalId: string,
+    capturedBy?: string
+  ): Promise<IRadiologyOrderDocument | null> {
+    this.assertObjectId(orderId, 'order ID');
+    this.assertObjectId(hospitalId, 'hospital ID');
+
+    if (capturedBy) {
+      this.assertObjectId(capturedBy, 'captured by ID');
+    }
+
+    const order = await RadiologyOrderModel.findOne({
+      _id: orderId,
+      hospitalId,
+    });
+
+    if (!order) return null;
+
+    if (order.status !== RadiologyOrderStatus.REPORTED &&
+        order.status !== RadiologyOrderStatus.COMPLETED) {
+      throw new Error('Radiology billing can only be captured after the examination is reported or completed.');
+    }
+
+    const existingBilling = order.billing;
+    if (existingBilling?.status === RadiologyBillingStatus.CAPTURED) {
+      return this.populateOrder(orderId, hospitalId);
+    }
+
+    const billing = {
+      status: RadiologyBillingStatus.NOT_ATTEMPTED,
+      chargeIds: existingBilling?.chargeIds || [],
+      errors: [] as string[],
+      lastAttemptAt: new Date(),
+      capturedAt: existingBilling?.capturedAt,
+    };
+
+    const existingChargeIds = new Set(
+      billing.chargeIds.map((id) => String(id))
+    );
+
+    try {
+      const mainCharge = await createCharge({
+        hospitalId,
+        patientId: String(order.patientId),
+        description: `${order.procedureName} - ${order.bodyPart}`,
+        serviceCode: this.getBillingServiceCode(order),
+        category: ChargeCategory.RADIOLOGY,
+        sourceModule: BillingSourceModule.RADIOLOGY,
+        sourceId: String(order._id),
+        departmentName: 'Radiology',
+        quantity: 1,
+        notes: `Radiology examination ${order.accessionNumber || String(order._id)}`,
+        chargedBy: capturedBy,
+        chargeDate: order.reportedAt || order.updatedAt || new Date(),
+      });
+
+      if (mainCharge?._id && !existingChargeIds.has(String(mainCharge._id))) {
+        billing.chargeIds.push(mainCharge._id as Types.ObjectId);
+        existingChargeIds.add(String(mainCharge._id));
+      }
+    } catch (error: any) {
+      billing.errors.push(
+        `Radiology examination: ${error?.message || 'Unable to create radiology billing charge.'}`
+      );
+    }
+
+    if (order.contrast?.status === 'ADMINISTERED') {
+      try {
+        const contrastCharge = await createCharge({
+          hospitalId,
+          patientId: String(order.patientId),
+          description: order.contrast.contrastName
+            ? `Contrast - ${order.contrast.contrastName}`
+            : 'Radiology contrast administration',
+          serviceCode: 'RADIOLOGY_CONTRAST',
+          category: ChargeCategory.RADIOLOGY,
+          sourceModule: BillingSourceModule.RADIOLOGY,
+          sourceId: this.getContrastBillingSourceId(String(order._id)),
+          departmentName: 'Radiology',
+          quantity: 1,
+          notes: order.contrast.notes?.trim(),
+          chargedBy: capturedBy,
+          chargeDate: order.contrast.administeredAt || order.reportedAt || new Date(),
+        });
+
+        if (contrastCharge?._id && !existingChargeIds.has(String(contrastCharge._id))) {
+          billing.chargeIds.push(contrastCharge._id as Types.ObjectId);
+          existingChargeIds.add(String(contrastCharge._id));
+        }
+      } catch (error: any) {
+        billing.errors.push(
+          `Contrast: ${error?.message || 'Unable to create contrast billing charge.'}`
+        );
+      }
+    }
+
+    billing.status =
+      billing.errors.length === 0
+        ? RadiologyBillingStatus.CAPTURED
+        : billing.chargeIds.length > 0
+          ? RadiologyBillingStatus.PARTIAL
+          : RadiologyBillingStatus.FAILED;
+
+    if (billing.status === RadiologyBillingStatus.CAPTURED) {
+      billing.capturedAt = new Date();
+    }
+
+    await RadiologyOrderModel.findOneAndUpdate(
+      { _id: orderId, hospitalId },
+      { $set: { billing } },
+      { new: true, runValidators: true }
+    ).exec();
+
+    return this.populateOrder(orderId, hospitalId);
   }
 
   /**
@@ -599,7 +759,34 @@ export class RadiologyService {
 
     await order.save();
 
-    return order;
+    if (
+      input.status === RadiologyOrderStatus.REPORTED ||
+      input.status === RadiologyOrderStatus.COMPLETED
+    ) {
+      try {
+        return (await this.captureBilling(orderId, hospitalId)) || order;
+      } catch (error: any) {
+        await RadiologyOrderModel.findOneAndUpdate(
+          { _id: orderId, hospitalId },
+          {
+            $set: {
+              billing: {
+                status: RadiologyBillingStatus.FAILED,
+                chargeIds: order.billing?.chargeIds || [],
+                errors: [
+                  error?.message || 'Unable to capture radiology billing.',
+                ],
+                lastAttemptAt: new Date(),
+              },
+            },
+          }
+        ).exec();
+
+        return this.populateOrder(orderId, hospitalId);
+      }
+    }
+
+    return this.populateOrder(orderId, hospitalId);
   }
 
   public async updateQueue(
@@ -1018,7 +1205,31 @@ export class RadiologyService {
 
     await order.save();
 
-    return order;
+    try {
+      return (await this.captureBilling(
+        orderId,
+        hospitalId,
+        input.radiologistId
+      )) || order;
+    } catch (error: any) {
+      await RadiologyOrderModel.findOneAndUpdate(
+        { _id: orderId, hospitalId },
+        {
+          $set: {
+            billing: {
+              status: RadiologyBillingStatus.FAILED,
+              chargeIds: order.billing?.chargeIds || [],
+              errors: [
+                error?.message || 'Unable to capture radiology billing.',
+              ],
+              lastAttemptAt: new Date(),
+            },
+          },
+        }
+      ).exec();
+
+      return this.populateOrder(orderId, hospitalId);
+    }
   }
 
   public async amendReport(
