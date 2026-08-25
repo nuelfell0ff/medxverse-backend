@@ -49,6 +49,14 @@ export enum AssignmentStatus {
   COMPLETED = 'COMPLETED',
 }
 
+export enum AttendanceStatus {
+  SCHEDULED = 'SCHEDULED',
+  PRESENT = 'PRESENT',
+  LATE = 'LATE',
+  ABSENT = 'ABSENT',
+  MISSED_SIGN_OUT = 'MISSED_SIGN_OUT',
+}
+
 export enum SwapStatus {
   PENDING = 'PENDING',
   APPROVED = 'APPROVED',
@@ -148,6 +156,12 @@ export interface IShiftAssignment {
   assignedAt?: Date;
 
   assignedBy?: Types.ObjectId | string;
+
+  attendanceStatus?: AttendanceStatus;
+  signedInAt?: Date;
+  signedOutAt?: Date;
+  attendanceNotes?: string;
+  lateByMinutes?: number;
 }
 
 /* =========================================================
@@ -438,4 +452,22 @@ export interface CreateHandoverDto {
   pendingTasks?: string[];
 
   importantNotes?: string[];
+}
+
+export interface SignInDto {
+  staffId: string;
+  notes?: string;
+}
+
+export interface SignOutDto {
+  staffId: string;
+  notes?: string;
+}
+
+export interface AttendanceReportQuery {
+  startDate: string;
+  endDate: string;
+  staffId?: string;
+  rosterId?: string;
+  areaType?: RosterAreaType;
 }

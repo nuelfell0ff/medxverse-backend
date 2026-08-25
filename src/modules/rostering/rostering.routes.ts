@@ -138,6 +138,29 @@ router.post(
   controller.completeHandover
 );
 
+
+/* =========================================================
+   SHIFT ATTENDANCE
+========================================================= */
+
+router.post(
+  '/shifts/:shiftId/sign-in',
+  protect,
+  controller.signInToShift
+);
+
+router.post(
+  '/shifts/:shiftId/sign-out',
+  protect,
+  controller.signOutOfShift
+);
+
+router.get(
+  '/attendance/report',
+  protect,
+  controller.getAttendanceReport
+);
+
 /* =========================================================
    STAFF ROSTER
 ========================================================= */

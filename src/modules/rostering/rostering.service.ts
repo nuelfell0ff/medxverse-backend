@@ -22,6 +22,10 @@ import {
   CreateSwapDto,
   ApproveSwapDto,
   CreateHandoverDto,
+  AttendanceStatus,
+  SignInDto,
+  SignOutDto,
+  AttendanceReportQuery,
 } from './rostering.types.js';
 
 const toObjectId = (id: string) =>
@@ -1068,6 +1072,196 @@ export const completeHandover =
 
     return handover;
   };
+
+
+/* =========================================================
+   SHIFT ATTENDANCE / SIGN IN / SIGN OUT
+========================================================= */
+
+const ATTENDANCE_GRACE_MINUTES = 10;
+
+const getShiftDateTime = (date: Date | string, time: string) => {
+  const base = new Date(date);
+  const [hours, minutes] = String(time || '00:00').split(':').map(Number);
+  const result = new Date(base);
+  result.setHours(hours || 0, minutes || 0, 0, 0);
+  return result;
+};
+
+const getShiftEndDateTime = (date: Date | string, startTime: string, endTime: string) => {
+  const start = getShiftDateTime(date, startTime);
+  const end = getShiftDateTime(date, endTime);
+  if (end <= start) end.setDate(end.getDate() + 1);
+  return end;
+};
+
+const findAssignedShift = async (shiftId: string, staffId: string) => {
+  assertObjectId(shiftId, 'shiftId');
+  assertObjectId(staffId, 'staffId');
+
+  const roster = await RosterModel.findOne({ 'shifts._id': shiftId });
+  if (!roster) throw new Error('Roster containing the shift was not found.');
+
+  const shift = roster.shifts.id(shiftId);
+  if (!shift) throw new Error('Shift not found.');
+
+  const assignment = shift.assignedStaff.find(
+    (item: any) => item.staffId.toString() === staffId
+  );
+
+  if (!assignment) throw new Error('Staff member is not assigned to this shift.');
+
+  return { roster, shift, assignment };
+};
+
+export const signInToShift = async (
+  shiftId: string,
+  payload: SignInDto
+) => {
+  const { roster, shift, assignment } = await findAssignedShift(
+    shiftId,
+    payload.staffId
+  );
+
+  if (assignment.signedInAt) {
+    throw new Error('Staff member has already signed in for this shift.');
+  }
+
+  const now = new Date();
+  const shiftStart = getShiftDateTime(shift.date, shift.startTime);
+  const graceEnd = new Date(shiftStart.getTime() + ATTENDANCE_GRACE_MINUTES * 60000);
+  const lateByMinutes = Math.max(
+    0,
+    Math.floor((now.getTime() - shiftStart.getTime()) / 60000)
+  );
+
+  assignment.signedInAt = now;
+  assignment.attendanceStatus = now > graceEnd
+    ? AttendanceStatus.LATE
+    : AttendanceStatus.PRESENT;
+  assignment.lateByMinutes = lateByMinutes;
+  if (payload.notes !== undefined) assignment.attendanceNotes = payload.notes;
+  assignment.status = AssignmentStatus.ACCEPTED;
+  assignment.acceptedAt = assignment.acceptedAt || now;
+
+  shift.status = ShiftStatus.IN_PROGRESS;
+
+  await roster.save();
+  return assignment;
+};
+
+export const signOutOfShift = async (
+  shiftId: string,
+  payload: SignOutDto
+) => {
+  const { roster, shift, assignment } = await findAssignedShift(
+    shiftId,
+    payload.staffId
+  );
+
+  if (!assignment.signedInAt) {
+    throw new Error('Staff member must sign in before signing out.');
+  }
+
+  if (assignment.signedOutAt) {
+    throw new Error('Staff member has already signed out for this shift.');
+  }
+
+  assignment.signedOutAt = new Date();
+  assignment.attendanceStatus = assignment.attendanceStatus === AttendanceStatus.LATE
+    ? AttendanceStatus.LATE
+    : AttendanceStatus.PRESENT;
+  if (payload.notes !== undefined) assignment.attendanceNotes = payload.notes;
+  assignment.status = AssignmentStatus.COMPLETED;
+
+  const everyoneSignedOut = shift.assignedStaff.length > 0 &&
+    shift.assignedStaff.every((item: any) => !!item.signedOutAt);
+  if (everyoneSignedOut) shift.status = ShiftStatus.COMPLETED;
+
+  await roster.save();
+  return assignment;
+};
+
+export const getAttendanceReport = async (filters: AttendanceReportQuery) => {
+  if (filters.staffId) assertObjectId(filters.staffId, 'staffId');
+  if (filters.rosterId) assertObjectId(filters.rosterId, 'rosterId');
+
+  const start = new Date(filters.startDate);
+  const end = new Date(filters.endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new Error('Invalid attendance report date range.');
+  }
+  if (start > end) throw new Error('Report start date cannot be after end date.');
+  end.setHours(23, 59, 59, 999);
+
+  const query: Record<string, any> = {
+    status: { $in: [RosterStatus.DRAFT, RosterStatus.PUBLISHED] },
+    startDate: { $lte: end },
+    endDate: { $gte: start },
+  };
+  if (filters.rosterId) query._id = toObjectId(filters.rosterId);
+  if (filters.areaType) query.areaType = filters.areaType;
+
+  const rosters = await RosterModel.find(query).lean();
+  const now = new Date();
+  const rows: any[] = [];
+
+  for (const roster of rosters as any[]) {
+    for (const shift of roster.shifts || []) {
+      const shiftDate = new Date(shift.date);
+      if (shiftDate < start || shiftDate > end) continue;
+      if (filters.staffId && !shift.assignedStaff?.some((a: any) => a.staffId.toString() === filters.staffId)) continue;
+
+      const shiftStart = getShiftDateTime(shift.date, shift.startTime);
+      const shiftEnd = getShiftEndDateTime(shift.date, shift.startTime, shift.endTime);
+      const graceEnd = new Date(shiftStart.getTime() + ATTENDANCE_GRACE_MINUTES * 60000);
+
+      for (const assignment of shift.assignedStaff || []) {
+        if (filters.staffId && assignment.staffId.toString() !== filters.staffId) continue;
+
+        let attendanceStatus = assignment.attendanceStatus || AttendanceStatus.SCHEDULED;
+        if (!assignment.signedInAt && now > graceEnd) attendanceStatus = AttendanceStatus.ABSENT;
+        else if (assignment.signedInAt && !assignment.signedOutAt && now > shiftEnd) attendanceStatus = AttendanceStatus.MISSED_SIGN_OUT;
+
+        rows.push({
+          rosterId: roster._id,
+          rosterName: roster.name,
+          shiftId: shift._id,
+          date: shift.date,
+          startTime: shift.startTime,
+          endTime: shift.endTime,
+          shiftType: shift.shiftType,
+          areaType: shift.areaType,
+          departmentName: shift.departmentName,
+          wardName: shift.wardName,
+          location: shift.location,
+          staffId: assignment.staffId,
+          role: assignment.role,
+          attendanceStatus,
+          signedInAt: assignment.signedInAt,
+          signedOutAt: assignment.signedOutAt,
+          lateByMinutes: assignment.lateByMinutes || 0,
+          attendanceNotes: assignment.attendanceNotes,
+        });
+      }
+    }
+  }
+
+  return {
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+    graceMinutes: ATTENDANCE_GRACE_MINUTES,
+    total: rows.length,
+    summary: {
+      scheduled: rows.filter(r => r.attendanceStatus === AttendanceStatus.SCHEDULED).length,
+      present: rows.filter(r => r.attendanceStatus === AttendanceStatus.PRESENT).length,
+      late: rows.filter(r => r.attendanceStatus === AttendanceStatus.LATE).length,
+      absent: rows.filter(r => r.attendanceStatus === AttendanceStatus.ABSENT).length,
+      missedSignOut: rows.filter(r => r.attendanceStatus === AttendanceStatus.MISSED_SIGN_OUT).length,
+    },
+    rows,
+  };
+};
 
 /* =========================================================
    STAFF ROSTER VIEW

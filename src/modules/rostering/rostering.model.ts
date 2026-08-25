@@ -55,6 +55,33 @@ const ShiftAssignmentSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'Staff',
     },
+
+    attendanceStatus: {
+      type: String,
+      enum: [
+        'SCHEDULED',
+        'PRESENT',
+        'LATE',
+        'ABSENT',
+        'MISSED_SIGN_OUT',
+      ],
+      default: 'SCHEDULED',
+      index: true,
+    },
+
+    signedInAt: Date,
+    signedOutAt: Date,
+
+    attendanceNotes: {
+      type: String,
+      trim: true,
+    },
+
+    lateByMinutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
   },
   {
     _id: true,

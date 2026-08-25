@@ -469,6 +469,79 @@ export const completeHandover =
     }
   };
 
+
+/* =========================================================
+   SHIFT ATTENDANCE
+========================================================= */
+
+export const signInToShift = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const assignment = await RosteringService.signInToShift(
+      req.params.shiftId,
+      {
+        ...(req.body || {}),
+        staffId: req.body?.staffId || getUserId(req),
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Staff signed in successfully.',
+      data: assignment,
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+export const signOutOfShift = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const assignment = await RosteringService.signOutOfShift(
+      req.params.shiftId,
+      {
+        ...(req.body || {}),
+        staffId: req.body?.staffId || getUserId(req),
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Staff signed out successfully.',
+      data: assignment,
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+export const getAttendanceReport = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const report = await RosteringService.getAttendanceReport({
+      startDate: req.query.startDate as string,
+      endDate: req.query.endDate as string,
+      staffId: req.query.staffId as string,
+      rosterId: req.query.rosterId as string,
+      areaType: req.query.areaType as any,
+    });
+
+    return res.json({
+      success: true,
+      data: report,
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
 /* =========================================================
    STAFF ROSTER
 ========================================================= */
