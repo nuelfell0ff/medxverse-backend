@@ -673,35 +673,92 @@ export class RadiologyService {
 
     const update: Record<string, unknown> = {};
 
-    Object.entries(input).forEach(([key, value]) => {
-      if (value !== undefined) {
-        update[`pacsMetadata.${key}`] =
-          value instanceof Date
-            ? value
-            : key === 'studyDate' || key === 'sharedLinkExpiresAt'
-              ? new Date(value as string)
-              : value;
+    const stringFields = [
+      'studyInstanceUid',
+      'seriesInstanceUid',
+      'accessionNumber',
+      'studyId',
+      'dicomViewerUrl',
+      'storageLocation',
+      'storageStatus',
+      'sharedLink',
+    ] as const;
+
+    for (const field of stringFields) {
+      const value = input[field];
+      if (value !== undefined && value !== null) {
+        update[`pacsMetadata.${field}`] =
+          typeof value === 'string' ? value.trim() : value;
       }
-    });
+    }
 
-    update['pacsMetadata.modality'] =
-      input.modality;
+    const numericFields = [
+      'imageCount',
+      'seriesCount',
+    ] as const;
 
-    const order = await RadiologyOrderModel.findOneAndUpdate(
+    for (const field of numericFields) {
+      const value = input[field];
+      if (value !== undefined && value !== null) {
+        if (!Number.isFinite(value) || value < 0) {
+          throw new Error(`${field} must be a non-negative number`);
+        }
+        update[`pacsMetadata.${field}`] = value;
+      }
+    }
+
+    if (input.modality !== undefined && input.modality !== null) {
+      update['pacsMetadata.modality'] = input.modality;
+    }
+
+    if (input.dicomFileKeys !== undefined) {
+      update['pacsMetadata.dicomFileKeys'] = input.dicomFileKeys;
+    }
+
+    if (input.keyImageIds !== undefined) {
+      update['pacsMetadata.keyImageIds'] = input.keyImageIds;
+    }
+
+    if (input.priorStudyInstanceUids !== undefined) {
+      update['pacsMetadata.priorStudyInstanceUids'] =
+        input.priorStudyInstanceUids;
+    }
+
+    if (input.exportEnabled !== undefined) {
+      update['pacsMetadata.exportEnabled'] = input.exportEnabled;
+    }
+
+    if (input.studyDate !== undefined && input.studyDate !== null && input.studyDate !== '') {
+      const date = new Date(input.studyDate);
+      if (Number.isNaN(date.getTime())) {
+        throw new Error('Invalid PACS study date');
+      }
+      update['pacsMetadata.studyDate'] = date;
+    }
+
+    if (input.sharedLinkExpiresAt !== undefined && input.sharedLinkExpiresAt !== null && input.sharedLinkExpiresAt !== '') {
+      const date = new Date(input.sharedLinkExpiresAt);
+      if (Number.isNaN(date.getTime())) {
+        throw new Error('Invalid PACS shared-link expiry date');
+      }
+      update['pacsMetadata.sharedLinkExpiresAt'] = date;
+    }
+
+    if (Object.keys(update).length === 0) {
+      throw new Error('At least one PACS field is required');
+    }
+
+    return RadiologyOrderModel.findOneAndUpdate(
       {
         _id: orderId,
         hospitalId,
       },
-      {
-        $set: update,
-      },
+      { $set: update },
       {
         new: true,
         runValidators: true,
       }
     ).exec();
-
-    return order;
   }
 
   public async updateContrast(
@@ -822,77 +879,85 @@ export class RadiologyService {
     this.assertObjectId(hospitalId, 'hospital ID');
     this.assertObjectId(input.radiologistId, 'radiologist ID');
 
-    if (!input.findings?.trim()) {
+    const findings = input.findings?.trim();
+    const impression = input.impression?.trim();
+
+    if (!findings) {
       throw new Error('Findings are required');
     }
 
-    if (!input.impression?.trim()) {
+    if (!impression) {
       throw new Error('Impression is required');
     }
 
     const order = await RadiologyOrderModel.findOne({
       _id: orderId,
       hospitalId,
-    });
+    }).select('_id report');
 
     if (!order) {
       return null;
     }
 
     const now = new Date();
+    const nextVersion = (order.report?.version || 0) + 1;
+    const critical = input.criticalResult;
 
-    if (!order.report) {
-      order.report = {
-        status: ReportStatus.DRAFT,
-        findings: input.findings,
-        impression: input.impression,
-        radiologistNotes: input.radiologistNotes,
-        templateId: input.templateId,
-        version: 1,
-        draftedAt: now,
-        criticalResult: {
-          status:
-            input.criticalResult?.status ||
-            CriticalResultStatus.NOT_APPLICABLE,
-          ...input.criticalResult,
-        },
-        versions: [],
-      };
-    } else {
-      const nextVersion =
-        (order.report.version || 0) + 1;
+    const set: Record<string, unknown> = {
+      radiologistId: new Types.ObjectId(input.radiologistId),
+      findings,
+      impression,
+      'report.status': ReportStatus.DRAFT,
+      'report.findings': findings,
+      'report.impression': impression,
+      'report.version': nextVersion,
+      'report.draftedAt': now,
+      status: RadiologyOrderStatus.REPORTING,
+    };
 
-      order.report.version = nextVersion;
-      order.report.findings = input.findings;
-      order.report.impression = input.impression;
-      order.report.radiologistNotes =
-        input.radiologistNotes;
-      order.report.templateId = input.templateId;
-      order.report.draftedAt = now;
-
-      if (input.criticalResult) {
-        order.report.criticalResult = {
-          ...(order.report.criticalResult || {}),
-          ...input.criticalResult,
-        };
-      }
+    if (input.radiologistNotes !== undefined) {
+      set.radiologistNotes = input.radiologistNotes?.trim() || undefined;
+      set['report.radiologistNotes'] = input.radiologistNotes?.trim() || undefined;
     }
 
-    order.radiologistId = new Types.ObjectId(
-      input.radiologistId
-    );
+    if (input.templateId !== undefined) {
+      set['report.templateId'] = input.templateId?.trim() || undefined;
+    }
 
-    // Keep legacy fields synchronized.
-    order.findings = input.findings;
-    order.impression = input.impression;
-    order.radiologistNotes =
-      input.radiologistNotes;
+    if (critical) {
+      if (critical.status !== undefined) {
+        set['report.criticalResult.status'] = critical.status;
+      }
+      if (critical.finding !== undefined) {
+        set['report.criticalResult.finding'] = critical.finding?.trim() || undefined;
+      }
+      if (critical.notifiedUserId !== undefined && critical.notifiedUserId !== '') {
+        this.assertObjectId(critical.notifiedUserId, 'notified user ID');
+        set['report.criticalResult.notifiedUserId'] = new Types.ObjectId(critical.notifiedUserId);
+      }
+      if (critical.notificationMethod !== undefined) {
+        set['report.criticalResult.notificationMethod'] = critical.notificationMethod;
+      }
+      if (critical.notificationNotes !== undefined) {
+        set['report.criticalResult.notificationNotes'] = critical.notificationNotes?.trim() || undefined;
+      }
+    } else if (!order.report) {
+      set['report.criticalResult.status'] = CriticalResultStatus.NOT_APPLICABLE;
+    }
 
-    order.status = RadiologyOrderStatus.REPORTING;
+    const updated = await RadiologyOrderModel.findOneAndUpdate(
+      { _id: orderId, hospitalId },
+      {
+        $set: set,
+        ...(order.report ? {} : { $setOnInsert: {} }),
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    ).exec();
 
-    await order.save();
-
-    return order;
+    return updated;
   }
 
   public async signReport(
