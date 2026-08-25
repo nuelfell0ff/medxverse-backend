@@ -1,11 +1,11 @@
 import { Document, Types } from 'mongoose';
 
 export enum TriagePriority {
-  IMMEDIATE = 'IMMEDIATE', // Red
-  VERY_URGENT = 'VERY_URGENT', // Orange
-  URGENT = 'URGENT', // Yellow
-  STANDARD = 'STANDARD', // Green
-  NON_URGENT = 'NON_URGENT', // Blue
+  IMMEDIATE = 'IMMEDIATE',
+  VERY_URGENT = 'VERY_URGENT',
+  URGENT = 'URGENT',
+  STANDARD = 'STANDARD',
+  NON_URGENT = 'NON_URGENT',
 }
 
 export enum ConsultationStatus {
@@ -17,16 +17,32 @@ export enum ConsultationStatus {
   CANCELLED = 'CANCELLED',
 }
 
+export enum BillingCaptureStatus {
+  NOT_ATTEMPTED = 'NOT_ATTEMPTED',
+  CAPTURED = 'CAPTURED',
+  FAILED = 'FAILED',
+}
+
+export const OUTPATIENT_CONSULTATION_SERVICE_CODE = 'OUTPATIENT_CONSULTATION';
+
 export interface IVitalSigns {
-  temperature?: number; // Celsius
-  bloodPressureSystolic?: number; // mmHg
-  bloodPressureDiastolic?: number; // mmHg
-  pulseRate?: number; // bpm
-  respiratoryRate?: number; // breaths/min
-  oxygenSaturation?: number; // %
-  height?: number; // cm
-  weight?: number; // kg
+  temperature?: number;
+  bloodPressureSystolic?: number;
+  bloodPressureDiastolic?: number;
+  pulseRate?: number;
+  respiratoryRate?: number;
+  oxygenSaturation?: number;
+  height?: number;
+  weight?: number;
   bmi?: number;
+}
+
+export interface IOutpatientBilling {
+  status: BillingCaptureStatus;
+  chargeId?: Types.ObjectId;
+  serviceCode?: string;
+  error?: string;
+  capturedAt?: Date;
 }
 
 export interface IOutpatient {
@@ -44,6 +60,7 @@ export interface IOutpatient {
   queuedAt: Date;
   consultationStartedAt?: Date;
   consultationEndedAt?: Date;
+  billing?: IOutpatientBilling;
 }
 
 export interface IOutpatientDocument extends IOutpatient, Document {
@@ -64,7 +81,6 @@ export interface UpdateVitalsInput {
   vitalSigns: IVitalSigns;
   nursingNotes?: string;
 }
-
 
 export interface CompleteConsultationInput {
   consultationNotes: string;
