@@ -286,15 +286,18 @@ export const createPricingCatalogueItem = async (
     ? oid(String(input.departmentId), 'department ID')
     : undefined;
 
+  const planName = input.planName?.trim() || input.name.trim();
+
   const existing = await PricingCatalogueModel.findOne({
     hospitalId,
     code,
     departmentId: departmentId || null,
+    planName: { $regex: `^${planName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
   });
 
   if (existing) {
     throw new Error(
-      'A pricing catalogue item already exists for this service and department.'
+      'A pricing catalogue with this plan name already exists for this service and department.'
     );
   }
 
@@ -302,6 +305,7 @@ export const createPricingCatalogueItem = async (
     hospitalId,
     code,
     name: input.name.trim(),
+    planName,
     category: input.category,
     departmentId,
     departmentName: input.departmentName?.trim(),
@@ -330,6 +334,30 @@ export const getPricingCatalogue = async (
 
   if (query.category) filter.category = query.category;
 
+  if (query.departmentId) {
+    filter.departmentId = oid(query.departmentId, 'department ID');
+  } else if (query.departmentName?.trim()) {
+    filter.departmentName = {
+      $regex: `^${query.departmentName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+      $options: 'i',
+    };
+  }
+
+  if (query.code?.trim()) {
+    filter.code = query.code.trim().toUpperCase();
+  }
+
+  if (query.planName?.trim()) {
+    filter.planName = {
+      $regex: query.planName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      $options: 'i',
+    };
+  }
+
+  if (query.activeOnly === true || query.activeOnly === 'true') {
+    filter.isActive = true;
+  }
+
   if (query.search?.trim()) {
     const search = query.search.trim();
 
@@ -342,7 +370,7 @@ export const getPricingCatalogue = async (
 
   const [items, total] = await Promise.all([
     PricingCatalogueModel.find(filter)
-      .sort({ isActive: -1, name: 1 })
+      .sort({ isActive: -1, departmentName: 1, planName: 1, name: 1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean(),
@@ -371,6 +399,55 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
   const hospitalId = oid(String(input.hospitalId), 'hospital ID');
   const code = input.code.trim().toUpperCase();
   const serviceDate = validDate(input.serviceDate, 'service date') || new Date();
+
+  if (input.catalogueItemId) {
+    const selected = await PricingCatalogueModel.findOne({
+      _id: oid(String(input.catalogueItemId), 'catalogue item ID'),
+      hospitalId,
+      isActive: true,
+      code,
+      ...(input.category ? { category: input.category } : {}),
+      $or: [
+        { effectiveFrom: { $exists: false } },
+        { effectiveFrom: null },
+        { effectiveFrom: { $lte: serviceDate } },
+      ],
+      $and: [{
+        $or: [
+          { effectiveTo: { $exists: false } },
+          { effectiveTo: null },
+          { effectiveTo: { $gt: serviceDate } },
+        ],
+      }],
+    }).lean();
+
+    if (!selected) {
+      throw new Error('The selected pricing catalogue is not active, does not belong to this hospital/service, or is not effective for the selected date.');
+    }
+
+    if (input.departmentId && selected.departmentId && String(selected.departmentId) !== String(oid(String(input.departmentId), 'department ID'))) {
+      throw new Error('The selected pricing catalogue does not belong to the requested department.');
+    }
+
+    if (input.departmentName?.trim() && selected.departmentName?.toLowerCase() !== input.departmentName.trim().toLowerCase()) {
+      throw new Error('The selected pricing catalogue does not belong to the requested department.');
+    }
+
+    return {
+      catalogueItemId: selected._id,
+      code: selected.code,
+      name: selected.name,
+      planName: selected.planName,
+      category: selected.category,
+      departmentId: selected.departmentId,
+      departmentName: selected.departmentName,
+      price: selected.price,
+      currency: selected.currency,
+      version: selected.version,
+      effectiveFrom: selected.effectiveFrom,
+      effectiveTo: selected.effectiveTo,
+    };
+  }
 
   const departmentId = input.departmentId
     ? oid(String(input.departmentId), 'department ID')
@@ -434,7 +511,7 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
   let item = candidates[0];
 
   if (departmentId || input.departmentName?.trim()) {
-    const departmentSpecific = candidates.find((candidate) => {
+    const departmentSpecificCandidates = candidates.filter((candidate) => {
       const sameId =
         departmentId &&
         candidate.departmentId &&
@@ -448,6 +525,14 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
       return Boolean(sameId || sameName);
     });
 
+    if (departmentSpecificCandidates.length > 1) {
+      throw new Error(
+        `Multiple active pricing plans exist for "${code}" in this department. Select a pricing catalogue explicitly when creating the clinical order.`
+      );
+    }
+
+    const departmentSpecific = departmentSpecificCandidates[0];
+
     if (departmentSpecific) {
       item = departmentSpecific;
     }
@@ -457,6 +542,7 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
     catalogueItemId: item._id,
     code: item.code,
     name: item.name,
+    planName: item.planName,
     category: item.category,
     departmentId: item.departmentId,
     departmentName: item.departmentName,
@@ -524,6 +610,20 @@ export const updatePricingCatalogueItem = async (
 
   if (input.code !== undefined) {
     item.code = input.code.trim().toUpperCase();
+  }
+
+  if (input.planName !== undefined) {
+    const nextPlanName = input.planName.trim();
+    if (!nextPlanName) throw new Error('Plan name cannot be empty.');
+    const duplicate = await PricingCatalogueModel.findOne({
+      _id: { $ne: item._id },
+      hospitalId: item.hospitalId,
+      code: item.code,
+      departmentId: item.departmentId || null,
+      planName: { $regex: `^${nextPlanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+    });
+    if (duplicate) throw new Error('A pricing catalogue with this plan name already exists for this service and department.');
+    item.planName = nextPlanName;
   }
 
   if (input.name !== undefined) {
@@ -648,6 +748,7 @@ export const createCharge = async (input: CreateChargeInput) => {
   let currency = 'NGN';
 
   let resolvedUnitPrice: number;
+  let resolvedPlanName: string | undefined;
   let overrideApplied = false;
 
   /*
@@ -679,19 +780,17 @@ export const createCharge = async (input: CreateChargeInput) => {
     const resolved = await resolvePrice({
       hospitalId,
       code: input.serviceCode,
+      catalogueItemId: input.catalogueItemId,
       departmentId: input.departmentId,
       departmentName: input.departmentName,
       category: input.category,
       serviceDate,
     });
 
-    catalogueItemId = oid(
-      String(resolved.catalogueItemId),
-      'catalogue item ID'
-    );
-
     cataloguePrice = money(resolved.price);
     catalogueVersion = resolved.version;
+    resolvedPlanName = resolved.planName;
+    catalogueItemId = oid(String(resolved.catalogueItemId), 'catalogue item ID');
     currency = resolved.currency;
 
     resolvedUnitPrice =
@@ -751,6 +850,7 @@ export const createCharge = async (input: CreateChargeInput) => {
 
     cataloguePrice,
     catalogueVersion,
+    cataloguePlanName: resolvedPlanName,
 
     unitPrice: resolvedUnitPrice,
 

@@ -45,6 +45,11 @@ router.get(
   controller.getPricingCatalogue
 );
 
+router.get(
+  '/catalogue/available',
+  controller.getAvailablePricingCatalogues
+);
+
 router.post(
   '/catalogue/resolve-price',
   controller.resolvePrice

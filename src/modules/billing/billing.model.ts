@@ -89,6 +89,8 @@ export interface IPricingCatalogueItem {
   hospitalId: Types.ObjectId;
   code: string;
   name: string;
+  /** Human-friendly pricing plan name shown to clinical modules. */
+  planName?: string;
   category: ChargeCategory;
 
   departmentId?: Types.ObjectId;
@@ -137,6 +139,7 @@ const PricingCatalogueSchema = new Schema<IPricingCatalogueItem>(
       index: true,
     },
     name: { type: String, required: true, trim: true },
+    planName: { type: String, trim: true, index: true },
     category: {
       type: String,
       enum: Object.values(ChargeCategory),
@@ -175,8 +178,9 @@ const PricingCatalogueSchema = new Schema<IPricingCatalogueItem>(
 
 PricingCatalogueSchema.index({
   hospitalId: 1,
-  code: 1,
   departmentId: 1,
+  code: 1,
+  planName: 1,
   isActive: 1,
 });
 
@@ -199,6 +203,7 @@ export interface ICharge {
   billingAccountId: Types.ObjectId;
 
   catalogueItemId?: Types.ObjectId;
+  cataloguePlanName?: string;
   serviceCode?: string;
 
   description: string;
@@ -271,6 +276,7 @@ const ChargeSchema = new Schema<ICharge>(
       type: Schema.Types.ObjectId,
       ref: 'PricingCatalogue',
     },
+    cataloguePlanName: { type: String, trim: true },
     serviceCode: {
       type: String,
       trim: true,

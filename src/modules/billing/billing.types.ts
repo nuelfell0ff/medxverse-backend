@@ -108,6 +108,7 @@ export interface CreatePricingCatalogueItemInput {
   hospitalId: IdLike;
   code: string;
   name: string;
+  planName?: string;
   category: ChargeCategory;
   departmentId?: IdLike;
   departmentName?: string;
@@ -121,6 +122,7 @@ export interface CreatePricingCatalogueItemInput {
 export interface UpdatePricingCatalogueItemInput {
   code?: string;
   name?: string;
+  planName?: string;
   category?: ChargeCategory;
   departmentId?: IdLike | null;
   departmentName?: string;
@@ -135,6 +137,7 @@ export interface UpdatePricingCatalogueItemInput {
 export interface ResolvePriceInput {
   hospitalId: IdLike;
   code: string;
+  catalogueItemId?: IdLike;
   departmentId?: IdLike;
   departmentName?: string;
   category?: ChargeCategory;
@@ -146,6 +149,7 @@ export interface CreateChargeInput {
   patientId: IdLike;
   billingAccountId?: IdLike;
 
+  /** Explicit pricing catalogue selected by the clinical module. */
   catalogueItemId?: IdLike;
   serviceCode?: string;
 
@@ -233,12 +237,18 @@ export interface BillingListQuery {
   endDate?: string;
   patientId?: string;
   billingAccountId?: string;
+  departmentId?: string;
+  departmentName?: string;
+  code?: string;
+  planName?: string;
+  activeOnly?: string | boolean;
 }
 
 export interface PriceResolutionResult {
   catalogueItemId: Types.ObjectId;
   code: string;
   name: string;
+  planName?: string;
   category: ChargeCategory;
   departmentId?: Types.ObjectId;
   departmentName?: string;

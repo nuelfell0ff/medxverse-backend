@@ -142,6 +142,37 @@ export const createPricingCatalogueItem = async (
   }
 };
 
+export const getAvailablePricingCatalogues = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const departmentName = String(req.query.departmentName || '').trim();
+    const departmentId = req.query.departmentId
+      ? String(req.query.departmentId)
+      : undefined;
+
+    if (!departmentName && !departmentId) {
+      throw new Error('departmentName or departmentId is required.');
+    }
+
+    return res.json({
+      success: true,
+      data: await BillingService.getPricingCatalogue(
+        hospitalId(req),
+        {
+          ...(req.query as any),
+          departmentName: departmentName || undefined,
+          departmentId,
+          activeOnly: true,
+        }
+      ),
+    });
+  } catch (error) {
+    return fail(res, error);
+  }
+};
+
 export const getPricingCatalogue = async (
   req: Request,
   res: Response
