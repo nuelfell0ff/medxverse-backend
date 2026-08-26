@@ -262,6 +262,11 @@ export interface RadiologyBilling {
   errors: string[];
   lastAttemptAt?: Date;
   capturedAt?: Date;
+  catalogueItemId?: Types.ObjectId;
+  cataloguePlanName?: string;
+  cataloguePrice?: number;
+  catalogueVersion?: number;
+  catalogueCurrency?: string;
 }
 
 export interface IRadiologyOrder {
@@ -293,6 +298,14 @@ export interface IRadiologyOrder {
   queuePosition?: number;
   queueStatus?: ExaminationQueueStatus;
   aiAnalysis?: AIAnalysis;
+
+  /** Selected centralized Billing pricing catalogue for this examination. */
+  pricingCatalogueItemId?: Types.ObjectId;
+  pricingCataloguePlanName?: string;
+  pricingCataloguePrice?: number;
+  pricingCatalogueVersion?: number;
+  pricingCatalogueCurrency?: string;
+
   billing?: RadiologyBilling;
   createdAt: Date;
   updatedAt: Date;
@@ -312,6 +325,7 @@ export interface CreateRadiologyOrderInput {
   clinicalIndication: string;
   priority?: PriorityLevel;
   accessionNumber?: string;
+  pricingCatalogueItemId?: string;
   scheduling?: {
     scheduledDate?: string | Date;
     scheduledStartTime?: string;

@@ -709,6 +709,15 @@ const RadiologyBillingSchema = new Schema(
       default: [],
     },
 
+    catalogueItemId: {
+      type: Schema.Types.ObjectId,
+      ref: 'PricingCatalogue',
+    },
+    cataloguePlanName: { type: String, trim: true },
+    cataloguePrice: { type: Number, min: 0 },
+    catalogueVersion: { type: Number, min: 1 },
+    catalogueCurrency: { type: String, trim: true, uppercase: true },
+
     lastAttemptAt: Date,
 
     capturedAt: Date,
@@ -889,6 +898,36 @@ const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
 
     aiAnalysis: {
       type: AIAnalysisSchema,
+    },
+
+    /* ---------------------------------------------
+       Centralized Billing pricing catalogue
+    --------------------------------------------- */
+    pricingCatalogueItemId: {
+      type: Schema.Types.ObjectId,
+      ref: 'PricingCatalogue',
+      index: true,
+    },
+
+    pricingCataloguePlanName: {
+      type: String,
+      trim: true,
+    },
+
+    pricingCataloguePrice: {
+      type: Number,
+      min: 0,
+    },
+
+    pricingCatalogueVersion: {
+      type: Number,
+      min: 1,
+    },
+
+    pricingCatalogueCurrency: {
+      type: String,
+      trim: true,
+      uppercase: true,
     },
 
     billing: {

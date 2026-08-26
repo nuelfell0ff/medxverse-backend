@@ -58,6 +58,9 @@ export class RadiologyController {
           priority:
             req.body.priority as PriorityLevel,
 
+          pricingCatalogueItemId:
+            req.body.pricingCatalogueItemId,
+
           accessionNumber:
             req.body.accessionNumber,
 
@@ -76,6 +79,29 @@ export class RadiologyController {
       res.status(201).json({
         success: true,
         data: order,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async getPricingCatalogues(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const catalogues = await radiologyService.getPricingCatalogues(
+        authReq.user.hospitalId,
+        typeof req.query.procedureName === 'string'
+          ? req.query.procedureName
+          : undefined
+      );
+
+      res.status(200).json({
+        success: true,
+        data: catalogues,
       });
     } catch (error) {
       next(error);
@@ -761,38 +787,6 @@ export class RadiologyController {
       res.status(200).json({
         success: true,
         data: updated,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async captureBilling(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-
-      const updated = await radiologyService.captureBilling(
-        req.params.id,
-        authReq.user.hospitalId,
-        authReq.user._id
-      );
-
-      if (!updated) {
-        res.status(404).json({
-          success: false,
-          message: 'Radiology order not found',
-        });
-        return;
-      }
-
-      res.status(200).json({
-        success: true,
-        data: updated,
-        message: 'Radiology billing capture completed.',
       });
     } catch (error) {
       next(error);

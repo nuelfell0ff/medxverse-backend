@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { Types } from 'mongoose';
 
 import { RadiologyOrderModel } from './radiology.model.js';
+import { PricingCatalogueModel } from '../billing/billing.model.js';
 import { Staff } from '../staff/staff.model.js';
 import { createCharge } from '../billing/billing.service.js';
 import { BillingSourceModule, ChargeCategory } from '../billing/billing.types.js';
@@ -81,6 +82,79 @@ export class RadiologyService {
   }
 
   /**
+   * Return active Radiology pricing catalogues for the current hospital.
+   * The frontend uses this endpoint to let the user select a plan by name
+   * rather than entering a raw catalogue ID.
+   */
+  public async getPricingCatalogues(
+    hospitalId: string,
+    procedureName?: string
+  ) {
+    this.assertObjectId(hospitalId, 'hospital ID');
+
+    const filter: Record<string, unknown> = {
+      hospitalId: new Types.ObjectId(hospitalId),
+      departmentName: { $regex: /^Radiology$/i },
+      isActive: true,
+    };
+
+    if (procedureName?.trim()) {
+      const code = `RADIOLOGY_${procedureName
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')}`;
+      filter.code = code;
+    }
+
+    const now = new Date();
+    filter.$and = [
+      { $or: [{ effectiveFrom: { $exists: false } }, { effectiveFrom: { $lte: now } }] },
+      { $or: [{ effectiveTo: { $exists: false } }, { effectiveTo: null }, { effectiveTo: { $gte: now } }] },
+    ];
+
+    return PricingCatalogueModel.find(filter)
+      .select('_id code name planName category departmentName price currency version effectiveFrom effectiveTo description isActive')
+      .sort({ planName: 1, name: 1, price: 1 })
+      .lean()
+      .exec();
+  }
+
+  private async validatePricingCatalogue(
+    hospitalId: string,
+    catalogueItemId: string,
+    procedureName: string
+  ) {
+    this.assertObjectId(catalogueItemId, 'pricing catalogue item ID');
+
+    const expectedCode = this.getBillingServiceCode({ procedureName } as IRadiologyOrderDocument);
+    const catalogue = await PricingCatalogueModel.findOne({
+      _id: catalogueItemId,
+      hospitalId: new Types.ObjectId(hospitalId),
+      isActive: true,
+      departmentName: { $regex: /^Radiology$/i },
+    }).lean();
+
+    if (!catalogue) {
+      throw new Error('Selected pricing catalogue was not found, is inactive, or does not belong to Radiology.');
+    }
+
+    if (String(catalogue.code).toUpperCase() !== expectedCode) {
+      throw new Error(`Selected pricing catalogue does not match radiology service ${expectedCode}.`);
+    }
+
+    const now = new Date();
+    if (catalogue.effectiveFrom && new Date(catalogue.effectiveFrom) > now) {
+      throw new Error('Selected pricing catalogue is not yet effective.');
+    }
+    if (catalogue.effectiveTo && new Date(catalogue.effectiveTo) < now) {
+      throw new Error('Selected pricing catalogue has expired.');
+    }
+
+    return catalogue;
+  }
+
+  /**
    * Capture all applicable radiology charges through the centralized Billing
    * service. Billing failures are deliberately non-blocking: the examination
    * workflow remains successful and the failure is recorded on the order for
@@ -119,6 +193,11 @@ export class RadiologyService {
       status: RadiologyBillingStatus.NOT_ATTEMPTED,
       chargeIds: existingBilling?.chargeIds || [],
       errors: [] as string[],
+      catalogueItemId: order.pricingCatalogueItemId,
+      cataloguePlanName: order.pricingCataloguePlanName,
+      cataloguePrice: order.pricingCataloguePrice,
+      catalogueVersion: order.pricingCatalogueVersion,
+      catalogueCurrency: order.pricingCatalogueCurrency,
       lastAttemptAt: new Date(),
       capturedAt: existingBilling?.capturedAt,
     };
@@ -133,6 +212,7 @@ export class RadiologyService {
         patientId: String(order.patientId),
         description: `${order.procedureName} - ${order.bodyPart}`,
         serviceCode: this.getBillingServiceCode(order),
+        catalogueItemId: order.pricingCatalogueItemId,
         category: ChargeCategory.RADIOLOGY,
         sourceModule: BillingSourceModule.RADIOLOGY,
         sourceId: String(order._id),
@@ -262,6 +342,24 @@ export class RadiologyService {
       throw new Error('Clinical indication is required');
     }
 
+    let pricingCatalogue: any = undefined;
+    if (input.pricingCatalogueItemId) {
+      pricingCatalogue = await this.validatePricingCatalogue(
+        input.hospitalId,
+        input.pricingCatalogueItemId,
+        input.procedureName
+      );
+    } else {
+      const available = await this.getPricingCatalogues(
+        input.hospitalId,
+        input.procedureName
+      );
+      if (available.length === 1) pricingCatalogue = available[0];
+      if (available.length > 1) {
+        throw new Error('Multiple Radiology pricing catalogues are available for this examination. Please select one.');
+      }
+    }
+
     const accessionNumber =
       input.accessionNumber?.trim() || this.generateAccessionNumber();
 
@@ -289,6 +387,12 @@ export class RadiologyService {
         : undefined,
 
       patientPreparation: input.patientPreparation,
+
+      pricingCatalogueItemId: pricingCatalogue?._id,
+      pricingCataloguePlanName: pricingCatalogue?.planName || pricingCatalogue?.name,
+      pricingCataloguePrice: pricingCatalogue?.price,
+      pricingCatalogueVersion: pricingCatalogue?.version,
+      pricingCatalogueCurrency: pricingCatalogue?.currency,
 
       contrast: input.contrast,
 
