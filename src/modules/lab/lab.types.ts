@@ -202,6 +202,14 @@ export interface ILabOrder {
   qrCodeUrl?: string;
 
   testCatalogId?: Types.ObjectId;
+
+  /** Selected centralized Billing pricing catalogue item. */
+  catalogueItemId?: Types.ObjectId;
+  cataloguePlanName?: string;
+  cataloguePrice?: number;
+  catalogueVersion?: number;
+  catalogueCurrency?: string;
+
   testName: string;
   testCategory: LabDepartment;
   panelName?: string;
@@ -318,6 +326,9 @@ export interface CreateLabOrderDTO {
   consultationId?: string;
 
   testCatalogId?: string;
+
+  /** Centralized Billing pricing catalogue selected for this lab order. */
+  catalogueItemId?: string;
 
   testName: string;
   testCategory: LabDepartment;

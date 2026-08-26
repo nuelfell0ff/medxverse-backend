@@ -33,6 +33,8 @@ import {
   ChargeCategory,
 } from '../billing/billing.types.js';
 
+import { PricingCatalogueModel } from '../billing/billing.model.js';
+
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -170,6 +172,52 @@ export class LabService {
   }
 
   /* =========================================================
+     PRICING CATALOGUES
+  ========================================================= */
+
+  static async getPricingCatalogues(
+    hospitalId: string,
+    testName?: string
+  ) {
+    if (!Types.ObjectId.isValid(hospitalId)) {
+      const error = new Error('Invalid hospital ID.') as Error & { statusCode?: number };
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const filter: Record<string, unknown> = {
+      hospitalId: new Types.ObjectId(hospitalId),
+      isActive: true,
+      departmentName: { $regex: '^LABORATORY$', $options: 'i' },
+      $or: [
+        { effectiveFrom: { $exists: false } },
+        { effectiveFrom: null },
+        { effectiveFrom: { $lte: new Date() } },
+      ],
+      $and: [{
+        $or: [
+          { effectiveTo: { $exists: false } },
+          { effectiveTo: null },
+          { effectiveTo: { $gt: new Date() } },
+        ],
+      }],
+    };
+
+    const items = await PricingCatalogueModel.find(filter)
+      .select('_id name code price currency version departmentName effectiveFrom effectiveTo category')
+      .sort({ name: 1, version: -1 })
+      .lean();
+
+    if (!testName?.trim()) return items;
+
+    const normalized = buildLabServiceCode(testName);
+    return items.filter((item: any) =>
+      (item.code && buildLabServiceCode(String(item.code)) === normalized) ||
+      item.name?.trim().toLowerCase() === testName.trim().toLowerCase()
+    );
+  }
+
+  /* =========================================================
      BILLING CAPTURE
   ========================================================= */
 
@@ -188,10 +236,8 @@ export class LabService {
         if (catalog && !Array.isArray(catalog) && typeof catalog === 'object') {
           catalogueCode =
             'code' in catalog && typeof catalog.code === 'string'
-            ? catalog.code
-            : undefined;
-        } else {
-            catalogueCode = undefined;
+              ? catalog.code
+              : undefined;
         }
       }
 
@@ -202,6 +248,7 @@ export class LabService {
       const charge = await createCharge({
         hospitalId: order.hospitalId,
         patientId: order.patientId,
+        catalogueItemId: order.catalogueItemId,
         serviceCode,
         description: order.panelName
           ? `${order.testName} - ${order.panelName}`
@@ -209,7 +256,7 @@ export class LabService {
         category: ChargeCategory.LABORATORY,
         sourceModule: BillingSourceModule.LABORATORY,
         sourceId: order._id,
-        departmentName: order.testCategory,
+        departmentName: 'LABORATORY',
         chargedBy,
         chargeDate: order.createdAt,
       });
@@ -375,6 +422,85 @@ export class LabService {
       dto.isStat === true ||
       priority === LabPriority.STAT;
 
+    let selectedCatalogue: any | undefined;
+
+    if (dto.catalogueItemId) {
+      if (!Types.ObjectId.isValid(dto.catalogueItemId)) {
+        const error = new Error('Invalid pricing catalogue item ID.') as Error & { statusCode?: number };
+        error.statusCode = 400;
+        throw error;
+      }
+
+      selectedCatalogue = await PricingCatalogueModel.findOne({
+        _id: new Types.ObjectId(dto.catalogueItemId),
+        hospitalId: new Types.ObjectId(hospitalId),
+        isActive: true,
+        departmentName: { $regex: '^LABORATORY$', $options: 'i' },
+      }).lean();
+
+      if (!selectedCatalogue) {
+        const error = new Error(
+          'The selected pricing catalogue is not an active Laboratory catalogue for this hospital.'
+        ) as Error & { statusCode?: number };
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const now = new Date();
+      if (selectedCatalogue.effectiveFrom && new Date(selectedCatalogue.effectiveFrom) > now) {
+        const error = new Error('The selected pricing catalogue is not yet effective.') as Error & { statusCode?: number };
+        error.statusCode = 400;
+        throw error;
+      }
+      if (selectedCatalogue.effectiveTo && new Date(selectedCatalogue.effectiveTo) <= now) {
+        const error = new Error('The selected pricing catalogue has expired.') as Error & { statusCode?: number };
+        error.statusCode = 400;
+        throw error;
+      }
+
+      if (selectedCatalogue.code) {
+        const selectedCode = buildLabServiceCode(String(selectedCatalogue.code));
+        const testCode = buildLabServiceCode(dto.testName);
+        if (selectedCode !== testCode && selectedCatalogue.name?.trim().toLowerCase() !== dto.testName.trim().toLowerCase()) {
+          const error = new Error('The selected pricing catalogue does not match this laboratory test.') as Error & { statusCode?: number };
+          error.statusCode = 400;
+          throw error;
+        }
+      }
+    } else {
+      const candidates = await PricingCatalogueModel.find({
+        hospitalId: new Types.ObjectId(hospitalId),
+        isActive: true,
+        departmentName: { $regex: '^LABORATORY$', $options: 'i' },
+        $or: [
+          { effectiveFrom: { $exists: false } },
+          { effectiveFrom: null },
+          { effectiveFrom: { $lte: new Date() } },
+        ],
+        $and: [{
+          $or: [
+            { effectiveTo: { $exists: false } },
+            { effectiveTo: null },
+            { effectiveTo: { $gt: new Date() } },
+          ],
+        }],
+      }).lean();
+
+      const matching = candidates.filter((item: any) => {
+        const code = item.code ? buildLabServiceCode(String(item.code)) : '';
+        const testCode = buildLabServiceCode(dto.testName);
+        return code === testCode || item.name?.trim().toLowerCase() === dto.testName.trim().toLowerCase();
+      });
+
+      if (matching.length === 1) {
+        selectedCatalogue = matching[0];
+      } else if (matching.length > 1) {
+        const error = new Error('Multiple Laboratory pricing catalogues match this test. Please select a pricing catalogue.') as Error & { statusCode?: number };
+        error.statusCode = 400;
+        throw error;
+      }
+    }
+
     const duplicateSince =
       new Date(
         Date.now() -
@@ -495,6 +621,12 @@ export class LabService {
                     dto.testCatalogId
                   )
                 : undefined,
+
+            catalogueItemId: selectedCatalogue?._id,
+            cataloguePlanName: selectedCatalogue?.name,
+            cataloguePrice: selectedCatalogue?.price,
+            catalogueVersion: selectedCatalogue?.version,
+            catalogueCurrency: selectedCatalogue?.currency,
 
             testName:
               dto.testName.trim(),

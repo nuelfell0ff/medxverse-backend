@@ -15,6 +15,15 @@ const router = Router();
 router.use(authenticate);
 
 /* =========================================================
+   PRICING CATALOGUES
+========================================================= */
+
+router.get(
+  '/pricing-catalogues',
+  LabController.pricingCatalogues
+);
+
+/* =========================================================
    ORDERS / DIGITAL REQUISITIONS / WORKLIST
 ========================================================= */
 

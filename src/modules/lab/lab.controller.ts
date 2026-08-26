@@ -281,6 +281,31 @@ export class LabController {
   }
 
   /* =========================================================
+     PRICING CATALOGUES
+  ========================================================= */
+
+  static async pricingCatalogues(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { hospitalId } = LabController.getAuthContext(req);
+      const items = await LabService.getPricingCatalogues(
+        hospitalId,
+        typeof req.query.testName === 'string' ? req.query.testName : undefined
+      );
+
+      res.status(200).json({
+        success: true,
+        data: items,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /* =========================================================
      BILLING
   ========================================================= */
 

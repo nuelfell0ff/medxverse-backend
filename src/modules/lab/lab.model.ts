@@ -442,6 +442,33 @@ const LabOrderSchema = new Schema<ILabOrderDocument>(
       ref: 'TestCatalog',
     },
 
+    catalogueItemId: {
+      type: Schema.Types.ObjectId,
+      ref: 'PricingCatalogue',
+      index: true,
+    },
+
+    cataloguePlanName: {
+      type: String,
+      trim: true,
+    },
+
+    cataloguePrice: {
+      type: Number,
+      min: 0,
+    },
+
+    catalogueVersion: {
+      type: Number,
+      min: 1,
+    },
+
+    catalogueCurrency: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+
     testName: {
       type: String,
       required: true,
@@ -672,6 +699,11 @@ LabOrderSchema.index({
   hospitalId: 1,
   testCategory: 1,
   status: 1,
+});
+
+LabOrderSchema.index({
+  hospitalId: 1,
+  catalogueItemId: 1,
 });
 
 LabOrderSchema.index({
