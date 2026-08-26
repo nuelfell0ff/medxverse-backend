@@ -37,6 +37,15 @@ router.patch(
 );
 
 /* =========================================================
+   BILLING PRICING CATALOGUE
+========================================================= */
+
+router.get(
+  '/pricing-catalogues',
+  PharmacyController.listPricingCatalogues
+);
+
+/* =========================================================
    DISPENSING MANAGEMENT
 ========================================================= */
 

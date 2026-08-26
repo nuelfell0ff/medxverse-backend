@@ -197,6 +197,37 @@ export class PharmacyController {
   }
 
   /* =======================================================
+     BILLING PRICING CATALOGUE
+  ======================================================= */
+
+  static async listPricingCatalogues(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq =
+        req as AuthenticatedRequest<{}, any, any, any>;
+
+      const user = authReq.user!;
+      const hospitalId = user.hospitalId || user.id;
+
+      const result =
+        await PharmacyService.getPricingCatalogues(
+          hospitalId,
+          authReq.query as any
+        );
+
+      res.status(200).json({
+        success: true,
+        ...result,
+      });
+    } catch (error: unknown) {
+      next(error);
+    }
+  }
+
+  /* =======================================================
      DISPENSING
   ======================================================= */
 

@@ -154,6 +154,32 @@ const DispenseItemSchema = new Schema(
       uppercase: true,
     },
 
+    pricingCatalogueItemId: {
+      type: Schema.Types.ObjectId,
+      ref: 'PricingCatalogue',
+    },
+
+    pricingCataloguePlanName: {
+      type: String,
+      trim: true,
+    },
+
+    pricingCataloguePrice: {
+      type: Number,
+      min: 0,
+    },
+
+    pricingCatalogueCurrency: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+
+    pricingCatalogueVersion: {
+      type: Number,
+      min: 1,
+    },
+
     billingChargeId: {
       type: Schema.Types.ObjectId,
       ref: 'Charge',

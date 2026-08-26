@@ -21,6 +21,8 @@ import {
 
 import {
   createCharge,
+  getPricingCatalogue,
+  resolvePrice,
 } from '../billing/billing.service.js';
 
 import {
@@ -285,6 +287,26 @@ export class PharmacyService {
   }
 
   /* =======================================================
+     BILLING PRICING CATALOGUE
+  ======================================================= */
+
+  static async getPricingCatalogues(
+    hospitalId: string,
+    query: { search?: string; code?: string; planName?: string; page?: string; limit?: string }
+  ) {
+    return getPricingCatalogue(hospitalId, {
+      search: query.search,
+      code: query.code,
+      planName: query.planName,
+      page: Number(query.page) || 1,
+      limit: Number(query.limit) || 50,
+      category: ChargeCategory.PHARMACY,
+      departmentName: 'Pharmacy',
+      activeOnly: true,
+    });
+  }
+
+  /* =======================================================
      BILLING CAPTURE
   ======================================================= */
 
@@ -357,6 +379,8 @@ export class PharmacyService {
             serviceCode:
               billingCode,
 
+            catalogueItemId: item.pricingCatalogueItemId,
+
             departmentName:
               'Pharmacy',
 
@@ -404,6 +428,9 @@ export class PharmacyService {
             unitPrice?: number;
             currency?: string;
             catalogueVersion?: number;
+            cataloguePlanName?: string;
+            cataloguePrice?: number;
+            catalogueItemId?: Types.ObjectId;
           };
 
         item.billingUnitPrice =
@@ -413,6 +440,17 @@ export class PharmacyService {
           chargeObject.currency;
 
         item.billingCatalogueVersion =
+          chargeObject.catalogueVersion;
+
+        item.pricingCatalogueItemId =
+          chargeObject.catalogueItemId;
+        item.pricingCataloguePlanName =
+          chargeObject.cataloguePlanName;
+        item.pricingCataloguePrice =
+          chargeObject.cataloguePrice;
+        item.pricingCatalogueCurrency =
+          chargeObject.currency;
+        item.pricingCatalogueVersion =
           chargeObject.catalogueVersion;
 
         successfulCharges += 1;
@@ -514,10 +552,31 @@ export class PharmacyService {
         );
       }
 
+      const billingCode =
+        inventoryItem.billingCode?.trim().toUpperCase() ||
+        generateBillingCode(
+          inventoryItem.name
+        );
+
       /*
-       * Internal pharmacy inventory price.
-       * This remains unchanged from the previous
-       * pharmacy workflow.
+       * Resolve the Pharmacy Pricing Catalogue before stock is
+       * deducted. If several applicable plans exist, Billing
+       * requires the UI to explicitly select one.
+       */
+      const resolvedCatalogue =
+        await resolvePrice({
+          hospitalId,
+          code: billingCode,
+          catalogueItemId:
+            reqItem.pricingCatalogueItemId,
+          departmentName: 'Pharmacy',
+          category: ChargeCategory.PHARMACY,
+          serviceDate: new Date(),
+        });
+
+      /*
+       * Preserve the existing internal pharmacy inventory price.
+       * Patient billing price comes from the selected catalogue.
        */
       const itemTotal =
         inventoryItem.unitPrice *
@@ -526,9 +585,7 @@ export class PharmacyService {
       totalAmount +=
         itemTotal;
 
-      /*
-       * Deduct stock.
-       */
+      /* Deduct stock only after catalogue validation succeeds. */
       inventoryItem.quantityInStock -=
         reqItem.quantity;
 
@@ -537,12 +594,6 @@ export class PharmacyService {
         inventoryItem.reorderLevel;
 
       await inventoryItem.save();
-
-      const billingCode =
-        inventoryItem.billingCode?.trim().toUpperCase() ||
-        generateBillingCode(
-          inventoryItem.name
-        );
 
       processedItems.push({
         inventoryItemId:
@@ -558,6 +609,17 @@ export class PharmacyService {
           itemTotal,
 
         billingCode,
+
+        pricingCatalogueItemId:
+          resolvedCatalogue.catalogueItemId,
+        pricingCataloguePlanName:
+          resolvedCatalogue.planName,
+        pricingCataloguePrice:
+          resolvedCatalogue.price,
+        pricingCatalogueCurrency:
+          resolvedCatalogue.currency,
+        pricingCatalogueVersion:
+          resolvedCatalogue.version,
       });
     }
 

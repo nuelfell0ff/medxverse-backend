@@ -140,10 +140,20 @@ export interface IDispenseItem {
 
   totalPrice: number;
 
-  /**
-   * Snapshot of the Billing Pricing Catalogue code used.
-   */
+  /** Snapshot of the Billing Pricing Catalogue code used. */
   billingCode?: string;
+
+  /** Explicit Billing Pricing Catalogue selected for this medicine. */
+  pricingCatalogueItemId?: Types.ObjectId;
+
+  /** Snapshot of the selected catalogue plan. */
+  pricingCataloguePlanName?: string;
+
+  pricingCataloguePrice?: number;
+
+  pricingCatalogueCurrency?: string;
+
+  pricingCatalogueVersion?: number;
 
   /**
    * Actual centralized billing charge created for this item.
@@ -174,6 +184,8 @@ export interface IDispenseItem {
 export interface IDispenseItemDTO {
   inventoryItemId: string;
   quantity: number;
+  /** Optional explicit Billing Pricing Catalogue selected on the Pharmacy UI. */
+  pricingCatalogueItemId?: string;
 }
 
 export interface IDispenseRecord {
