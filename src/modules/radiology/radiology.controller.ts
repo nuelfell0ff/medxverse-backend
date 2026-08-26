@@ -856,6 +856,37 @@ export class RadiologyController {
     }
   }
 
+  public async captureBilling(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const order = await radiologyService.captureBilling(
+        req.params.id,
+        authReq.user.hospitalId,
+        authReq.user._id
+      );
+
+      if (!order) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: order,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   public async cancelOrder(
     req: Request,
     res: Response,
