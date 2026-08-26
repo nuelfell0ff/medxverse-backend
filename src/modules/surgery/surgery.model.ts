@@ -516,6 +516,14 @@ const SurgeryBillingSchema = new Schema(
       type: [String],
       default: [],
     },
+    catalogueItemId: {
+      type: Schema.Types.ObjectId,
+      ref: 'PricingCatalogue',
+    },
+    cataloguePlanName: String,
+    cataloguePrice: Number,
+    catalogueVersion: Number,
+    currency: String,
     lastAttemptAt: Date,
     capturedAt: Date,
   },
@@ -556,6 +564,33 @@ const SurgeryCaseSchema = new Schema<ISurgeryCaseDocument>(
       type: String,
       required: true,
       trim: true,
+    },
+
+    pricingCatalogueItemId: {
+      type: Schema.Types.ObjectId,
+      ref: 'PricingCatalogue',
+      index: true,
+    },
+
+    pricingCataloguePlanName: {
+      type: String,
+      trim: true,
+    },
+
+    pricingCataloguePrice: {
+      type: Number,
+      min: 0,
+    },
+
+    pricingCatalogueVersion: {
+      type: Number,
+      min: 1,
+    },
+
+    pricingCatalogueCurrency: {
+      type: String,
+      trim: true,
+      uppercase: true,
     },
 
     icdCode: {

@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { Types, model } from 'mongoose';
 import { Staff } from '../staff/staff.model.js';
 import { createCharge, resolvePrice } from '../billing/billing.service.js';
+import { PricingCatalogueModel } from '../billing/billing.model.js';
 import { BillingSourceModule, ChargeCategory } from '../billing/billing.types.js';
 import { SurgeryCaseModel } from './surgery.model.js';
 import {
@@ -328,6 +329,71 @@ export class SurgeryService {
     }
   }
 
+  private billingProcedureCode(procedureName: string): string {
+    return `SURGERY_${this.billingCode(procedureName)}`;
+  }
+
+  private async getSelectedSurgeryCatalogue(
+    hospitalId: string,
+    catalogueItemId: string,
+    procedureCode: string,
+    serviceDate: Date
+  ) {
+    this.validateObjectId(catalogueItemId, 'pricing catalogue item ID');
+
+    const catalogue = await PricingCatalogueModel.findOne({
+      _id: new Types.ObjectId(catalogueItemId),
+      hospitalId: new Types.ObjectId(hospitalId),
+      isActive: true,
+      code: procedureCode,
+      departmentName: { $regex: '^Surgery$', $options: 'i' },
+      $or: [
+        { effectiveFrom: { $exists: false } },
+        { effectiveFrom: null },
+        { effectiveFrom: { $lte: serviceDate } },
+      ],
+      $and: [
+        {
+          $or: [
+            { effectiveTo: { $exists: false } },
+            { effectiveTo: null },
+            { effectiveTo: { $gt: serviceDate } },
+          ],
+        },
+      ],
+    }).lean();
+
+    if (!catalogue) {
+      throw new Error(
+        'The selected Surgery pricing catalogue is not active, does not belong to this hospital/procedure, or is not effective for the scheduled date.'
+      );
+    }
+
+    return catalogue;
+  }
+
+  public async getPricingCatalogues(
+    hospitalId: string,
+    procedureName?: string
+  ) {
+    this.validateObjectId(hospitalId, 'hospital ID');
+
+    const filter: Record<string, unknown> = {
+      hospitalId: new Types.ObjectId(hospitalId),
+      departmentName: { $regex: '^Surgery$', $options: 'i' },
+      isActive: true,
+    };
+
+    if (procedureName?.trim()) {
+      filter.code = this.billingProcedureCode(procedureName);
+    }
+
+    return PricingCatalogueModel.find(filter)
+      .select('code name planName category departmentId departmentName price currency version effectiveFrom effectiveTo description')
+      .sort({ planName: 1, version: -1, effectiveFrom: -1 })
+      .lean();
+  }
+
   private async populateSurgeryCase(
     caseId: string,
     hospitalId: string
@@ -397,6 +463,35 @@ export class SurgeryService {
 
     this.validateTimeRange(start, end);
 
+    const procedureCode = this.billingProcedureCode(input.procedureName);
+    let selectedCatalogue: any = null;
+
+    if (input.pricingCatalogueItemId) {
+      selectedCatalogue = await this.getSelectedSurgeryCatalogue(
+        hospitalId,
+        input.pricingCatalogueItemId,
+        procedureCode,
+        start
+      );
+    } else {
+      // If there is exactly one applicable Surgery plan, use it automatically.
+      // If multiple plans exist, Billing's resolver will reject the ambiguity.
+      const resolved = await resolvePrice({
+        hospitalId,
+        code: procedureCode,
+        departmentName: 'Surgery',
+        category: ChargeCategory.SURGERY,
+        serviceDate: start,
+      });
+      selectedCatalogue = {
+        _id: resolved.catalogueItemId,
+        planName: (resolved as any).planName,
+        price: resolved.price,
+        version: resolved.version,
+        currency: resolved.currency,
+      };
+    }
+
     const rawTeam = input.surgicalTeam || [];
 
     const normalizedTeam =
@@ -465,6 +560,12 @@ export class SurgeryService {
         theatreId: input.theatreId,
 
         procedureName: input.procedureName,
+
+        pricingCatalogueItemId: selectedCatalogue?._id,
+        pricingCataloguePlanName: selectedCatalogue?.planName,
+        pricingCataloguePrice: selectedCatalogue?.price,
+        pricingCatalogueVersion: selectedCatalogue?.version,
+        pricingCatalogueCurrency: selectedCatalogue?.currency,
 
         icdCode: input.icdCode,
 
@@ -1686,16 +1787,26 @@ export class SurgeryService {
       status: SurgeryBillingStatus;
       chargeIds: Types.ObjectId[];
       errors: string[];
+      catalogueItemId?: Types.ObjectId;
+      cataloguePlanName?: string;
+      cataloguePrice?: number;
+      catalogueVersion?: number;
+      currency?: string;
       lastAttemptAt: Date;
       capturedAt?: Date;
     } = {
       status: SurgeryBillingStatus.NOT_ATTEMPTED,
       chargeIds: [] as Types.ObjectId[],
       errors: [] as string[],
+      catalogueItemId: existingCase.pricingCatalogueItemId,
+      cataloguePlanName: existingCase.pricingCataloguePlanName,
+      cataloguePrice: existingCase.pricingCataloguePrice,
+      catalogueVersion: existingCase.pricingCatalogueVersion,
+      currency: existingCase.pricingCatalogueCurrency,
       lastAttemptAt: new Date(),
     };
 
-    const procedureCode = `SURGERY_${this.billingCode(existingCase.procedureName)}`;
+    const procedureCode = this.billingProcedureCode(existingCase.procedureName);
 
     const items: Array<{
       code: string;
@@ -1734,12 +1845,22 @@ export class SurgeryService {
 
     for (const item of items) {
       try {
+        const serviceDate =
+          existingCase.actualEndTime ||
+          existingCase.updatedAt ||
+          new Date();
+
+        const selectedForItem =
+          item.code === procedureCode
+            ? existingCase.pricingCatalogueItemId
+            : undefined;
+
         const resolvedPrice = await resolvePrice({
           hospitalId,
           code: item.code,
           departmentName: 'Surgery',
           category: item.category,
-          serviceDate: existingCase.actualEndTime || existingCase.updatedAt || new Date(),
+          serviceDate,
         });
 
         const charge = await createCharge({
@@ -1750,12 +1871,11 @@ export class SurgeryService {
           sourceModule: BillingSourceModule.SURGERY,
           sourceId: this.makeBillingSourceId(caseId, item.code),
           serviceCode: item.code,
-          catalogueItemId: resolvedPrice.catalogueItemId,
+          catalogueItemId: selectedForItem || resolvedPrice.catalogueItemId,
           departmentName: 'Surgery',
           quantity: item.quantity ?? 1,
-          unitPrice: resolvedPrice.price,
           notes: item.notes,
-          chargeDate: existingCase.actualEndTime || existingCase.updatedAt || new Date(),
+          chargeDate: serviceDate,
         });
 
         if (charge?._id) {

@@ -80,6 +80,11 @@ export interface ISurgeryBilling {
   status: SurgeryBillingStatus;
   chargeIds: Types.ObjectId[];
   errors: string[];
+  catalogueItemId?: Types.ObjectId;
+  cataloguePlanName?: string;
+  cataloguePrice?: number;
+  catalogueVersion?: number;
+  currency?: string;
   lastAttemptAt?: Date;
   capturedAt?: Date;
 }
@@ -359,6 +364,12 @@ export interface ISurgeryCase {
 
   theatreId: string;
   procedureName: string;
+  /** Billing pricing catalogue selected for this surgical procedure. */
+  pricingCatalogueItemId?: Types.ObjectId;
+  pricingCataloguePlanName?: string;
+  pricingCataloguePrice?: number;
+  pricingCatalogueVersion?: number;
+  pricingCatalogueCurrency?: string;
   icdCode?: string;
 
   urgency: UrgencyLevel;
@@ -415,6 +426,8 @@ export interface CreateSurgeryCaseInput {
   leadSurgeonId: string;
   theatreId: string;
   procedureName: string;
+  /** Optional Pricing Catalogue item selected when scheduling the surgery. */
+  pricingCatalogueItemId?: string;
   icdCode?: string;
   urgency?: UrgencyLevel;
   priority?: number;

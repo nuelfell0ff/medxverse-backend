@@ -53,6 +53,7 @@ export class SurgeryController {
           leadSurgeonId,
           theatreId: req.body.theatreId,
           procedureName: req.body.procedureName,
+          pricingCatalogueItemId: req.body.pricingCatalogueItemId,
           icdCode: req.body.icdCode,
           urgency: req.body.urgency as UrgencyLevel,
           priority: req.body.priority,
@@ -98,6 +99,7 @@ export class SurgeryController {
           leadSurgeonId,
           theatreId: req.body.theatreId,
           procedureName: req.body.procedureName,
+          pricingCatalogueItemId: req.body.pricingCatalogueItemId,
           icdCode: req.body.icdCode,
           urgency: UrgencyLevel.EMERGENCY,
           priority: req.body.priority ?? 100,
@@ -112,6 +114,29 @@ export class SurgeryController {
       res.status(201).json({
         success: true,
         data: surgeryCase,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async getPricingCatalogues(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const items = await surgeryService.getPricingCatalogues(
+        authReq.user.hospitalId,
+        typeof req.query.procedureName === 'string'
+          ? req.query.procedureName
+          : undefined
+      );
+
+      res.status(200).json({
+        success: true,
+        data: items,
       });
     } catch (error) {
       next(error);

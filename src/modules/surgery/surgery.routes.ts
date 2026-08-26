@@ -22,6 +22,12 @@ router.post(
 );
 
 router.get(
+  '/pricing-catalogues',
+  (req, res, next) =>
+    surgeryController.getPricingCatalogues(req, res, next)
+);
+
+router.get(
   '/',
   (req, res, next) =>
     surgeryController.getCases(req, res, next)
