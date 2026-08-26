@@ -12,6 +12,7 @@ import {
 
 import {
   createCharge,
+  resolvePrice,
 } from '../billing/billing.service.js';
 
 import {
@@ -23,13 +24,37 @@ export class OutpatientService {
   public async createEncounter(
     input: CreateOutpatientInput
   ): Promise<IOutpatientDocument> {
+    let catalogue: any = undefined;
+
+    if (input.pricingCatalogueItemId || input.departmentId) {
+      catalogue = await resolvePrice({
+        hospitalId: input.hospitalId,
+        code: OUTPATIENT_CONSULTATION_SERVICE_CODE,
+        catalogueItemId: input.pricingCatalogueItemId,
+        departmentId: input.departmentId,
+        departmentName: 'Outpatient',
+        category: ChargeCategory.CONSULTATION,
+        serviceDate: new Date(),
+      });
+    }
+
     return OutpatientModel.create({
       ...input,
       status: ConsultationStatus.IN_QUEUE,
       queuedAt: new Date(),
+      pricingCatalogueItemId: catalogue?.catalogueItemId,
+      pricingCataloguePlanName: catalogue?.planName || catalogue?.name,
+      pricingCataloguePrice: catalogue?.price,
+      pricingCatalogueVersion: catalogue?.version,
+      pricingCatalogueCurrency: catalogue?.currency,
       billing: {
         status: BillingCaptureStatus.NOT_ATTEMPTED,
         serviceCode: OUTPATIENT_CONSULTATION_SERVICE_CODE,
+        catalogueItemId: catalogue?.catalogueItemId,
+        cataloguePlanName: catalogue?.planName || catalogue?.name,
+        cataloguePrice: catalogue?.price,
+        catalogueVersion: catalogue?.version,
+        catalogueCurrency: catalogue?.currency,
       },
     });
   }
@@ -160,6 +185,23 @@ export class OutpatientService {
    * The Billing module resolves the current catalogue price using:
    * OUTPATIENT_CONSULTATION + hospital + department + service date.
    */
+  public async getPricingCatalogues(
+    hospitalId: string,
+    departmentId?: string,
+    search?: string
+  ) {
+    const { getPricingCatalogue } = await import('../billing/billing.service.js');
+    return getPricingCatalogue(hospitalId, {
+      departmentName: 'Outpatient',
+      departmentId,
+      code: OUTPATIENT_CONSULTATION_SERVICE_CODE,
+      search,
+      activeOnly: true,
+      page: 1,
+      limit: 100,
+    } as any);
+  }
+
   public async captureBilling(
     encounterId: string,
     hospitalId: string,
@@ -191,6 +233,7 @@ export class OutpatientService {
         hospitalId,
         patientId: String(encounter.patientId),
         serviceCode: OUTPATIENT_CONSULTATION_SERVICE_CODE,
+        catalogueItemId: encounter.pricingCatalogueItemId,
         description: 'Outpatient Consultation',
         category: ChargeCategory.CONSULTATION,
         sourceModule: BillingSourceModule.OUTPATIENT,
@@ -209,6 +252,11 @@ export class OutpatientService {
         status: BillingCaptureStatus.CAPTURED,
         chargeId: charge._id,
         serviceCode: OUTPATIENT_CONSULTATION_SERVICE_CODE,
+        catalogueItemId: encounter.pricingCatalogueItemId,
+        cataloguePlanName: encounter.pricingCataloguePlanName,
+        cataloguePrice: encounter.pricingCataloguePrice,
+        catalogueVersion: encounter.pricingCatalogueVersion,
+        catalogueCurrency: encounter.pricingCatalogueCurrency,
         capturedAt: new Date(),
       };
 

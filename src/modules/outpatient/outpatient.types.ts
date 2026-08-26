@@ -39,6 +39,11 @@ export interface IVitalSigns {
 
 export interface IOutpatientBilling {
   status: BillingCaptureStatus;
+  catalogueItemId?: Types.ObjectId;
+  cataloguePlanName?: string;
+  cataloguePrice?: number;
+  catalogueVersion?: number;
+  catalogueCurrency?: string;
   chargeId?: Types.ObjectId;
   serviceCode?: string;
   error?: string;
@@ -60,6 +65,11 @@ export interface IOutpatient {
   queuedAt: Date;
   consultationStartedAt?: Date;
   consultationEndedAt?: Date;
+  pricingCatalogueItemId?: Types.ObjectId;
+  pricingCataloguePlanName?: string;
+  pricingCataloguePrice?: number;
+  pricingCatalogueVersion?: number;
+  pricingCatalogueCurrency?: string;
   billing?: IOutpatientBilling;
 }
 
@@ -75,6 +85,7 @@ export interface CreateOutpatientInput {
   departmentId?: string;
   triagePriority?: TriagePriority;
   chiefComplaint: string;
+  pricingCatalogueItemId?: string;
 }
 
 export interface UpdateVitalsInput {

@@ -37,6 +37,11 @@ const OutpatientBillingSchema = new Schema(
       trim: true,
       uppercase: true,
     },
+    catalogueItemId: { type: Schema.Types.ObjectId, ref: 'PricingCatalogue' },
+    cataloguePlanName: { type: String, trim: true },
+    cataloguePrice: { type: Number, min: 0 },
+    catalogueVersion: { type: Number, min: 1 },
+    catalogueCurrency: { type: String, trim: true, uppercase: true },
     error: {
       type: String,
       trim: true,
@@ -130,6 +135,12 @@ const OutpatientSchema = new Schema<IOutpatientDocument>(
     consultationEndedAt: {
       type: Date,
     },
+
+    pricingCatalogueItemId: { type: Schema.Types.ObjectId, ref: 'PricingCatalogue' },
+    pricingCataloguePlanName: { type: String, trim: true },
+    pricingCataloguePrice: { type: Number, min: 0 },
+    pricingCatalogueVersion: { type: Number, min: 1 },
+    pricingCatalogueCurrency: { type: String, trim: true, uppercase: true },
 
     billing: {
       type: OutpatientBillingSchema,

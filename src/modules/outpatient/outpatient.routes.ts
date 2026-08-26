@@ -6,37 +6,13 @@ const router = Router();
 
 router.use(authenticate);
 
-router.post('/', (req, res, next) =>
-  outpatientController.createEncounter(req, res, next)
-);
-
-router.get('/queue', (req, res, next) =>
-  outpatientController.getQueue(req, res, next)
-);
-
-router.get('/:id', (req, res, next) =>
-  outpatientController.getEncounterById(req, res, next)
-);
-
-router.patch('/:id/vitals', (req, res, next) =>
-  outpatientController.recordVitals(req, res, next)
-);
-
-router.patch('/:id/start', (req, res, next) =>
-  outpatientController.startConsultation(req, res, next)
-);
-
-router.patch('/:id/complete', (req, res, next) =>
-  outpatientController.completeConsultation(req, res, next)
-);
-
-/**
- * Retry centralized billing capture for a completed outpatient encounter.
- * This is intentionally placed after the existing clinical routes and does
- * not alter any of their behavior.
- */
-router.post('/:id/billing/capture', (req, res, next) =>
-  outpatientController.captureBilling(req, res, next)
-);
+router.post('/', (req, res, next) => outpatientController.createEncounter(req, res, next));
+router.get('/pricing-catalogues', (req, res, next) => outpatientController.getPricingCatalogues(req, res, next));
+router.get('/queue', (req, res, next) => outpatientController.getQueue(req, res, next));
+router.get('/:id', (req, res, next) => outpatientController.getEncounterById(req, res, next));
+router.patch('/:id/vitals', (req, res, next) => outpatientController.recordVitals(req, res, next));
+router.patch('/:id/start', (req, res, next) => outpatientController.startConsultation(req, res, next));
+router.patch('/:id/complete', (req, res, next) => outpatientController.completeConsultation(req, res, next));
+router.post('/:id/billing/capture', (req, res, next) => outpatientController.captureBilling(req, res, next));
 
 export default router;
