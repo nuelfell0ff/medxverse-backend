@@ -333,10 +333,20 @@ export class SurgeryService {
     return `SURGERY_${this.billingCode(procedureName)}`;
   }
 
+  /**
+   * A Surgery catalogue may price the whole surgical service family
+   * (SURGERY_PROCEDURE) or a procedure-specific service code.  The selected
+   * catalogue is authoritative, so both forms are valid for a Surgery case.
+   */
+  private billingProcedureCodes(procedureName: string): string[] {
+    const procedureCode = this.billingProcedureCode(procedureName);
+    return Array.from(new Set(['SURGERY_PROCEDURE', procedureCode]));
+  }
+
   private async getSelectedSurgeryCatalogue(
     hospitalId: string,
     catalogueItemId: string,
-    procedureCode: string,
+    procedureCodes: string[],
     serviceDate: Date
   ) {
     this.validateObjectId(catalogueItemId, 'pricing catalogue item ID');
@@ -345,7 +355,7 @@ export class SurgeryService {
       _id: new Types.ObjectId(catalogueItemId),
       hospitalId: new Types.ObjectId(hospitalId),
       isActive: true,
-      code: procedureCode,
+      code: { $in: procedureCodes },
       departmentName: { $regex: '^Surgery$', $options: 'i' },
       $or: [
         { effectiveFrom: { $exists: false } },
@@ -385,7 +395,7 @@ export class SurgeryService {
     };
 
     if (procedureName?.trim()) {
-      filter.code = this.billingProcedureCode(procedureName);
+      filter.code = { $in: this.billingProcedureCodes(procedureName) };
     }
 
     return PricingCatalogueModel.find(filter)
@@ -470,7 +480,7 @@ export class SurgeryService {
       selectedCatalogue = await this.getSelectedSurgeryCatalogue(
         hospitalId,
         input.pricingCatalogueItemId,
-        procedureCode,
+        this.billingProcedureCodes(input.procedureName),
         start
       );
     } else {
@@ -478,7 +488,7 @@ export class SurgeryService {
       // If multiple plans exist, Billing's resolver will reject the ambiguity.
       const resolved = await resolvePrice({
         hospitalId,
-        code: procedureCode,
+        code: 'SURGERY_PROCEDURE',
         departmentName: 'Surgery',
         category: ChargeCategory.SURGERY,
         serviceDate: start,
@@ -1855,9 +1865,29 @@ export class SurgeryService {
             ? existingCase.pricingCatalogueItemId
             : undefined;
 
+        let resolutionCode = item.code;
+
+        // If the procedure was scheduled against an explicitly selected
+        // catalogue, use that catalogue's actual service code when capturing
+        // the charge. This supports both SURGERY_PROCEDURE and procedure-
+        // specific catalogues without losing the selected price.
+        if (selectedForItem) {
+          const selectedCatalogue = await PricingCatalogueModel.findOne({
+            _id: selectedForItem,
+            hospitalId: new Types.ObjectId(hospitalId),
+          })
+            .select('code')
+            .lean();
+
+          if (selectedCatalogue?.code) {
+            resolutionCode = selectedCatalogue.code;
+          }
+        }
+
         const resolvedPrice = await resolvePrice({
           hospitalId,
-          code: item.code,
+          code: resolutionCode,
+          catalogueItemId: selectedForItem,
           departmentName: 'Surgery',
           category: item.category,
           serviceDate,
