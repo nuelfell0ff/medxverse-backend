@@ -102,6 +102,11 @@ router.patch(
    REFUNDS
 ========================================================= */
 
+router.get(
+  '/refunds',
+  controller.getRefunds
+);
+
 router.post(
   '/refunds',
   controller.createRefund
@@ -120,6 +125,11 @@ router.post(
 /* =========================================================
    PAYMENT PLANS
 ========================================================= */
+
+router.get(
+  '/payment-plans',
+  controller.getPaymentPlans
+);
 
 router.post(
   '/payment-plans',

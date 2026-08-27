@@ -332,13 +332,44 @@ export const getPricingCatalogue = async (
     hospitalId: oid(hospitalId, 'hospital ID'),
   };
 
-  if (query.category) filter.category = query.category;
+  const andFilters: Record<string, unknown>[] = [];
 
-  if (query.departmentId) {
-    filter.departmentId = oid(query.departmentId, 'department ID');
-  } else if (query.departmentName?.trim()) {
+  if (query.category) {
+    filter.category = query.category;
+  }
+
+  /*
+   * Department filtering:
+   * - departmentId only  -> match the department ObjectId.
+   * - departmentName only -> match the stored department name.
+   * - both supplied -> accept either identifier.
+   *
+   * This keeps department isolation intact while supporting clients that
+   * know either the department ID or its human-readable name.
+   */
+  const departmentId = query.departmentId
+    ? oid(String(query.departmentId), 'department ID')
+    : undefined;
+
+  const departmentName = query.departmentName?.trim();
+
+  if (departmentId && departmentName) {
+    andFilters.push({
+      $or: [
+        { departmentId },
+        {
+          departmentName: {
+            $regex: `^${departmentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+            $options: 'i',
+          },
+        },
+      ],
+    });
+  } else if (departmentId) {
+    filter.departmentId = departmentId;
+  } else if (departmentName) {
     filter.departmentName = {
-      $regex: `^${query.departmentName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+      $regex: `^${departmentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
       $options: 'i',
     };
   }
@@ -359,13 +390,20 @@ export const getPricingCatalogue = async (
   }
 
   if (query.search?.trim()) {
-    const search = query.search.trim();
+    const search = query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    filter.$or = [
-      { code: { $regex: search, $options: 'i' } },
-      { name: { $regex: search, $options: 'i' } },
-      { departmentName: { $regex: search, $options: 'i' } },
-    ];
+    andFilters.push({
+      $or: [
+        { code: { $regex: search, $options: 'i' } },
+        { name: { $regex: search, $options: 'i' } },
+        { departmentName: { $regex: search, $options: 'i' } },
+        { planName: { $regex: search, $options: 'i' } },
+      ],
+    });
+  }
+
+  if (andFilters.length) {
+    filter.$and = andFilters;
   }
 
   const [items, total] = await Promise.all([
@@ -1155,6 +1193,76 @@ export const reconcilePayment = async (
    REFUNDS
 ========================================================= */
 
+export const getRefunds = async (
+  hospitalId: string,
+  query: BillingListQuery
+) => {
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
+
+  const filter: Record<string, unknown> = {
+    hospitalId: oid(hospitalId, 'hospital ID'),
+  };
+
+  if (query.patientId) {
+    filter.patientId = oid(query.patientId, 'patient ID');
+  }
+
+  if (query.billingAccountId) {
+    filter.billingAccountId = oid(
+      query.billingAccountId,
+      'billing account ID'
+    );
+  }
+
+  const status = (query as BillingListQuery & Record<string, unknown>).status;
+  if (typeof status === 'string' && status.trim()) {
+    filter.status = status.trim();
+  }
+
+  if (query.startDate || query.endDate) {
+    filter.createdAt = {
+      ...(query.startDate
+        ? { $gte: new Date(`${query.startDate}T00:00:00.000`) }
+        : {}),
+      ...(query.endDate
+        ? { $lte: new Date(`${query.endDate}T23:59:59.999`) }
+        : {}),
+    };
+  }
+
+  if (query.search?.trim()) {
+    const search = query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    filter.$or = [
+      { reason: { $regex: search, $options: 'i' } },
+      { rejectedReason: { $regex: search, $options: 'i' } },
+    ];
+  }
+
+  const [items, total] = await Promise.all([
+    RefundModel.find(filter)
+      .populate('patientId', 'firstName lastName mrn')
+      .populate('billingAccountId', 'billingId')
+      .populate('paymentId', 'receiptNumber amount status')
+      .populate('requestedBy', 'firstName lastName role')
+      .populate('approvedBy', 'firstName lastName role')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+
+    RefundModel.countDocuments(filter),
+  ]);
+
+  return {
+    items,
+    total,
+    page,
+    totalPages: Math.ceil(total / limit),
+  };
+};
+
 export const createRefund = async (input: CreateRefundInput) => {
   const payment = await PaymentModel.findById(input.paymentId);
 
@@ -1275,6 +1383,71 @@ export const completeRefund = async (id: string) => {
 /* =========================================================
    PAYMENT PLANS
 ========================================================= */
+
+export const getPaymentPlans = async (
+  hospitalId: string,
+  query: BillingListQuery
+) => {
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
+
+  const filter: Record<string, unknown> = {
+    hospitalId: oid(hospitalId, 'hospital ID'),
+  };
+
+  if (query.patientId) {
+    filter.patientId = oid(query.patientId, 'patient ID');
+  }
+
+  if (query.billingAccountId) {
+    filter.billingAccountId = oid(
+      query.billingAccountId,
+      'billing account ID'
+    );
+  }
+
+  const status = (query as BillingListQuery & Record<string, unknown>).status;
+  if (typeof status === 'string' && status.trim()) {
+    filter.status = status.trim();
+  }
+
+  if (query.startDate || query.endDate) {
+    filter.startDate = {
+      ...(query.startDate
+        ? { $gte: new Date(`${query.startDate}T00:00:00.000`) }
+        : {}),
+      ...(query.endDate
+        ? { $lte: new Date(`${query.endDate}T23:59:59.999`) }
+        : {}),
+    };
+  }
+
+  if (query.search?.trim()) {
+    const search = query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    filter.notes = { $regex: search, $options: 'i' };
+  }
+
+  const [items, total] = await Promise.all([
+    PaymentPlanModel.find(filter)
+      .populate('patientId', 'firstName lastName mrn')
+      .populate('billingAccountId', 'billingId')
+      .populate('createdBy', 'firstName lastName role')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+
+    PaymentPlanModel.countDocuments(filter),
+  ]);
+
+  return {
+    items,
+    total,
+    page,
+    totalPages: Math.ceil(total / limit),
+  };
+};
 
 export const createPaymentPlan = async (
   input: CreatePaymentPlanInput

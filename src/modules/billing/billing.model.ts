@@ -184,6 +184,14 @@ PricingCatalogueSchema.index({
   isActive: 1,
 });
 
+PricingCatalogueSchema.index({
+  hospitalId: 1,
+  departmentName: 1,
+  code: 1,
+  planName: 1,
+  isActive: 1,
+});
+
 export const PricingCatalogueModel: Model<IPricingCatalogueItem> =
   mongoose.models.PricingCatalogue ||
   mongoose.model<IPricingCatalogueItem>(

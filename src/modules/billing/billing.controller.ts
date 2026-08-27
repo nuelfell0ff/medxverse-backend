@@ -147,10 +147,17 @@ export const getAvailablePricingCatalogues = async (
   res: Response
 ) => {
   try {
-    const departmentName = String(req.query.departmentName || '').trim();
-    const departmentId = req.query.departmentId
-      ? String(req.query.departmentId)
-      : undefined;
+    const rawDepartmentName =
+      req.query.departmentName ?? req.query.department;
+    const departmentName =
+      typeof rawDepartmentName === 'string'
+        ? rawDepartmentName.trim()
+        : undefined;
+
+    const departmentId =
+      typeof req.query.departmentId === 'string'
+        ? req.query.departmentId.trim()
+        : undefined;
 
     if (!departmentName && !departmentId) {
       throw new Error('departmentName or departmentId is required.');
@@ -161,9 +168,9 @@ export const getAvailablePricingCatalogues = async (
       data: await BillingService.getPricingCatalogue(
         hospitalId(req),
         {
-          ...(req.query as any),
+          ...(req.query as Record<string, unknown>),
           departmentName: departmentName || undefined,
-          departmentId,
+          departmentId: departmentId || undefined,
           activeOnly: true,
         }
       ),
@@ -348,6 +355,23 @@ export const reconcilePayment = async (
    REFUNDS
 ========================================================= */
 
+export const getRefunds = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    return res.json({
+      success: true,
+      data: await BillingService.getRefunds(
+        hospitalId(req),
+        req.query as any
+      ),
+    });
+  } catch (error) {
+    return fail(res, error);
+  }
+};
+
 export const createRefund = async (
   req: Request,
   res: Response
@@ -410,6 +434,23 @@ export const completeRefund = async (
 /* =========================================================
    PAYMENT PLANS
 ========================================================= */
+
+export const getPaymentPlans = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    return res.json({
+      success: true,
+      data: await BillingService.getPaymentPlans(
+        hospitalId(req),
+        req.query as any
+      ),
+    });
+  } catch (error) {
+    return fail(res, error);
+  }
+};
 
 export const createPaymentPlan = async (
   req: Request,
