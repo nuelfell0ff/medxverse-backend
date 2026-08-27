@@ -11,8 +11,6 @@ import {
 
 import {
   BillingAccountStatus,
-  getDepartmentNameAliases,
-  normalizeDepartmentName,
   BillingListQuery,
   BillingSourceModule,
   ChargeStatus,
@@ -31,6 +29,9 @@ import {
   RefundStatus,
   ResolvePriceInput,
   UpdatePricingCatalogueItemInput,
+  deriveBillingServiceCode,
+  normalizeBillingDepartmentName,
+  BILLING_DEPARTMENT_ALIASES,
 } from './billing.types.js';
 
 /* =========================================================
@@ -75,22 +76,40 @@ const validDate = (value: Date | string | null | undefined, field: string) => {
   return date;
 };
 
-/** Backward-compatible aliases for legacy billable service codes. */
-const getServiceCodeAliases = (code: string): string[] => {
-  const normalized = code.trim().toUpperCase();
-  if (normalized === 'OUTPATIENT_CONSULTATION') return ['OUTPATIENT_CONSULTATION', 'OUTPATIENT'];
-  if (normalized === 'OUTPATIENT') return ['OUTPATIENT', 'OUTPATIENT_CONSULTATION'];
-  return [normalized];
+
+const escapeRegex = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const departmentNameMatchers = (value?: string | null) => {
+  const normalized = normalizeBillingDepartmentName(value);
+  if (!normalized) return [];
+
+  const aliases = Object.entries(BILLING_DEPARTMENT_ALIASES)
+    .filter(([, canonical]) => canonical === normalized)
+    .map(([alias]) => alias.replace(/_/g, ' '));
+
+  return [...new Set([normalized, ...aliases])].map(
+    (name) => new RegExp(`^${escapeRegex(name)}$`, 'i')
+  );
 };
 
-const departmentNameFilter = (aliases: string[]) => ({
-  $or: aliases.map((alias) => ({
-    departmentName: {
-      $regex: `^${alias.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}$`,
-      $options: 'i',
-    },
-  })),
-});
+
+const serviceCodeMatchers = (value?: string | null) => {
+  if (!value?.trim()) return [];
+
+  const code = value.trim().toUpperCase();
+
+  /*
+   * Backward compatibility for the catalogue you already created:
+   * OUTPATIENT was historically used as the service code, while the
+   * canonical code is now OUTPATIENT_CONSULTATION.
+   */
+  if (code === 'OUTPATIENT_CONSULTATION') {
+    return [/^OUTPATIENT_CONSULTATION$/i, /^OUTPATIENT$/i];
+  }
+
+  return [new RegExp(`^${escapeRegex(code)}$`, 'i')];
+};
 
 /* =========================================================
    BILLING ACCOUNT
@@ -285,10 +304,35 @@ export const createPricingCatalogueItem = async (
   userId?: string
 ) => {
   const hospitalId = oid(String(input.hospitalId), 'hospital ID');
-  const code = input.code.trim().toUpperCase();
 
-  if (!code) throw new Error('Service code is required.');
-  if (!input.name.trim()) throw new Error('Service name is required.');
+  if (!input.name?.trim()) {
+    throw new Error('Service name is required.');
+  }
+
+  const normalizedDepartmentName = normalizeBillingDepartmentName(
+    input.departmentName
+  );
+
+  /*
+   * Service code is now optional for catalogue creation.
+   *
+   * If the caller supplies only a department (for example "Outpatient"),
+   * Billing derives the canonical service code automatically.
+   *
+   * An explicit specialised service code is still respected, so existing
+   * and future department-specific services such as RADIOLOGY_CT remain
+   * possible.
+   */
+  const code = deriveBillingServiceCode(
+    normalizedDepartmentName,
+    input.code
+  );
+
+  if (!code) {
+    throw new Error(
+      'Service code could not be determined. Provide a service code or a valid department name.'
+    );
+  }
 
   const effectiveFrom = validDate(
     input.effectiveFrom,
@@ -305,16 +349,49 @@ export const createPricingCatalogueItem = async (
     ? oid(String(input.departmentId), 'department ID')
     : undefined;
 
-  const departmentName = normalizeDepartmentName(input.departmentName);
-
   const planName = input.planName?.trim() || input.name.trim();
 
-  const existing = await PricingCatalogueModel.findOne({
+  const existingFilter: Record<string, unknown> = {
     hospitalId,
     code,
-    departmentId: departmentId || null,
-    planName: { $regex: `^${planName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
-  });
+    planName: {
+      $regex: `^${planName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+      $options: 'i',
+    },
+  };
+
+  /*
+   * Treat a missing departmentId as the hospital-wide scope. When a
+   * department is supplied, compare the department ID when available and
+   * also compare the normalized department name. This keeps old records
+   * such as "Outpatient" compatible with the new canonical "OUTPATIENT".
+   */
+  if (departmentId) {
+    existingFilter.$or = [
+      { departmentId },
+      ...(normalizedDepartmentName
+        ? [
+            {
+              departmentName: {
+                $in: departmentNameMatchers(normalizedDepartmentName),
+              },
+            },
+          ]
+        : []),
+    ];
+  } else if (normalizedDepartmentName) {
+    existingFilter.$or = [
+      { departmentId: null },
+      { departmentId: { $exists: false } },
+    ];
+    existingFilter.departmentName = {
+      $in: departmentNameMatchers(normalizedDepartmentName),
+    };
+  } else {
+    existingFilter.departmentId = null;
+  }
+
+  const existing = await PricingCatalogueModel.findOne(existingFilter);
 
   if (existing) {
     throw new Error(
@@ -329,7 +406,7 @@ export const createPricingCatalogueItem = async (
     planName,
     category: input.category,
     departmentId,
-    departmentName,
+    departmentName: normalizedDepartmentName,
     price: money(input.price),
     currency: input.currency?.trim().toUpperCase() || 'NGN',
     version: 1,
@@ -355,33 +432,53 @@ export const getPricingCatalogue = async (
 
   const andFilters: Record<string, unknown>[] = [];
 
-  if (query.category) filter.category = query.category;
+  if (query.category) {
+    filter.category = query.category;
+  }
 
+  /*
+   * Department filtering:
+   * - departmentId only  -> match the department ObjectId.
+   * - departmentName only -> match the stored department name.
+   * - both supplied -> accept either identifier.
+   *
+   * This keeps department isolation intact while supporting clients that
+   * know either the department ID or its human-readable name.
+   */
   const departmentId = query.departmentId
     ? oid(String(query.departmentId), 'department ID')
     : undefined;
-  const departmentAliases = getDepartmentNameAliases(query.departmentName);
 
-  if (departmentId && departmentAliases.length) {
+  const departmentName = query.departmentName?.trim();
+
+  if (departmentId && departmentName) {
     andFilters.push({
       $or: [
         { departmentId },
-        departmentNameFilter(departmentAliases),
+        {
+          departmentName: {
+            $in: departmentNameMatchers(departmentName),
+          },
+        },
       ],
     });
   } else if (departmentId) {
     filter.departmentId = departmentId;
-  } else if (departmentAliases.length) {
-    andFilters.push(departmentNameFilter(departmentAliases));
+  } else if (departmentName) {
+    filter.departmentName = {
+      $in: departmentNameMatchers(departmentName),
+    };
   }
 
   if (query.code?.trim()) {
-    filter.code = { $in: getServiceCodeAliases(query.code) };
+    filter.code = { $in: serviceCodeMatchers(query.code) };
   }
 
   if (query.planName?.trim()) {
-    const planName = query.planName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    filter.planName = { $regex: planName, $options: 'i' };
+    filter.planName = {
+      $regex: query.planName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      $options: 'i',
+    };
   }
 
   if (query.activeOnly === true || query.activeOnly === 'true') {
@@ -390,6 +487,7 @@ export const getPricingCatalogue = async (
 
   if (query.search?.trim()) {
     const search = query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     andFilters.push({
       $or: [
         { code: { $regex: search, $options: 'i' } },
@@ -400,7 +498,9 @@ export const getPricingCatalogue = async (
     });
   }
 
-  if (andFilters.length) filter.$and = andFilters;
+  if (andFilters.length) {
+    filter.$and = andFilters;
+  }
 
   const [items, total] = await Promise.all([
     PricingCatalogueModel.find(filter)
@@ -408,10 +508,16 @@ export const getPricingCatalogue = async (
       .skip((page - 1) * limit)
       .limit(limit)
       .lean(),
+
     PricingCatalogueModel.countDocuments(filter),
   ]);
 
-  return { items, total, page, totalPages: Math.ceil(total / limit) };
+  return {
+    items,
+    total,
+    page,
+    totalPages: Math.ceil(total / limit),
+  };
 };
 
 /**
@@ -426,9 +532,7 @@ export const getPricingCatalogue = async (
 export const resolvePrice = async (input: ResolvePriceInput) => {
   const hospitalId = oid(String(input.hospitalId), 'hospital ID');
   const code = input.code.trim().toUpperCase();
-  const serviceCodes = getServiceCodeAliases(code);
-  const requestedDepartmentName = normalizeDepartmentName(input.departmentName);
-  const departmentAliases = getDepartmentNameAliases(input.departmentName);
+  const serviceCodeCandidates = serviceCodeMatchers(code);
   const serviceDate = validDate(input.serviceDate, 'service date') || new Date();
 
   if (input.catalogueItemId) {
@@ -436,7 +540,7 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
       _id: oid(String(input.catalogueItemId), 'catalogue item ID'),
       hospitalId,
       isActive: true,
-      code: { $in: serviceCodes },
+      code: { $in: serviceCodeCandidates },
       ...(input.category ? { category: input.category } : {}),
       $or: [
         { effectiveFrom: { $exists: false } },
@@ -460,8 +564,23 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
       throw new Error('The selected pricing catalogue does not belong to the requested department.');
     }
 
-    if (requestedDepartmentName && normalizeDepartmentName(selected.departmentName) !== requestedDepartmentName) {
-      throw new Error('The selected pricing catalogue does not belong to the requested department.');
+    if (input.departmentName?.trim()) {
+      const selectedDepartment = normalizeBillingDepartmentName(
+        selected.departmentName
+      );
+      const requestedDepartment = normalizeBillingDepartmentName(
+        input.departmentName
+      );
+
+      if (
+        selectedDepartment &&
+        requestedDepartment &&
+        selectedDepartment !== requestedDepartment
+      ) {
+        throw new Error(
+          'The selected pricing catalogue does not belong to the requested department.'
+        );
+      }
     }
 
     return {
@@ -486,7 +605,7 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
 
   const baseFilter: Record<string, unknown> = {
     hospitalId,
-    code: { $in: serviceCodes },
+    code,
     isActive: true,
     $or: [
       { effectiveFrom: { $exists: false } },
@@ -514,8 +633,13 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
     departmentCandidates.push({ departmentId });
   }
 
-  if (departmentAliases.length) {
-    departmentCandidates.push(departmentNameFilter(departmentAliases));
+  if (input.departmentName?.trim()) {
+    departmentCandidates.push({
+      departmentName: {
+        $regex: `^${input.departmentName.trim()}$`,
+        $options: 'i',
+      },
+    });
   }
 
   departmentCandidates.push({ departmentId: { $exists: false } });
@@ -536,7 +660,7 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
 
   let item = candidates[0];
 
-  if (departmentId || requestedDepartmentName) {
+  if (departmentId || input.departmentName?.trim()) {
     const departmentSpecificCandidates = candidates.filter((candidate) => {
       const sameId =
         departmentId &&
@@ -544,9 +668,9 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
         String(candidate.departmentId) === String(departmentId);
 
       const sameName =
-        requestedDepartmentName &&
-        normalizeDepartmentName(candidate.departmentName) ===
-          requestedDepartmentName;
+        input.departmentName &&
+        candidate.departmentName?.toLowerCase() ===
+          input.departmentName.trim().toLowerCase();
 
       return Boolean(sameId || sameName);
     });
@@ -634,8 +758,37 @@ export const updatePricingCatalogueItem = async (
     item.version += 1;
   }
 
+  const previousDepartmentName = normalizeBillingDepartmentName(
+    item.departmentName
+  );
+
   if (input.code !== undefined) {
-    item.code = input.code.trim().toUpperCase();
+    const suppliedCode = input.code.trim().toUpperCase();
+
+    if (!suppliedCode) {
+      throw new Error('Service code cannot be empty.');
+    }
+
+    item.code = deriveBillingServiceCode(
+      input.departmentName !== undefined
+        ? input.departmentName
+        : item.departmentName,
+      suppliedCode
+    )!;
+  } else if (input.departmentName !== undefined) {
+    /*
+     * If the existing code was automatically derived from the previous
+     * department, automatically derive the new department's code too.
+     * Explicit specialised codes are preserved.
+     */
+    const autoCodeForPreviousDepartment =
+      previousDepartmentName
+        ? deriveBillingServiceCode(previousDepartmentName)
+        : undefined;
+
+    if (!autoCodeForPreviousDepartment || item.code === autoCodeForPreviousDepartment) {
+      item.code = deriveBillingServiceCode(input.departmentName)!;
+    }
   }
 
   if (input.planName !== undefined) {
@@ -667,7 +820,15 @@ export const updatePricingCatalogueItem = async (
   }
 
   if (input.departmentName !== undefined) {
-    item.departmentName = normalizeDepartmentName(input.departmentName);
+    const normalizedDepartmentName = normalizeBillingDepartmentName(
+      input.departmentName
+    );
+
+    if (!normalizedDepartmentName) {
+      throw new Error('Department name cannot be empty.');
+    }
+
+    item.departmentName = normalizedDepartmentName;
   }
 
   if (input.price !== undefined) {

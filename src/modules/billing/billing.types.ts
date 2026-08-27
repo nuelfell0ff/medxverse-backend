@@ -95,72 +95,107 @@ export enum ReconciliationStatus {
   DISPUTED = 'DISPUTED',
 }
 
+export type IdLike = Types.ObjectId | string;
 
 /* =========================================================
-   DEPARTMENT NORMALIZATION
+   DEPARTMENT / SERVICE CODE NORMALIZATION
+   ========================================================= */
 
-   Department identity is intentionally separate from the billable
-   service code. Clinical modules may send raw/human department names
-   such as "OUTPATIENTS", "Outpatient", "OPD", "LAB", or "LABORATORY".
-========================================================= */
+/**
+ * Canonical department keys used by Billing.
+ *
+ * `departmentName` is normalized to one of these keys when a catalogue
+ * is created/updated. Service codes remain separate from department names.
+ */
+export const BILLING_DEPARTMENT_SERVICE_CODES: Record<string, string> = {
+  OUTPATIENT: 'OUTPATIENT_CONSULTATION',
+  SURGERY: 'SURGERY_PROCEDURE',
+  RADIOLOGY: 'RADIOLOGY_PROCEDURE',
+  LABORATORY: 'LAB_TEST',
+  PHARMACY: 'PHARMACY_SERVICE',
+  ICU: 'ICU_SERVICE',
+  WARD: 'WARD_SERVICE',
+  EMERGENCY: 'EMERGENCY_SERVICE',
+};
 
-export enum BillingDepartment {
-  OUTPATIENT = 'OUTPATIENT',
-  SURGERY = 'SURGERY',
-  RADIOLOGY = 'RADIOLOGY',
-  LABORATORY = 'LABORATORY',
-  PHARMACY = 'PHARMACY',
-  ICU = 'ICU',
-  WARD = 'WARD',
-  EMERGENCY = 'EMERGENCY',
+/**
+ * Human/user-entered aliases -> canonical department key.
+ * This is intentionally centralized so every catalogue follows the
+ * same department naming rules.
+ */
+export const BILLING_DEPARTMENT_ALIASES: Record<string, string> = {
+  OUTPATIENT: 'OUTPATIENT',
+  OUTPATIENTS: 'OUTPATIENT',
+  OPD: 'OUTPATIENT',
+
+  SURGERY: 'SURGERY',
+  SURGICAL: 'SURGERY',
+
+  RADIOLOGY: 'RADIOLOGY',
+  RADIOLOGICAL: 'RADIOLOGY',
+  RADIO: 'RADIOLOGY',
+
+  LAB: 'LABORATORY',
+  LABS: 'LABORATORY',
+  LABORATORY: 'LABORATORY',
+
+  PHARMACY: 'PHARMACY',
+  ICU: 'ICU',
+  WARD: 'WARD',
+
+  EMERGENCY: 'EMERGENCY',
+  ER: 'EMERGENCY',
+  ED: 'EMERGENCY',
+};
+
+export function normalizeBillingDepartmentName(
+  value?: string | null
+): string | undefined {
+  if (!value?.trim()) return undefined;
+
+  const key = value
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+
+  return BILLING_DEPARTMENT_ALIASES[key] || key;
 }
 
-const DEPARTMENT_ALIASES: Record<string, BillingDepartment> = {
-  OUTPATIENT: BillingDepartment.OUTPATIENT,
-  OUTPATIENTS: BillingDepartment.OUTPATIENT,
-  OPD: BillingDepartment.OUTPATIENT,
-  SURGERY: BillingDepartment.SURGERY,
-  SURGICAL: BillingDepartment.SURGERY,
-  RADIOLOGY: BillingDepartment.RADIOLOGY,
-  RADIOLOGICAL: BillingDepartment.RADIOLOGY,
-  RADIO: BillingDepartment.RADIOLOGY,
-  LABORATORY: BillingDepartment.LABORATORY,
-  LAB: BillingDepartment.LABORATORY,
-  LABS: BillingDepartment.LABORATORY,
-  PHARMACY: BillingDepartment.PHARMACY,
-  ICU: BillingDepartment.ICU,
-  WARD: BillingDepartment.WARD,
-  EMERGENCY: BillingDepartment.EMERGENCY,
-  ER: BillingDepartment.EMERGENCY,
-  ED: BillingDepartment.EMERGENCY,
-};
+export function deriveBillingServiceCode(
+  departmentName?: string | null,
+  suppliedCode?: string | null
+): string | undefined {
+  const normalizedDepartment = normalizeBillingDepartmentName(departmentName);
 
-const DEPARTMENT_CANONICAL_ALIASES: Record<BillingDepartment, string[]> = {
-  [BillingDepartment.OUTPATIENT]: ['OUTPATIENT', 'OUTPATIENTS', 'OPD'],
-  [BillingDepartment.SURGERY]: ['SURGERY', 'SURGICAL'],
-  [BillingDepartment.RADIOLOGY]: ['RADIOLOGY', 'RADIOLOGICAL', 'RADIO'],
-  [BillingDepartment.LABORATORY]: ['LABORATORY', 'LAB', 'LABS'],
-  [BillingDepartment.PHARMACY]: ['PHARMACY'],
-  [BillingDepartment.ICU]: ['ICU'],
-  [BillingDepartment.WARD]: ['WARD'],
-  [BillingDepartment.EMERGENCY]: ['EMERGENCY', 'ER', 'ED'],
-};
+  /*
+   * Explicit non-alias/custom service codes remain authoritative.
+   * This prevents existing specialised catalogue items from being
+   * silently renamed.
+   */
+  if (suppliedCode?.trim()) {
+    const supplied = suppliedCode.trim().toUpperCase();
 
-export const normalizeDepartmentName = (value?: string | null): string | undefined => {
-  if (value === undefined || value === null) return undefined;
-  const normalized = value.trim().toUpperCase().replace(/\s+/g, '_');
-  if (!normalized) return undefined;
-  return DEPARTMENT_ALIASES[normalized] || normalized;
-};
+    /*
+     * If the supplied value is merely the raw department name/alias,
+     * replace it with the canonical department service code.
+     */
+    if (normalizedDepartment) {
+      const suppliedAsDepartment =
+        normalizeBillingDepartmentName(supplied) === normalizedDepartment;
 
-export const getDepartmentNameAliases = (value?: string | null): string[] => {
-  const canonical = normalizeDepartmentName(value);
-  if (!canonical) return [];
-  const knownAliases = DEPARTMENT_CANONICAL_ALIASES[canonical as BillingDepartment];
-  return knownAliases ? [...knownAliases] : [canonical];
-};
+      if (suppliedAsDepartment) {
+        return BILLING_DEPARTMENT_SERVICE_CODES[normalizedDepartment];
+      }
+    }
 
-export type IdLike = Types.ObjectId | string;
+    return supplied;
+  }
+
+  if (!normalizedDepartment) return undefined;
+
+  return BILLING_DEPARTMENT_SERVICE_CODES[normalizedDepartment];
+}
+
 
 export interface CreateBillingAccountInput {
   hospitalId: IdLike;
@@ -171,7 +206,7 @@ export interface CreateBillingAccountInput {
 
 export interface CreatePricingCatalogueItemInput {
   hospitalId: IdLike;
-  code: string;
+  code?: string;
   name: string;
   planName?: string;
   category: ChargeCategory;
