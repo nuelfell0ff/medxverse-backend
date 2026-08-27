@@ -713,6 +713,7 @@ const RadiologyBillingSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'PricingCatalogue',
     },
+    catalogueCode: { type: String, trim: true, uppercase: true },
     cataloguePlanName: { type: String, trim: true },
     cataloguePrice: { type: Number, min: 0 },
     catalogueVersion: { type: Number, min: 1 },
@@ -908,6 +909,8 @@ const RadiologyOrderSchema = new Schema<IRadiologyOrderDocument>(
       ref: 'PricingCatalogue',
       index: true,
     },
+
+    pricingCatalogueCode: { type: String, trim: true, uppercase: true },
 
     pricingCataloguePlanName: {
       type: String,

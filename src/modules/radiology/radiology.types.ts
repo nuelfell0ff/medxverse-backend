@@ -263,6 +263,7 @@ export interface RadiologyBilling {
   lastAttemptAt?: Date;
   capturedAt?: Date;
   catalogueItemId?: Types.ObjectId;
+  catalogueCode?: string;
   cataloguePlanName?: string;
   cataloguePrice?: number;
   catalogueVersion?: number;
@@ -301,6 +302,7 @@ export interface IRadiologyOrder {
 
   /** Selected centralized Billing pricing catalogue for this examination. */
   pricingCatalogueItemId?: Types.ObjectId;
+  pricingCatalogueCode?: string;
   pricingCataloguePlanName?: string;
   pricingCataloguePrice?: number;
   pricingCatalogueVersion?: number;

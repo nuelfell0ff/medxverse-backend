@@ -49,10 +49,17 @@ export class RadiologyService {
   }
 
   /**
-   * Convert the radiology procedure into the centralized Billing catalogue
-   * code. Example: `CT Brain` -> `RADIOLOGY_CT_BRAIN`.
+   * Return a stable fallback Billing service code for legacy Radiology orders
+   * that were created before a pricing catalogue was selected. New orders
+   * use the selected catalogue code as the authoritative service code.
    */
   private getBillingServiceCode(order: IRadiologyOrderDocument): string {
+    const selectedCode = String(
+      (order as any).pricingCatalogueCode || ''
+    ).trim().toUpperCase();
+
+    if (selectedCode) return selectedCode;
+
     const procedure = order.procedureName
       .trim()
       .toUpperCase()
@@ -60,7 +67,9 @@ export class RadiologyService {
       .replace(/^_+|_+$/g, '');
 
     if (!procedure) {
-      throw new Error('Radiology procedure name cannot be converted into a billing service code.');
+      throw new Error(
+        'Radiology procedure name cannot be converted into a billing service code.'
+      );
     }
 
     return procedure.startsWith('RADIOLOGY_')
@@ -68,12 +77,6 @@ export class RadiologyService {
       : `RADIOLOGY_${procedure}`;
   }
 
-  /**
-   * Billing source IDs must be Mongo ObjectIds. The main radiology charge
-   * uses the examination ID directly; the optional contrast charge gets a
-   * deterministic ObjectId derived from the examination ID so retries cannot
-   * create duplicate contrast charges.
-   */
   private getContrastBillingSourceId(orderId: string): string {
     return createHash('sha256')
       .update(`radiology:${orderId}:contrast`)
@@ -81,40 +84,69 @@ export class RadiologyService {
       .slice(0, 24);
   }
 
+  private parseServiceDate(value?: string | Date): Date {
+    const date = value ? new Date(value) : new Date();
+    if (Number.isNaN(date.getTime())) {
+      throw new Error('Invalid Radiology service date.');
+    }
+    return date;
+  }
+
   /**
-   * Return active Radiology pricing catalogues for the current hospital.
-   * The frontend uses this endpoint to let the user select a plan by name
-   * rather than entering a raw catalogue ID.
+   * Return active Radiology pricing catalogues for the hospital. A procedure
+   * filter accepts both the legacy procedure-specific code and the new
+   * generic RADIOLOGY_PROCEDURE catalogue code.
    */
   public async getPricingCatalogues(
     hospitalId: string,
-    procedureName?: string
+    procedureName?: string,
+    serviceDate?: string | Date
   ) {
     this.assertObjectId(hospitalId, 'hospital ID');
 
+    const now = this.parseServiceDate(serviceDate);
     const filter: Record<string, unknown> = {
       hospitalId: new Types.ObjectId(hospitalId),
       departmentName: { $regex: /^Radiology$/i },
       isActive: true,
+      $and: [
+        {
+          $or: [
+            { effectiveFrom: { $exists: false } },
+            { effectiveFrom: { $lte: now } },
+          ],
+        },
+        {
+          $or: [
+            { effectiveTo: { $exists: false } },
+            { effectiveTo: null },
+            { effectiveTo: { $gte: now } },
+          ],
+        },
+      ],
     };
 
     if (procedureName?.trim()) {
-      const code = `RADIOLOGY_${procedureName
+      const normalized = procedureName
         .trim()
         .toUpperCase()
         .replace(/[^A-Z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')}`;
-      filter.code = code;
+        .replace(/^_+|_+$/g, '');
+
+      const procedureCode = normalized.startsWith('RADIOLOGY_')
+        ? normalized
+        : `RADIOLOGY_${normalized}`;
+
+      filter.$or = [
+        { code: procedureCode },
+        { code: 'RADIOLOGY_PROCEDURE' },
+      ];
     }
 
-    const now = new Date();
-    filter.$and = [
-      { $or: [{ effectiveFrom: { $exists: false } }, { effectiveFrom: { $lte: now } }] },
-      { $or: [{ effectiveTo: { $exists: false } }, { effectiveTo: null }, { effectiveTo: { $gte: now } }] },
-    ];
-
     return PricingCatalogueModel.find(filter)
-      .select('_id code name planName category departmentName price currency version effectiveFrom effectiveTo description isActive')
+      .select(
+        '_id code name planName category departmentName price currency version effectiveFrom effectiveTo description isActive'
+      )
       .sort({ planName: 1, name: 1, price: 1 })
       .lean()
       .exec();
@@ -123,32 +155,38 @@ export class RadiologyService {
   private async validatePricingCatalogue(
     hospitalId: string,
     catalogueItemId: string,
-    procedureName: string
+    serviceDate?: string | Date
   ) {
     this.assertObjectId(catalogueItemId, 'pricing catalogue item ID');
 
-    const expectedCode = this.getBillingServiceCode({ procedureName } as IRadiologyOrderDocument);
+    const date = this.parseServiceDate(serviceDate);
     const catalogue = await PricingCatalogueModel.findOne({
       _id: catalogueItemId,
       hospitalId: new Types.ObjectId(hospitalId),
       isActive: true,
       departmentName: { $regex: /^Radiology$/i },
-    }).lean();
+    })
+      .lean()
+      .exec();
 
     if (!catalogue) {
-      throw new Error('Selected pricing catalogue was not found, is inactive, or does not belong to Radiology.');
+      throw new Error(
+        'Selected pricing catalogue was not found, is inactive, or does not belong to Radiology.'
+      );
     }
 
-    if (String(catalogue.code).toUpperCase() !== expectedCode) {
-      throw new Error(`Selected pricing catalogue does not match radiology service ${expectedCode}.`);
+    if (String(catalogue.category).toUpperCase() !== ChargeCategory.RADIOLOGY) {
+      throw new Error(
+        'Selected pricing catalogue must use the RADIOLOGY billing category.'
+      );
     }
 
-    const now = new Date();
-    if (catalogue.effectiveFrom && new Date(catalogue.effectiveFrom) > now) {
-      throw new Error('Selected pricing catalogue is not yet effective.');
+    if (catalogue.effectiveFrom && new Date(catalogue.effectiveFrom) > date) {
+      throw new Error('Selected pricing catalogue is not effective for the Radiology service date.');
     }
-    if (catalogue.effectiveTo && new Date(catalogue.effectiveTo) < now) {
-      throw new Error('Selected pricing catalogue has expired.');
+
+    if (catalogue.effectiveTo && new Date(catalogue.effectiveTo) < date) {
+      throw new Error('Selected pricing catalogue has expired for the Radiology service date.');
     }
 
     return catalogue;
@@ -194,6 +232,7 @@ export class RadiologyService {
       chargeIds: existingBilling?.chargeIds || [],
       errors: [] as string[],
       catalogueItemId: order.pricingCatalogueItemId,
+      catalogueCode: (order as any).pricingCatalogueCode,
       cataloguePlanName: order.pricingCataloguePlanName,
       cataloguePrice: order.pricingCataloguePrice,
       catalogueVersion: order.pricingCatalogueVersion,
@@ -207,12 +246,23 @@ export class RadiologyService {
     );
 
     try {
+      let selectedCatalogue: any = undefined;
+      if (order.pricingCatalogueItemId) {
+        selectedCatalogue = await this.validatePricingCatalogue(
+          hospitalId,
+          String(order.pricingCatalogueItemId),
+          order.reportedAt || order.updatedAt || new Date()
+        );
+      }
+
+      const mainServiceCode = selectedCatalogue?.code || this.getBillingServiceCode(order);
+
       const mainCharge = await createCharge({
         hospitalId,
         patientId: String(order.patientId),
         description: `${order.procedureName} - ${order.bodyPart}`,
-        serviceCode: this.getBillingServiceCode(order),
-        catalogueItemId: order.pricingCatalogueItemId,
+        serviceCode: mainServiceCode,
+        catalogueItemId: selectedCatalogue?._id || order.pricingCatalogueItemId,
         category: ChargeCategory.RADIOLOGY,
         sourceModule: BillingSourceModule.RADIOLOGY,
         sourceId: String(order._id),
@@ -347,12 +397,13 @@ export class RadiologyService {
       pricingCatalogue = await this.validatePricingCatalogue(
         input.hospitalId,
         input.pricingCatalogueItemId,
-        input.procedureName
+        input.scheduling?.scheduledDate
       );
     } else {
       const available = await this.getPricingCatalogues(
         input.hospitalId,
-        input.procedureName
+        input.procedureName,
+        input.scheduling?.scheduledDate
       );
       if (available.length === 1) pricingCatalogue = available[0];
       if (available.length > 1) {
@@ -389,6 +440,7 @@ export class RadiologyService {
       patientPreparation: input.patientPreparation,
 
       pricingCatalogueItemId: pricingCatalogue?._id,
+      pricingCatalogueCode: pricingCatalogue?.code,
       pricingCataloguePlanName: pricingCatalogue?.planName || pricingCatalogue?.name,
       pricingCataloguePrice: pricingCatalogue?.price,
       pricingCatalogueVersion: pricingCatalogue?.version,
