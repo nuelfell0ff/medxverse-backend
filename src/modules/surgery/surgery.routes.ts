@@ -99,6 +99,14 @@ router.patch(
     surgeryController.updateIntraopDocs(req, res, next)
 );
 
+// Backward-compatible alias for clients that submit intra-operative
+// documentation with POST. PATCH remains the canonical method above.
+router.post(
+  '/:id/intraop-docs',
+  (req, res, next) =>
+    surgeryController.updateIntraopDocs(req, res, next)
+);
+
 router.patch(
   '/:id/anesthesia',
   (req, res, next) =>

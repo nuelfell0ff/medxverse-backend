@@ -841,21 +841,44 @@ export class SurgeryService {
       return null;
     }
 
-    const current: Partial<ISurgicalConsent> =
-      (existingCase.consent
-        ?.toObject?.() ||
-        existingCase.consent) as
-        | ISurgicalConsent
-        | {};
+    // Mongoose subdocuments are not guaranteed to exist on older surgery
+    // records. Never dereference `consent.versions` until the consent value
+    // has been normalized to a plain object and its versions array validated.
+    const rawConsent: unknown = existingCase.consent;
 
-    const versions =
-      current.versions || [];
+    let current: Partial<ISurgicalConsent> = {};
+
+    if (rawConsent && typeof rawConsent === 'object') {
+      try {
+        const candidate =
+          typeof (rawConsent as any).toObject === 'function'
+            ? (rawConsent as any).toObject()
+            : rawConsent;
+
+        if (candidate && typeof candidate === 'object') {
+          current = candidate as Partial<ISurgicalConsent>;
+        }
+      } catch {
+        // Treat an unreadable/legacy consent subdocument as empty. The new
+        // consent being recorded will rebuild a valid consent object below.
+        current = {};
+      }
+    }
+
+    const versions = Array.isArray(current.versions)
+      ? current.versions.filter(
+          (entry): entry is NonNullable<ISurgicalConsent['versions']>[number] =>
+            Boolean(entry) &&
+            typeof entry === 'object' &&
+            Number.isFinite(Number((entry as any).version))
+        )
+      : [];
 
     const version =
       versions.length > 0
-        ? versions[
-            versions.length - 1
-          ].version + 1
+        ? Math.max(
+            ...versions.map((entry) => Number(entry.version) || 0)
+          ) + 1
         : 1;
 
     const consentType =
