@@ -95,6 +95,71 @@ export enum ReconciliationStatus {
   DISPUTED = 'DISPUTED',
 }
 
+
+/* =========================================================
+   DEPARTMENT NORMALIZATION
+
+   Department identity is intentionally separate from the billable
+   service code. Clinical modules may send raw/human department names
+   such as "OUTPATIENTS", "Outpatient", "OPD", "LAB", or "LABORATORY".
+========================================================= */
+
+export enum BillingDepartment {
+  OUTPATIENT = 'OUTPATIENT',
+  SURGERY = 'SURGERY',
+  RADIOLOGY = 'RADIOLOGY',
+  LABORATORY = 'LABORATORY',
+  PHARMACY = 'PHARMACY',
+  ICU = 'ICU',
+  WARD = 'WARD',
+  EMERGENCY = 'EMERGENCY',
+}
+
+const DEPARTMENT_ALIASES: Record<string, BillingDepartment> = {
+  OUTPATIENT: BillingDepartment.OUTPATIENT,
+  OUTPATIENTS: BillingDepartment.OUTPATIENT,
+  OPD: BillingDepartment.OUTPATIENT,
+  SURGERY: BillingDepartment.SURGERY,
+  SURGICAL: BillingDepartment.SURGERY,
+  RADIOLOGY: BillingDepartment.RADIOLOGY,
+  RADIOLOGICAL: BillingDepartment.RADIOLOGY,
+  RADIO: BillingDepartment.RADIOLOGY,
+  LABORATORY: BillingDepartment.LABORATORY,
+  LAB: BillingDepartment.LABORATORY,
+  LABS: BillingDepartment.LABORATORY,
+  PHARMACY: BillingDepartment.PHARMACY,
+  ICU: BillingDepartment.ICU,
+  WARD: BillingDepartment.WARD,
+  EMERGENCY: BillingDepartment.EMERGENCY,
+  ER: BillingDepartment.EMERGENCY,
+  ED: BillingDepartment.EMERGENCY,
+};
+
+const DEPARTMENT_CANONICAL_ALIASES: Record<BillingDepartment, string[]> = {
+  [BillingDepartment.OUTPATIENT]: ['OUTPATIENT', 'OUTPATIENTS', 'OPD'],
+  [BillingDepartment.SURGERY]: ['SURGERY', 'SURGICAL'],
+  [BillingDepartment.RADIOLOGY]: ['RADIOLOGY', 'RADIOLOGICAL', 'RADIO'],
+  [BillingDepartment.LABORATORY]: ['LABORATORY', 'LAB', 'LABS'],
+  [BillingDepartment.PHARMACY]: ['PHARMACY'],
+  [BillingDepartment.ICU]: ['ICU'],
+  [BillingDepartment.WARD]: ['WARD'],
+  [BillingDepartment.EMERGENCY]: ['EMERGENCY', 'ER', 'ED'],
+};
+
+export const normalizeDepartmentName = (value?: string | null): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  const normalized = value.trim().toUpperCase().replace(/\s+/g, '_');
+  if (!normalized) return undefined;
+  return DEPARTMENT_ALIASES[normalized] || normalized;
+};
+
+export const getDepartmentNameAliases = (value?: string | null): string[] => {
+  const canonical = normalizeDepartmentName(value);
+  if (!canonical) return [];
+  const knownAliases = DEPARTMENT_CANONICAL_ALIASES[canonical as BillingDepartment];
+  return knownAliases ? [...knownAliases] : [canonical];
+};
+
 export type IdLike = Types.ObjectId | string;
 
 export interface CreateBillingAccountInput {

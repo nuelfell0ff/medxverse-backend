@@ -11,6 +11,8 @@ import {
 
 import {
   BillingAccountStatus,
+  getDepartmentNameAliases,
+  normalizeDepartmentName,
   BillingListQuery,
   BillingSourceModule,
   ChargeStatus,
@@ -72,6 +74,23 @@ const validDate = (value: Date | string | null | undefined, field: string) => {
 
   return date;
 };
+
+/** Backward-compatible aliases for legacy billable service codes. */
+const getServiceCodeAliases = (code: string): string[] => {
+  const normalized = code.trim().toUpperCase();
+  if (normalized === 'OUTPATIENT_CONSULTATION') return ['OUTPATIENT_CONSULTATION', 'OUTPATIENT'];
+  if (normalized === 'OUTPATIENT') return ['OUTPATIENT', 'OUTPATIENT_CONSULTATION'];
+  return [normalized];
+};
+
+const departmentNameFilter = (aliases: string[]) => ({
+  $or: aliases.map((alias) => ({
+    departmentName: {
+      $regex: `^${alias.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}$`,
+      $options: 'i',
+    },
+  })),
+});
 
 /* =========================================================
    BILLING ACCOUNT
@@ -286,6 +305,8 @@ export const createPricingCatalogueItem = async (
     ? oid(String(input.departmentId), 'department ID')
     : undefined;
 
+  const departmentName = normalizeDepartmentName(input.departmentName);
+
   const planName = input.planName?.trim() || input.name.trim();
 
   const existing = await PricingCatalogueModel.findOne({
@@ -308,7 +329,7 @@ export const createPricingCatalogueItem = async (
     planName,
     category: input.category,
     departmentId,
-    departmentName: input.departmentName?.trim(),
+    departmentName,
     price: money(input.price),
     currency: input.currency?.trim().toUpperCase() || 'NGN',
     version: 1,
@@ -334,55 +355,33 @@ export const getPricingCatalogue = async (
 
   const andFilters: Record<string, unknown>[] = [];
 
-  if (query.category) {
-    filter.category = query.category;
-  }
+  if (query.category) filter.category = query.category;
 
-  /*
-   * Department filtering:
-   * - departmentId only  -> match the department ObjectId.
-   * - departmentName only -> match the stored department name.
-   * - both supplied -> accept either identifier.
-   *
-   * This keeps department isolation intact while supporting clients that
-   * know either the department ID or its human-readable name.
-   */
   const departmentId = query.departmentId
     ? oid(String(query.departmentId), 'department ID')
     : undefined;
+  const departmentAliases = getDepartmentNameAliases(query.departmentName);
 
-  const departmentName = query.departmentName?.trim();
-
-  if (departmentId && departmentName) {
+  if (departmentId && departmentAliases.length) {
     andFilters.push({
       $or: [
         { departmentId },
-        {
-          departmentName: {
-            $regex: `^${departmentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
-            $options: 'i',
-          },
-        },
+        departmentNameFilter(departmentAliases),
       ],
     });
   } else if (departmentId) {
     filter.departmentId = departmentId;
-  } else if (departmentName) {
-    filter.departmentName = {
-      $regex: `^${departmentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
-      $options: 'i',
-    };
+  } else if (departmentAliases.length) {
+    andFilters.push(departmentNameFilter(departmentAliases));
   }
 
   if (query.code?.trim()) {
-    filter.code = query.code.trim().toUpperCase();
+    filter.code = { $in: getServiceCodeAliases(query.code) };
   }
 
   if (query.planName?.trim()) {
-    filter.planName = {
-      $regex: query.planName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-      $options: 'i',
-    };
+    const planName = query.planName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    filter.planName = { $regex: planName, $options: 'i' };
   }
 
   if (query.activeOnly === true || query.activeOnly === 'true') {
@@ -391,7 +390,6 @@ export const getPricingCatalogue = async (
 
   if (query.search?.trim()) {
     const search = query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
     andFilters.push({
       $or: [
         { code: { $regex: search, $options: 'i' } },
@@ -402,9 +400,7 @@ export const getPricingCatalogue = async (
     });
   }
 
-  if (andFilters.length) {
-    filter.$and = andFilters;
-  }
+  if (andFilters.length) filter.$and = andFilters;
 
   const [items, total] = await Promise.all([
     PricingCatalogueModel.find(filter)
@@ -412,16 +408,10 @@ export const getPricingCatalogue = async (
       .skip((page - 1) * limit)
       .limit(limit)
       .lean(),
-
     PricingCatalogueModel.countDocuments(filter),
   ]);
 
-  return {
-    items,
-    total,
-    page,
-    totalPages: Math.ceil(total / limit),
-  };
+  return { items, total, page, totalPages: Math.ceil(total / limit) };
 };
 
 /**
@@ -436,6 +426,9 @@ export const getPricingCatalogue = async (
 export const resolvePrice = async (input: ResolvePriceInput) => {
   const hospitalId = oid(String(input.hospitalId), 'hospital ID');
   const code = input.code.trim().toUpperCase();
+  const serviceCodes = getServiceCodeAliases(code);
+  const requestedDepartmentName = normalizeDepartmentName(input.departmentName);
+  const departmentAliases = getDepartmentNameAliases(input.departmentName);
   const serviceDate = validDate(input.serviceDate, 'service date') || new Date();
 
   if (input.catalogueItemId) {
@@ -443,7 +436,7 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
       _id: oid(String(input.catalogueItemId), 'catalogue item ID'),
       hospitalId,
       isActive: true,
-      code,
+      code: { $in: serviceCodes },
       ...(input.category ? { category: input.category } : {}),
       $or: [
         { effectiveFrom: { $exists: false } },
@@ -467,7 +460,7 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
       throw new Error('The selected pricing catalogue does not belong to the requested department.');
     }
 
-    if (input.departmentName?.trim() && selected.departmentName?.toLowerCase() !== input.departmentName.trim().toLowerCase()) {
+    if (requestedDepartmentName && normalizeDepartmentName(selected.departmentName) !== requestedDepartmentName) {
       throw new Error('The selected pricing catalogue does not belong to the requested department.');
     }
 
@@ -493,7 +486,7 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
 
   const baseFilter: Record<string, unknown> = {
     hospitalId,
-    code,
+    code: { $in: serviceCodes },
     isActive: true,
     $or: [
       { effectiveFrom: { $exists: false } },
@@ -521,13 +514,8 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
     departmentCandidates.push({ departmentId });
   }
 
-  if (input.departmentName?.trim()) {
-    departmentCandidates.push({
-      departmentName: {
-        $regex: `^${input.departmentName.trim()}$`,
-        $options: 'i',
-      },
-    });
+  if (departmentAliases.length) {
+    departmentCandidates.push(departmentNameFilter(departmentAliases));
   }
 
   departmentCandidates.push({ departmentId: { $exists: false } });
@@ -548,7 +536,7 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
 
   let item = candidates[0];
 
-  if (departmentId || input.departmentName?.trim()) {
+  if (departmentId || requestedDepartmentName) {
     const departmentSpecificCandidates = candidates.filter((candidate) => {
       const sameId =
         departmentId &&
@@ -556,9 +544,9 @@ export const resolvePrice = async (input: ResolvePriceInput) => {
         String(candidate.departmentId) === String(departmentId);
 
       const sameName =
-        input.departmentName &&
-        candidate.departmentName?.toLowerCase() ===
-          input.departmentName.trim().toLowerCase();
+        requestedDepartmentName &&
+        normalizeDepartmentName(candidate.departmentName) ===
+          requestedDepartmentName;
 
       return Boolean(sameId || sameName);
     });
@@ -679,7 +667,7 @@ export const updatePricingCatalogueItem = async (
   }
 
   if (input.departmentName !== undefined) {
-    item.departmentName = input.departmentName.trim();
+    item.departmentName = normalizeDepartmentName(input.departmentName);
   }
 
   if (input.price !== undefined) {

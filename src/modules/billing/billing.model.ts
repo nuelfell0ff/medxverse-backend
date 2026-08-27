@@ -188,7 +188,6 @@ PricingCatalogueSchema.index({
   hospitalId: 1,
   departmentName: 1,
   code: 1,
-  planName: 1,
   isActive: 1,
 });
 
