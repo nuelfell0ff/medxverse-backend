@@ -176,11 +176,32 @@ const PricingCatalogueSchema = new Schema<IPricingCatalogueItem>(
   { timestamps: true }
 );
 
+/*
+ * One current catalogue document represents one pricing plan for a
+ * hospital + department + service code. Price/version history lives inside
+ * the document, so we must NOT include isActive/version in the identity.
+ *
+ * departmentName is normalized by billing.service.ts (e.g. Outpatient,
+ * OUTPATIENTS and OPD all become OUTPATIENT), which makes it safe to use in
+ * the uniqueness rule even when departmentId is not supplied by a module.
+ */
+PricingCatalogueSchema.index(
+  {
+    hospitalId: 1,
+    departmentName: 1,
+    code: 1,
+    planName: 1,
+  },
+  { unique: true, name: 'hospital_department_code_plan_unique' }
+);
+
+/*
+ * Useful for catalogue lookups that filter by hospital/department/status.
+ * This is intentionally non-unique.
+ */
 PricingCatalogueSchema.index({
   hospitalId: 1,
-  departmentId: 1,
-  code: 1,
-  planName: 1,
+  departmentName: 1,
   isActive: 1,
 });
 

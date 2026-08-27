@@ -32,11 +32,14 @@ const fail = (res: Response, error: unknown) => {
 
   const lower = message.toLowerCase();
 
-  const status = lower.includes('not found')
-    ? 404
-    : lower.includes('already')
-      ? 409
-      : 400;
+  const status =
+    lower.includes('not found')
+      ? 404
+      : lower.includes('already') ||
+          lower.includes('duplicate') ||
+          lower.includes('e11000')
+        ? 409
+        : 400;
 
   return res.status(status).json({
     success: false,
