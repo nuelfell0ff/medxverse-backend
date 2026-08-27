@@ -50,43 +50,17 @@ const createError = (
 };
 
 /**
- * Generates a predictable Billing catalogue code.
+ * Billing's sourceId represents the entire Pharmacy dispense.
  *
- * Example:
- *
- * Paracetamol 500mg
- * =>
- * PHARMACY_PARACETAMOL_500MG
- */
-const generateBillingCode = (
-  name: string
-): string => {
-  const normalized = name
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-
-  return `PHARMACY_${normalized}`;
-};
-
-/**
- * Billing's sourceId must be an ObjectId.
- *
- * A dispense record can contain several medicines, so each
- * medicine receives a deterministic ObjectId derived from
- * the dispense record ID and item index.
- *
- * This makes billing retries idempotent.
+ * One dispense can contain several medicines, but it must create one
+ * centralized Billing charge. The deterministic source ID makes billing
+ * retries idempotent.
  */
 const createBillingSourceId = (
-  dispenseId: Types.ObjectId,
-  itemIndex: number
+  dispenseId: Types.ObjectId
 ): Types.ObjectId => {
   const hash = createHash('sha256')
-    .update(
-      `${String(dispenseId)}:PHARMACY:${itemIndex}`
-    )
+    .update(`${String(dispenseId)}:PHARMACY`)
     .digest('hex')
     .slice(0, 24);
 
@@ -330,80 +304,173 @@ export class PharmacyService {
     dispensedByUserId: string,
     record: IDispenseRecordDocument
   ) {
-    const billingChargeIds: Types.ObjectId[] = [];
     const billingErrors: string[] = [];
-    let successfulCharges = 0;
 
-    for (let index = 0; index < record.items.length; index += 1) {
-      const item = record.items[index];
+    /*
+     * One Pharmacy dispense is one billable transaction.
+     *
+     * The individual medicines remain inside record.items with their own
+     * unitPrice, quantity and totalPrice snapshots. Billing receives one
+     * aggregate PHARMACY_SERVICE charge whose amount is the complete
+     * dispense total.
+     *
+     * This prevents a multi-drug dispense from appearing as several
+     * separate charges on the Billing page.
+     */
 
-      /*
-       * An already captured item must never be charged again.
-       * This also makes billing retries safe.
-       */
-      if (item.billingChargeId) {
-        billingChargeIds.push(item.billingChargeId);
-        successfulCharges += 1;
-        continue;
+    if (record.billingChargeIds?.length > 0) {
+      record.billingChargeId =
+        record.billingChargeIds[0];
+      record.billingErrors = [];
+      record.billingStatus = PharmacyBillingStatus.CAPTURED;
+      record.billingCapturedAt =
+        record.billingCapturedAt ?? new Date();
+      await record.save();
+      return record;
+    }
+
+    if (!record.items || record.items.length === 0) {
+      record.billingStatus = PharmacyBillingStatus.FAILED;
+      record.billingErrors = ['Cannot bill an empty pharmacy dispense.'];
+      record.billingCapturedAt = undefined;
+      await record.save();
+      return record;
+    }
+
+    try {
+      const calculatedTotal = record.items.reduce(
+        (total, item) => {
+          const unitPrice = Number(item.unitPrice);
+          const quantity = Number(item.quantity);
+
+          if (
+            !Number.isFinite(unitPrice) ||
+            unitPrice < 0 ||
+            !Number.isInteger(quantity) ||
+            quantity <= 0
+          ) {
+            throw new Error(
+              `Invalid price or quantity for inventory item ${String(
+                item.inventoryItemId
+              )}.`
+            );
+          }
+
+          const itemTotal = Number(item.totalPrice);
+          const expectedItemTotal = unitPrice * quantity;
+
+          if (
+            !Number.isFinite(itemTotal) ||
+            itemTotal < 0 ||
+            Math.abs(itemTotal - expectedItemTotal) > 0.01
+          ) {
+            throw new Error(
+              `Invalid calculated total for inventory item ${String(
+                item.inventoryItemId
+              )}.`
+            );
+          }
+
+          return total + expectedItemTotal;
+        },
+        0
+      );
+
+      const dispenseTotal = Number(record.totalAmount);
+
+      if (
+        !Number.isFinite(dispenseTotal) ||
+        dispenseTotal < 0 ||
+        Math.abs(dispenseTotal - calculatedTotal) > 0.01
+      ) {
+        throw new Error(
+          'Pharmacy dispense total does not match the sum of its medication prices.'
+        );
       }
 
-      try {
-        const inventoryItem =
-          await InventoryItemModel.findOne({
-            _id: item.inventoryItemId,
-            hospitalId,
-          });
+      /*
+       * Keep the Billing description useful without creating one Charge
+       * document per medication.
+       */
+      const descriptionLines = await Promise.all(
+        record.items.map(async (item) => {
+          const inventoryItem =
+            await InventoryItemModel.findOne({
+              _id: item.inventoryItemId,
+              hospitalId,
+            }).select('name unitOfMeasure');
 
-        if (!inventoryItem) {
-          throw new Error(
-            `Inventory item ${String(item.inventoryItemId)} no longer exists.`
-          );
-        }
+          const name =
+            inventoryItem?.name ||
+            `Inventory item ${String(item.inventoryItemId)}`;
 
-        /*
-         * Pharmacy medication billing is NOT based on a fixed pricing
-         * catalogue price. The patient's charge is:
-         *
-         *   inventory unit price × dispensed quantity
-         *
-         * PHARMACY_SERVICE is only the centralized Billing service code
-         * used to obtain the hospital's Pharmacy billing metadata/currency.
-         */
-        const billingUnitPrice = Number(item.unitPrice);
-        if (!Number.isFinite(billingUnitPrice) || billingUnitPrice < 0) {
-          throw new Error(
-            `Invalid pharmacy unit price for '${inventoryItem.name}'.`
-          );
-        }
+          const unit =
+            inventoryItem?.unitOfMeasure ||
+            'UNIT';
 
-        const charge = await createCharge({
-          hospitalId,
-          patientId: record.patientId,
-          description:
-            `${inventoryItem.name} ` +
-            `(${inventoryItem.unitOfMeasure}) x ${item.quantity}`,
-          category: ChargeCategory.PHARMACY,
-          sourceModule: BillingSourceModule.PHARMACY,
-          sourceId: createBillingSourceId(record._id, index),
-          serviceCode: PHARMACY_SERVICE_CODE,
-          departmentName: PHARMACY_DEPARTMENT_NAME,
-          quantity: item.quantity,
-          overridePrice: billingUnitPrice,
-          overrideReason:
-            'Pharmacy medication billing uses the inventory unit price multiplied by the dispensed quantity.',
-          chargedBy: dispensedByUserId,
-          chargeDate: record.createdAt,
-          notes: `Pharmacy medication dispense ${String(record._id)}`,
-        });
+          return `${name} (${unit}) x ${item.quantity}`;
+        })
+      );
 
-        const chargeId = new Types.ObjectId(String(charge._id));
-        billingChargeIds.push(chargeId);
+      /*
+       * createCharge resolves PHARMACY_SERVICE centrally so the hospital's
+       * active Pharmacy catalogue still supplies the billing metadata and
+       * currency. The actual medication amount comes from the inventory
+       * prices stored on this dispense.
+       *
+       * If the aggregate total happens to equal the catalogue price, do not
+       * send an override. Billing will resolve the same amount naturally.
+       */
+      const sourceId = createBillingSourceId(record._id);
 
-        item.billingChargeId = chargeId;
-        item.billingCode = PHARMACY_SERVICE_CODE;
-        item.billingError = undefined;
+      const catalogue = await resolvePrice({
+        hospitalId,
+        code: PHARMACY_SERVICE_CODE,
+        departmentName: PHARMACY_DEPARTMENT_NAME,
+        category: ChargeCategory.PHARMACY,
+        serviceDate: record.createdAt,
+      });
 
-        const chargeObject = charge as unknown as {
+      const cataloguePrice = Number(catalogue.price);
+
+      const chargeInput: Parameters<typeof createCharge>[0] = {
+        hospitalId,
+        patientId: record.patientId,
+        description:
+          `Pharmacy dispense ${String(record._id)}: ` +
+          descriptionLines.join('; '),
+        category: ChargeCategory.PHARMACY,
+        sourceModule: BillingSourceModule.PHARMACY,
+        sourceId,
+        serviceCode: PHARMACY_SERVICE_CODE,
+        departmentName: PHARMACY_DEPARTMENT_NAME,
+        quantity: 1,
+        chargedBy: dispensedByUserId,
+        chargeDate: record.createdAt,
+        notes:
+          `Aggregate Pharmacy medication dispense ${String(record._id)}`,
+      };
+
+      if (
+        !Number.isFinite(cataloguePrice) ||
+        cataloguePrice < 0
+      ) {
+        throw new Error(
+          'The active Pharmacy pricing catalogue returned an invalid price.'
+        );
+      }
+
+      if (Math.abs(dispenseTotal - cataloguePrice) > 0.01) {
+        chargeInput.overridePrice = dispenseTotal;
+        chargeInput.overrideReason =
+          'Pharmacy medication billing uses the sum of each dispensed medicine inventory unit price multiplied by quantity.';
+      }
+
+      const charge = await createCharge(chargeInput);
+      const chargeId = new Types.ObjectId(String(charge._id));
+
+      const chargeObject =
+        charge as unknown as {
           unitPrice?: number;
           currency?: string;
           catalogueVersion?: number;
@@ -412,45 +479,71 @@ export class PharmacyService {
           catalogueItemId?: Types.ObjectId;
         };
 
-        item.billingUnitPrice = chargeObject.unitPrice ?? billingUnitPrice;
-        item.billingCurrency = chargeObject.currency ?? 'NGN';
-        item.billingCatalogueVersion = chargeObject.catalogueVersion;
-        item.pricingCatalogueItemId = chargeObject.catalogueItemId;
-        item.pricingCataloguePlanName = chargeObject.cataloguePlanName;
-        item.pricingCataloguePrice = chargeObject.cataloguePrice;
-        item.pricingCatalogueCurrency = chargeObject.currency ?? 'NGN';
-        item.pricingCatalogueVersion = chargeObject.catalogueVersion;
+      /*
+       * Exactly one charge ID is stored for the complete dispense.
+       */
+      record.billingChargeId = chargeId;
+      record.billingChargeIds = [chargeId];
+      record.billingErrors = [];
 
-        successfulCharges += 1;
-      } catch (error: unknown) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'Unknown billing error.';
-
-        item.billingError = message;
-        billingErrors.push(
-          `${String(item.inventoryItemId)}: ${message}`
-        );
+      /*
+       * Preserve the per-item medication pricing snapshots. These are not
+       * individual Billing charges; they are the audit breakdown of the
+       * aggregate Pharmacy charge.
+       */
+      for (const item of record.items) {
+        item.billingChargeId = undefined;
+        item.billingCode = PHARMACY_SERVICE_CODE;
+        item.billingError = undefined;
+        item.billingUnitPrice = item.unitPrice;
+        item.billingCurrency =
+          chargeObject.currency ?? catalogue.currency ?? 'NGN';
+        item.billingCatalogueVersion =
+          chargeObject.catalogueVersion ?? catalogue.version;
+        item.pricingCatalogueItemId =
+          chargeObject.catalogueItemId ??
+          catalogue.catalogueItemId;
+        item.pricingCataloguePlanName =
+          chargeObject.cataloguePlanName ??
+          catalogue.name;
+        item.pricingCataloguePrice =
+          chargeObject.cataloguePrice ??
+          catalogue.price;
+        item.pricingCatalogueCurrency =
+          chargeObject.currency ??
+          catalogue.currency ??
+          'NGN';
+        item.pricingCatalogueVersion =
+          chargeObject.catalogueVersion ??
+          catalogue.version;
       }
-    }
 
-    record.billingChargeIds = billingChargeIds;
-    record.billingErrors = billingErrors;
-
-    if (successfulCharges === record.items.length) {
-      record.billingStatus = PharmacyBillingStatus.CAPTURED;
+      record.billingStatus =
+        PharmacyBillingStatus.CAPTURED;
       record.billingCapturedAt = new Date();
-    } else if (successfulCharges > 0) {
-      record.billingStatus = PharmacyBillingStatus.PARTIAL;
-      record.billingCapturedAt = undefined;
-    } else {
-      record.billingStatus = PharmacyBillingStatus.FAILED;
-      record.billingCapturedAt = undefined;
-    }
 
-    await record.save();
-    return record;
+      await record.save();
+      return record;
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to capture pharmacy billing.';
+
+      billingErrors.push(message);
+      record.billingChargeIds = [];
+      record.billingErrors = billingErrors;
+      record.billingStatus =
+        PharmacyBillingStatus.FAILED;
+      record.billingCapturedAt = undefined;
+
+      for (const item of record.items) {
+        item.billingError = message;
+      }
+
+      await record.save();
+      return record;
+    }
   }
 
   /* =======================================================

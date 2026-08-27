@@ -282,6 +282,11 @@ const DispenseRecordSchema =
         index: true,
       },
 
+      billingChargeId: {
+        type: Schema.Types.ObjectId,
+        ref: 'BillingCharge',
+      },
+
       billingChargeIds: {
         type: [
           {

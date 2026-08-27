@@ -220,6 +220,14 @@ export interface IDispenseRecord {
 
   billingStatus: PharmacyBillingStatus;
 
+  /**
+   * Single centralized Billing charge for the entire Pharmacy dispense.
+   */
+  billingChargeId?: Types.ObjectId;
+
+  /**
+   * Retained for compatibility; new dispenses contain one ID only.
+   */
   billingChargeIds: Types.ObjectId[];
 
   billingErrors: string[];
