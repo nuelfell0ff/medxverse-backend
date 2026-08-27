@@ -50,6 +50,25 @@ const createError = (
 };
 
 /**
+ * Generates a predictable Pharmacy billing code for inventory items
+ * when an explicit billing code has not been supplied.
+ *
+ * Example:
+ *   Paracetamol 500mg -> PHARMACY_PARACETAMOL_500MG
+ */
+const generateBillingCode = (
+  name: string
+): string => {
+  const normalized = name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return `PHARMACY_${normalized}`;
+};
+
+/**
  * Billing's sourceId represents the entire Pharmacy dispense.
  *
  * One dispense can contain several medicines, but it must create one
