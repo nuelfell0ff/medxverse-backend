@@ -192,7 +192,19 @@ const SurgicalConsentSchema = new Schema(
       default: [],
     },
   },
-  { _id: false }
+  {
+    _id: false,
+    // Ensure newly created/updated cases always have a safe consent object.
+    default: () => ({
+      procedureConsent: false,
+      anesthesiaConsent: false,
+      bloodTransfusionConsent: false,
+      highRiskConsent: false,
+      additionalProcedureConsent: false,
+      signedByPatient: false,
+      versions: [],
+    }),
+  }
 );
 
 const MedicationSchema = new Schema({
