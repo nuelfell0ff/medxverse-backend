@@ -72,6 +72,9 @@ export interface IInventoryItem {
    */
   billingCode?: string;
 
+  /** Optional explicit centralized Billing Pricing Catalogue item. */
+  pricingCatalogueItemId?: Types.ObjectId;
+
   quantityInStock: number;
   reorderLevel: number;
 
@@ -106,6 +109,9 @@ export interface CreateInventoryItemDTO {
   unitPrice: number;
 
   billingCode?: string;
+
+  /** Optional explicit centralized Billing Pricing Catalogue item. */
+  pricingCatalogueItemId?: string;
 
   quantityInStock: number;
 

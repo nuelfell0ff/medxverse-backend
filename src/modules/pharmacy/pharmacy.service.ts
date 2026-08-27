@@ -134,6 +134,10 @@ export class PharmacyService {
 
         billingCode,
 
+        pricingCatalogueItemId: dto.pricingCatalogueItemId
+          ? new Types.ObjectId(dto.pricingCatalogueItemId)
+          : undefined,
+
         quantityInStock:
           dto.quantityInStock,
 
@@ -331,6 +335,13 @@ export class PharmacyService {
         record.items[index];
 
       try {
+        if (item.billingChargeId) {
+          const existingChargeId = new Types.ObjectId(String(item.billingChargeId));
+          billingChargeIds.push(existingChargeId);
+          successfulCharges += 1;
+          continue;
+        }
+
         const inventoryItem =
           await InventoryItemModel.findOne({
             _id: item.inventoryItemId,
@@ -346,10 +357,9 @@ export class PharmacyService {
         }
 
         const billingCode =
+          item.billingCode?.trim().toUpperCase() ||
           inventoryItem.billingCode?.trim().toUpperCase() ||
-          generateBillingCode(
-            inventoryItem.name
-          );
+          generateBillingCode(inventoryItem.name);
 
         const sourceId =
           createBillingSourceId(
@@ -443,15 +453,20 @@ export class PharmacyService {
           chargeObject.catalogueVersion;
 
         item.pricingCatalogueItemId =
-          chargeObject.catalogueItemId;
+          chargeObject.catalogueItemId ||
+          item.pricingCatalogueItemId;
         item.pricingCataloguePlanName =
-          chargeObject.cataloguePlanName;
+          chargeObject.cataloguePlanName ||
+          item.pricingCataloguePlanName;
         item.pricingCataloguePrice =
-          chargeObject.cataloguePrice;
+          chargeObject.cataloguePrice ??
+          item.pricingCataloguePrice;
         item.pricingCatalogueCurrency =
-          chargeObject.currency;
+          chargeObject.currency ||
+          item.pricingCatalogueCurrency;
         item.pricingCatalogueVersion =
-          chargeObject.catalogueVersion;
+          chargeObject.catalogueVersion ??
+          item.pricingCatalogueVersion;
 
         successfulCharges += 1;
       } catch (error: unknown) {
@@ -511,6 +526,11 @@ export class PharmacyService {
     const processedItems:
       IDispenseItem[] = [];
 
+    const deductedInventory: Array<{
+      item: IInventoryItemDocument;
+      quantity: number;
+    }> = [];
+
     let totalAmount = 0;
 
     if (
@@ -568,11 +588,20 @@ export class PharmacyService {
           hospitalId,
           code: billingCode,
           catalogueItemId:
-            reqItem.pricingCatalogueItemId,
+            reqItem.pricingCatalogueItemId ||
+            (inventoryItem.pricingCatalogueItemId
+              ? String(inventoryItem.pricingCatalogueItemId)
+              : undefined),
           departmentName: 'Pharmacy',
           category: ChargeCategory.PHARMACY,
           serviceDate: new Date(),
         });
+
+      const resolvedBillingCode =
+        (resolvedCatalogue as { code?: string }).code
+          ?.trim()
+          .toUpperCase() ||
+        billingCode;
 
       /*
        * Preserve the existing internal pharmacy inventory price.
@@ -594,6 +623,10 @@ export class PharmacyService {
         inventoryItem.reorderLevel;
 
       await inventoryItem.save();
+      deductedInventory.push({
+        item: inventoryItem,
+        quantity: reqItem.quantity,
+      });
 
       processedItems.push({
         inventoryItemId:
@@ -608,7 +641,7 @@ export class PharmacyService {
         totalPrice:
           itemTotal,
 
-        billingCode,
+        billingCode: resolvedBillingCode,
 
         pricingCatalogueItemId:
           resolvedCatalogue.catalogueItemId,
@@ -629,8 +662,11 @@ export class PharmacyService {
      * This guarantees the clinical/pharmacy workflow
      * succeeds even if Billing temporarily fails.
      */
-    const dispenseRecord =
-      await DispenseRecordModel.create({
+    let dispenseRecord: IDispenseRecordDocument;
+
+    try {
+      dispenseRecord =
+        await DispenseRecordModel.create({
         hospitalId:
           new Types.ObjectId(
             hospitalId
@@ -671,6 +707,15 @@ export class PharmacyService {
 
         billingErrors: [],
       });
+    } catch (error) {
+      for (const deducted of deductedInventory) {
+        deducted.item.quantityInStock += deducted.quantity;
+        deducted.item.isLowStock =
+          deducted.item.quantityInStock <= deducted.item.reorderLevel;
+        await deducted.item.save();
+      }
+      throw error;
+    }
 
     /*
      * Billing is intentionally isolated from the

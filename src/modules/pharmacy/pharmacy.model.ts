@@ -69,6 +69,11 @@ const InventoryItemSchema =
         index: true,
       },
 
+      pricingCatalogueItemId: {
+        type: Schema.Types.ObjectId,
+        ref: 'PricingCatalogue',
+      },
+
       quantityInStock: {
         type: Number,
         required: true,
