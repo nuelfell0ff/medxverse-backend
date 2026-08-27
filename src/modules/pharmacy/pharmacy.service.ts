@@ -93,6 +93,15 @@ const createBillingSourceId = (
   return new Types.ObjectId(hash);
 };
 
+/**
+ * Pharmacy medication billing is calculated from the inventory price
+ * at dispense time. This generic catalogue is used only as the
+ * centralized Pharmacy billing service metadata/currency source; its
+ * catalogue price is never used as the medication charge price.
+ */
+const PHARMACY_SERVICE_CODE = 'PHARMACY_SERVICE';
+const PHARMACY_DEPARTMENT_NAME = 'Pharmacy';
+
 /* =========================================================
    SERVICE
 ========================================================= */
@@ -307,7 +316,7 @@ export class PharmacyService {
       page: Number(query.page) || 1,
       limit: Number(query.limit) || 50,
       category: ChargeCategory.PHARMACY,
-      departmentName: 'Pharmacy',
+      departmentName: PHARMACY_DEPARTMENT_NAME,
       activeOnly: true,
     });
   }
@@ -321,20 +330,22 @@ export class PharmacyService {
     dispensedByUserId: string,
     record: IDispenseRecordDocument
   ) {
-    const billingChargeIds: Types.ObjectId[] =
-      [];
-
+    const billingChargeIds: Types.ObjectId[] = [];
     const billingErrors: string[] = [];
-
     let successfulCharges = 0;
 
-    for (
-      let index = 0;
-      index < record.items.length;
-      index += 1
-    ) {
-      const item =
-        record.items[index];
+    for (let index = 0; index < record.items.length; index += 1) {
+      const item = record.items[index];
+
+      /*
+       * An already captured item must never be charged again.
+       * This also makes billing retries safe.
+       */
+      if (item.billingChargeId) {
+        billingChargeIds.push(item.billingChargeId);
+        successfulCharges += 1;
+        continue;
+      }
 
       try {
         const inventoryItem =
@@ -345,143 +356,70 @@ export class PharmacyService {
 
         if (!inventoryItem) {
           throw new Error(
-            `Inventory item ${String(
-              item.inventoryItemId
-            )} no longer exists.`
+            `Inventory item ${String(item.inventoryItemId)} no longer exists.`
           );
         }
-
-        let billingCode =
-          inventoryItem.billingCode?.trim().toUpperCase() ||
-          generateBillingCode(
-            inventoryItem.name
-          );
 
         /*
-         * When a dispense item has an explicit Pricing Catalogue, the
-         * catalogue's own service code must be used for Billing.
-         * Do not derive the service code from the medicine name because
-         * a valid centralized catalogue may use a generic code such as
-         * PHARMACY_SERVICE.
+         * Pharmacy medication billing is NOT based on a fixed pricing
+         * catalogue price. The patient's charge is:
+         *
+         *   inventory unit price × dispensed quantity
+         *
+         * PHARMACY_SERVICE is only the centralized Billing service code
+         * used to obtain the hospital's Pharmacy billing metadata/currency.
          */
-        if (item.pricingCatalogueItemId) {
-          const selectedCatalogue =
-            await PricingCatalogueModel.findOne({
-              _id: item.pricingCatalogueItemId,
-              hospitalId: new Types.ObjectId(hospitalId),
-              isActive: true,
-            }).lean();
-
-          if (!selectedCatalogue) {
-            throw new Error(
-              'The selected pricing catalogue could not be found, is inactive, or does not belong to this hospital.'
-            );
-          }
-
-          billingCode = String(selectedCatalogue.code).trim().toUpperCase();
+        const billingUnitPrice = Number(item.unitPrice);
+        if (!Number.isFinite(billingUnitPrice) || billingUnitPrice < 0) {
+          throw new Error(
+            `Invalid pharmacy unit price for '${inventoryItem.name}'.`
+          );
         }
 
-        const sourceId =
-          createBillingSourceId(
-            record._id,
-            index
-          );
+        const charge = await createCharge({
+          hospitalId,
+          patientId: record.patientId,
+          description:
+            `${inventoryItem.name} ` +
+            `(${inventoryItem.unitOfMeasure}) x ${item.quantity}`,
+          category: ChargeCategory.PHARMACY,
+          sourceModule: BillingSourceModule.PHARMACY,
+          sourceId: createBillingSourceId(record._id, index),
+          serviceCode: PHARMACY_SERVICE_CODE,
+          departmentName: PHARMACY_DEPARTMENT_NAME,
+          quantity: item.quantity,
+          overridePrice: billingUnitPrice,
+          overrideReason:
+            'Pharmacy medication billing uses the inventory unit price multiplied by the dispensed quantity.',
+          chargedBy: dispensedByUserId,
+          chargeDate: record.createdAt,
+          notes: `Pharmacy medication dispense ${String(record._id)}`,
+        });
 
-        const charge =
-          await createCharge({
-            hospitalId,
+        const chargeId = new Types.ObjectId(String(charge._id));
+        billingChargeIds.push(chargeId);
 
-            patientId:
-              record.patientId,
+        item.billingChargeId = chargeId;
+        item.billingCode = PHARMACY_SERVICE_CODE;
+        item.billingError = undefined;
 
-            description:
-              `${inventoryItem.name} ` +
-              `(${inventoryItem.unitOfMeasure}) x ${item.quantity}`,
+        const chargeObject = charge as unknown as {
+          unitPrice?: number;
+          currency?: string;
+          catalogueVersion?: number;
+          cataloguePlanName?: string;
+          cataloguePrice?: number;
+          catalogueItemId?: Types.ObjectId;
+        };
 
-            category:
-              ChargeCategory.PHARMACY,
-
-            sourceModule:
-              BillingSourceModule.PHARMACY,
-
-            sourceId,
-
-            serviceCode:
-              billingCode,
-
-            catalogueItemId: item.pricingCatalogueItemId,
-
-            departmentName:
-              'Pharmacy',
-
-            quantity:
-              item.quantity,
-
-            chargedBy:
-              dispensedByUserId,
-
-            chargeDate:
-              record.createdAt,
-
-            notes:
-              `Pharmacy dispense ${String(
-                record._id
-              )}`,
-          });
-
-        const chargeId =
-          new Types.ObjectId(
-            String(charge._id)
-          );
-
-        billingChargeIds.push(
-          chargeId
-        );
-
-        item.billingChargeId =
-          chargeId;
-
-        item.billingCode =
-          billingCode;
-
-        item.billingError =
-          undefined;
-
-        /**
-         * createCharge stores the resolved
-         * catalogue price on the charge.
-         *
-         * Read it back for the dispense snapshot.
-         */
-        const chargeObject =
-          charge as unknown as {
-            unitPrice?: number;
-            currency?: string;
-            catalogueVersion?: number;
-            cataloguePlanName?: string;
-            cataloguePrice?: number;
-            catalogueItemId?: Types.ObjectId;
-          };
-
-        item.billingUnitPrice =
-          chargeObject.unitPrice;
-
-        item.billingCurrency =
-          chargeObject.currency;
-
-        item.billingCatalogueVersion =
-          chargeObject.catalogueVersion;
-
-        item.pricingCatalogueItemId =
-          chargeObject.catalogueItemId;
-        item.pricingCataloguePlanName =
-          chargeObject.cataloguePlanName;
-        item.pricingCataloguePrice =
-          chargeObject.cataloguePrice;
-        item.pricingCatalogueCurrency =
-          chargeObject.currency;
-        item.pricingCatalogueVersion =
-          chargeObject.catalogueVersion;
+        item.billingUnitPrice = chargeObject.unitPrice ?? billingUnitPrice;
+        item.billingCurrency = chargeObject.currency ?? 'NGN';
+        item.billingCatalogueVersion = chargeObject.catalogueVersion;
+        item.pricingCatalogueItemId = chargeObject.catalogueItemId;
+        item.pricingCataloguePlanName = chargeObject.cataloguePlanName;
+        item.pricingCataloguePrice = chargeObject.cataloguePrice;
+        item.pricingCatalogueCurrency = chargeObject.currency ?? 'NGN';
+        item.pricingCatalogueVersion = chargeObject.catalogueVersion;
 
         successfulCharges += 1;
       } catch (error: unknown) {
@@ -490,42 +428,28 @@ export class PharmacyService {
             ? error.message
             : 'Unknown billing error.';
 
-        item.billingError =
-          message;
-
+        item.billingError = message;
         billingErrors.push(
-          `${record.items[index].inventoryItemId}: ${message}`
+          `${String(item.inventoryItemId)}: ${message}`
         );
       }
     }
 
-    record.billingChargeIds =
-      billingChargeIds;
+    record.billingChargeIds = billingChargeIds;
+    record.billingErrors = billingErrors;
 
-    record.billingErrors =
-      billingErrors;
-
-    if (
-      successfulCharges ===
-      record.items.length
-    ) {
-      record.billingStatus =
-        PharmacyBillingStatus.CAPTURED;
-
-      record.billingCapturedAt =
-        new Date();
-    } else if (
-      successfulCharges > 0
-    ) {
-      record.billingStatus =
-        PharmacyBillingStatus.PARTIAL;
+    if (successfulCharges === record.items.length) {
+      record.billingStatus = PharmacyBillingStatus.CAPTURED;
+      record.billingCapturedAt = new Date();
+    } else if (successfulCharges > 0) {
+      record.billingStatus = PharmacyBillingStatus.PARTIAL;
+      record.billingCapturedAt = undefined;
     } else {
-      record.billingStatus =
-        PharmacyBillingStatus.FAILED;
+      record.billingStatus = PharmacyBillingStatus.FAILED;
+      record.billingCapturedAt = undefined;
     }
 
     await record.save();
-
     return record;
   }
 
@@ -538,32 +462,75 @@ export class PharmacyService {
     dispensedByUserId: string,
     dto: CreateDispenseRecordDTO
   ): Promise<IDispenseRecordDocument> {
-    const processedItems:
-      IDispenseItem[] = [];
-
+    const processedItems: IDispenseItem[] = [];
     let totalAmount = 0;
+    const stockDeductions: Array<{
+      item: IInventoryItemDocument;
+      quantity: number;
+    }> = [];
 
-    if (
-      !dto.items ||
-      dto.items.length === 0
-    ) {
+    if (!dto.items || dto.items.length === 0) {
       throw createError(
         'At least one medicine is required.',
         400
       );
     }
 
+    if (!Types.ObjectId.isValid(dto.patientId)) {
+      throw createError('Invalid patient ID.', 400);
+    }
+
+    if (dto.consultationId && !Types.ObjectId.isValid(dto.consultationId)) {
+      throw createError('Invalid consultation ID.', 400);
+    }
+
     /*
-     * Preserve the existing stock workflow.
+     * Pharmacy medication billing is calculated from the actual inventory
+     * unit price. No Pharmacy pricing plan is required from the UI.
+     *
+     * We still resolve PHARMACY_SERVICE automatically so Billing can use
+     * the hospital's centralized Pharmacy currency/service metadata. The
+     * resolved catalogue price itself is never used as the medication
+     * price.
      */
-    for (
-      const reqItem of dto.items
-    ) {
-      const inventoryItem =
-        await InventoryItemModel.findOne({
-          _id: reqItem.inventoryItemId,
-          hospitalId,
-        });
+    let pharmacyCatalogue;
+    try {
+      pharmacyCatalogue = await resolvePrice({
+        hospitalId,
+        code: PHARMACY_SERVICE_CODE,
+        departmentName: PHARMACY_DEPARTMENT_NAME,
+        category: ChargeCategory.PHARMACY,
+        serviceDate: new Date(),
+      });
+    } catch (error: unknown) {
+      throw createError(
+        error instanceof Error
+          ? error.message
+          : 'No active Pharmacy billing configuration is available.',
+        400
+      );
+    }
+
+    for (const reqItem of dto.items) {
+      if (!Types.ObjectId.isValid(reqItem.inventoryItemId)) {
+        throw createError(
+          `Invalid inventory item ID: ${reqItem.inventoryItemId}.`,
+          400
+        );
+      }
+
+      const quantity = Number(reqItem.quantity);
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        throw createError(
+          'Each dispense quantity must be a positive whole number.',
+          400
+        );
+      }
+
+      const inventoryItem = await InventoryItemModel.findOne({
+        _id: reqItem.inventoryItemId,
+        hospitalId,
+      });
 
       if (!inventoryItem) {
         throw createError(
@@ -572,184 +539,85 @@ export class PharmacyService {
         );
       }
 
-      if (
-        inventoryItem.quantityInStock <
-        reqItem.quantity
-      ) {
+      if (inventoryItem.quantityInStock < quantity) {
         throw createError(
-          `Insufficient stock for '${inventoryItem.name}'. Available: ${inventoryItem.quantityInStock}, Requested: ${reqItem.quantity}`,
+          `Insufficient stock for '${inventoryItem.name}'. Available: ${inventoryItem.quantityInStock}, Requested: ${quantity}`,
           400
         );
       }
 
-      let billingCode =
-        inventoryItem.billingCode?.trim().toUpperCase() ||
-        generateBillingCode(
-          inventoryItem.name
+      const unitPrice = Number(inventoryItem.unitPrice);
+      if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+        throw createError(
+          `Invalid unit price for '${inventoryItem.name}'.`,
+          400
         );
-
-      /*
-       * If the Pharmacy UI explicitly selected a catalogue, use the
-       * selected catalogue's service code. This is essential because
-       * centralized Pharmacy plans may use generic service codes such
-       * as PHARMACY_SERVICE rather than PHARMACY_<MEDICINE_NAME>.
-       *
-       * An inventory-level catalogue is also accepted as a fallback for
-       * legacy inventory records, while the dispense-level selection
-       * always takes precedence.
-       */
-      const catalogueItemId =
-        reqItem.pricingCatalogueItemId ||
-        (inventoryItem.pricingCatalogueItemId
-          ? String(inventoryItem.pricingCatalogueItemId)
-          : undefined);
-
-      if (catalogueItemId) {
-        if (!Types.ObjectId.isValid(catalogueItemId)) {
-          throw createError(
-            'Invalid pricing catalogue item ID.',
-            400
-          );
-        }
-
-        const selectedCatalogue =
-          await PricingCatalogueModel.findOne({
-            _id: new Types.ObjectId(catalogueItemId),
-            hospitalId: new Types.ObjectId(hospitalId),
-            isActive: true,
-          }).lean();
-
-        if (!selectedCatalogue) {
-          throw createError(
-            'The selected pricing catalogue is not active, does not belong to this hospital, or could not be found.',
-            400
-          );
-        }
-
-        billingCode = String(selectedCatalogue.code)
-          .trim()
-          .toUpperCase();
       }
 
-      /*
-       * Resolve the Pharmacy Pricing Catalogue before stock is
-       * deducted. Billing performs the final hospital, category,
-       * department, active-state, and effective-date validation.
-       */
-      const resolvedCatalogue =
-        await resolvePrice({
-          hospitalId,
-          code: billingCode,
-          catalogueItemId: catalogueItemId,
-          departmentName: 'Pharmacy',
-          category: ChargeCategory.PHARMACY,
-          serviceDate: new Date(),
-        });
-
-      /*
-       * Preserve the existing internal pharmacy inventory price.
-       * Patient billing price comes from the selected catalogue.
-       */
-      const itemTotal =
-        inventoryItem.unitPrice *
-        reqItem.quantity;
-
-      totalAmount +=
-        itemTotal;
-
-      /* Deduct stock only after catalogue validation succeeds. */
-      inventoryItem.quantityInStock -=
-        reqItem.quantity;
-
-      inventoryItem.isLowStock =
-        inventoryItem.quantityInStock <=
-        inventoryItem.reorderLevel;
-
-      await inventoryItem.save();
+      const itemTotal = unitPrice * quantity;
+      totalAmount += itemTotal;
 
       processedItems.push({
-        inventoryItemId:
-          inventoryItem._id,
-
-        quantity:
-          reqItem.quantity,
-
-        unitPrice:
-          inventoryItem.unitPrice,
-
-        totalPrice:
-          itemTotal,
-
-        billingCode,
-
-        pricingCatalogueItemId:
-          resolvedCatalogue.catalogueItemId,
-        pricingCataloguePlanName:
-          resolvedCatalogue.planName,
-        pricingCataloguePrice:
-          resolvedCatalogue.price,
-        pricingCatalogueCurrency:
-          resolvedCatalogue.currency,
-        pricingCatalogueVersion:
-          resolvedCatalogue.version,
+        inventoryItemId: inventoryItem._id,
+        quantity,
+        unitPrice,
+        totalPrice: itemTotal,
+        billingCode: PHARMACY_SERVICE_CODE,
+        pricingCatalogueItemId: pharmacyCatalogue.catalogueItemId,
+        pricingCataloguePlanName: pharmacyCatalogue.name,
+        pricingCataloguePrice: pharmacyCatalogue.price,
+        pricingCatalogueCurrency: pharmacyCatalogue.currency,
+        pricingCatalogueVersion: pharmacyCatalogue.version,
       });
+
+      /* Deduct only after every validation above succeeds. */
+      inventoryItem.quantityInStock -= quantity;
+      inventoryItem.isLowStock =
+        inventoryItem.quantityInStock <= inventoryItem.reorderLevel;
+      stockDeductions.push({ item: inventoryItem, quantity });
+    }
+
+    let dispenseRecord: IDispenseRecordDocument;
+
+    try {
+      await Promise.all(
+        stockDeductions.map(({ item }) => item.save())
+      );
+
+      dispenseRecord = await DispenseRecordModel.create({
+        hospitalId: new Types.ObjectId(hospitalId),
+        patientId: new Types.ObjectId(dto.patientId),
+        consultationId: dto.consultationId
+          ? new Types.ObjectId(dto.consultationId)
+          : undefined,
+        dispensedBy: new Types.ObjectId(dispensedByUserId),
+        items: processedItems,
+        totalAmount,
+        status: DispenseStatus.DISPENSED,
+        notes: dto.notes,
+        billingStatus: PharmacyBillingStatus.NOT_ATTEMPTED,
+        billingChargeIds: [],
+        billingErrors: [],
+      });
+    } catch (error: unknown) {
+      /*
+       * Do not leave stock reduced if the dispense record could not be
+       * created. Restore exactly what this request deducted.
+       */
+      await Promise.all(
+        stockDeductions.map(async ({ item, quantity }) => {
+          item.quantityInStock += quantity;
+          item.isLowStock = item.quantityInStock <= item.reorderLevel;
+          await item.save();
+        })
+      );
+
+      throw error;
     }
 
     /*
-     * Create the pharmacy record first.
-     *
-     * This guarantees the clinical/pharmacy workflow
-     * succeeds even if Billing temporarily fails.
-     */
-    const dispenseRecord =
-      await DispenseRecordModel.create({
-        hospitalId:
-          new Types.ObjectId(
-            hospitalId
-          ),
-
-        patientId:
-          new Types.ObjectId(
-            dto.patientId
-          ),
-
-        consultationId:
-          dto.consultationId
-            ? new Types.ObjectId(
-                dto.consultationId
-              )
-            : undefined,
-
-        dispensedBy:
-          new Types.ObjectId(
-            dispensedByUserId
-          ),
-
-        items:
-          processedItems,
-
-        totalAmount,
-
-        status:
-          DispenseStatus.DISPENSED,
-
-        notes:
-          dto.notes,
-
-        billingStatus:
-          PharmacyBillingStatus.NOT_ATTEMPTED,
-
-        billingChargeIds: [],
-
-        billingErrors: [],
-      });
-
-    /*
-     * Billing is intentionally isolated from the
-     * dispensing workflow.
-     *
-     * If catalogue pricing is missing, the dispense
-     * still succeeds and billingStatus becomes FAILED.
+     * Billing is isolated from the dispensing workflow. The dispense is
+     * already recorded even if Billing temporarily fails.
      */
     try {
       await this.captureBilling(
@@ -758,41 +626,30 @@ export class PharmacyService {
         dispenseRecord
       );
     } catch (error: unknown) {
-      dispenseRecord.billingStatus =
-        PharmacyBillingStatus.FAILED;
-
+      dispenseRecord.billingStatus = PharmacyBillingStatus.FAILED;
       dispenseRecord.billingErrors = [
         error instanceof Error
           ? error.message
           : 'Unable to capture pharmacy billing.',
       ];
-
       await dispenseRecord.save();
     }
 
     return dispenseRecord.populate([
       {
         path: 'patientId',
-        select:
-          'firstName lastName mrn phone',
+        select: 'firstName lastName mrn phone',
       },
-
       {
         path: 'dispensedBy',
-        select:
-          'firstName lastName email',
+        select: 'firstName lastName email',
       },
-
       {
-        path:
-          'items.inventoryItemId',
-        select:
-          'name genericName unitOfMeasure billingCode',
+        path: 'items.inventoryItemId',
+        select: 'name genericName unitOfMeasure billingCode',
       },
-
       {
-        path:
-          'billingChargeIds',
+        path: 'billingChargeIds',
         select:
           'serviceCode description quantity unitPrice currency cataloguePrice catalogueVersion netAmount status',
       },

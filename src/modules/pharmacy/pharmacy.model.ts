@@ -182,7 +182,7 @@ const DispenseItemSchema = new Schema(
 
     billingChargeId: {
       type: Schema.Types.ObjectId,
-      ref: 'Charge',
+      ref: 'BillingCharge',
     },
 
     billingUnitPrice: {
@@ -286,7 +286,7 @@ const DispenseRecordSchema =
         type: [
           {
             type: Schema.Types.ObjectId,
-            ref: 'Charge',
+            ref: 'BillingCharge',
           },
         ],
         default: [],
