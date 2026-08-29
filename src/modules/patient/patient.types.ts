@@ -104,3 +104,30 @@ export interface GetPatientsQueryDTO {
   page?: string;
   limit?: string;
 }
+
+export interface ClinicalSummaryItem {
+  id?: string;
+  date?: Date | string;
+  title: string;
+  status?: string;
+  summary?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface PatientClinicalSummary {
+  surgery: ClinicalSummaryItem[];
+  radiology: ClinicalSummaryItem[];
+  laboratory: ClinicalSummaryItem[];
+  pharmacy: ClinicalSummaryItem[];
+  outpatient: ClinicalSummaryItem[];
+  billing: {
+    totalCharges: number;
+    totalPaid: number;
+    balance: number;
+    items: ClinicalSummaryItem[];
+  };
+}
+
+export interface PatientWithClinicalSummary extends IPatientDocument {
+  clinicalSummary: PatientClinicalSummary;
+}
