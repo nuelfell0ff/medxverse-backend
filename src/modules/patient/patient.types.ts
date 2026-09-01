@@ -57,6 +57,10 @@ export interface IPatient {
   phone: string;
   email?: string;
   address?: string;
+  maritalStatus?: string;
+  occupation?: string;
+  nextOfKin?: string;
+  informant?: string;
   bloodGroup?: BloodGroup;
   genotype?: Genotype;
   policyNumber?: string;
@@ -82,6 +86,10 @@ export interface CreatePatientDTO {
   phone: string;
   email?: string;
   address?: string;
+  maritalStatus?: string;
+  occupation: string;
+  nextOfKin: string;
+  informant?: string;
   bloodGroup?: BloodGroup;
   genotype?: Genotype;
   policyNumber?: string;
