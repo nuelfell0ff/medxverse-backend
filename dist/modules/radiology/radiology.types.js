@@ -84,3 +84,10 @@ export var AIStudyPriority;
     AIStudyPriority["HIGH"] = "HIGH";
     AIStudyPriority["CRITICAL"] = "CRITICAL";
 })(AIStudyPriority || (AIStudyPriority = {}));
+export var RadiologyBillingStatus;
+(function (RadiologyBillingStatus) {
+    RadiologyBillingStatus["NOT_ATTEMPTED"] = "NOT_ATTEMPTED";
+    RadiologyBillingStatus["CAPTURED"] = "CAPTURED";
+    RadiologyBillingStatus["PARTIAL"] = "PARTIAL";
+    RadiologyBillingStatus["FAILED"] = "FAILED";
+})(RadiologyBillingStatus || (RadiologyBillingStatus = {}));

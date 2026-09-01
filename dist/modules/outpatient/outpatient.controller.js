@@ -21,7 +21,7 @@ export class OutpatientController {
                 });
                 return;
             }
-            const { patientId, doctorId, departmentId, triagePriority, chiefComplaint } = req.body;
+            const { patientId, doctorId, departmentId, triagePriority, chiefComplaint, pricingCatalogueItemId } = req.body;
             if (!patientId) {
                 res.status(400).json({ success: false, message: 'Validation Error: patientId is required.' });
                 return;
@@ -175,6 +175,42 @@ export class OutpatientController {
                 return;
             }
             res.status(200).json({ success: true, data: updated });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async getPricingCatalogues(req, res, next) {
+        try {
+            const authReq = req;
+            const hospitalId = extractHospitalId(authReq);
+            if (!hospitalId) {
+                res.status(400).json({ success: false, message: 'Validation Error: hospitalId is missing from user authentication token.' });
+                return;
+            }
+            const departmentId = typeof req.query.departmentId === 'string' ? req.query.departmentId : undefined;
+            const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+            const data = await outpatientService.getPricingCatalogues(hospitalId, departmentId, search);
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async captureBilling(req, res, next) {
+        try {
+            const authReq = req;
+            const hospitalId = extractHospitalId(authReq);
+            if (!hospitalId) {
+                res.status(400).json({ success: false, message: 'Validation Error: hospitalId is missing from user authentication token.' });
+                return;
+            }
+            const updated = await outpatientService.captureBilling(req.params.id, hospitalId, authReq.user?._id);
+            if (!updated) {
+                res.status(404).json({ success: false, message: 'Encounter not found' });
+                return;
+            }
+            res.status(200).json({ success: true, data: updated, billing: updated.billing });
         }
         catch (error) {
             next(error);

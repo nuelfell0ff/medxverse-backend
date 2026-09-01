@@ -15,3 +15,10 @@ export var ConsultationStatus;
     ConsultationStatus["COMPLETED"] = "COMPLETED";
     ConsultationStatus["CANCELLED"] = "CANCELLED";
 })(ConsultationStatus || (ConsultationStatus = {}));
+export var BillingCaptureStatus;
+(function (BillingCaptureStatus) {
+    BillingCaptureStatus["NOT_ATTEMPTED"] = "NOT_ATTEMPTED";
+    BillingCaptureStatus["CAPTURED"] = "CAPTURED";
+    BillingCaptureStatus["FAILED"] = "FAILED";
+})(BillingCaptureStatus || (BillingCaptureStatus = {}));
+export const OUTPATIENT_CONSULTATION_SERVICE_CODE = 'OUTPATIENT_CONSULTATION';

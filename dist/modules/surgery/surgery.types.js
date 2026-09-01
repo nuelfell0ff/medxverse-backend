@@ -65,6 +65,13 @@ export var MedicationStatus;
     MedicationStatus["HELD"] = "HELD";
     MedicationStatus["CANCELLED"] = "CANCELLED";
 })(MedicationStatus || (MedicationStatus = {}));
+export var SurgeryBillingStatus;
+(function (SurgeryBillingStatus) {
+    SurgeryBillingStatus["NOT_ATTEMPTED"] = "NOT_ATTEMPTED";
+    SurgeryBillingStatus["CAPTURED"] = "CAPTURED";
+    SurgeryBillingStatus["PARTIAL"] = "PARTIAL";
+    SurgeryBillingStatus["FAILED"] = "FAILED";
+})(SurgeryBillingStatus || (SurgeryBillingStatus = {}));
 export var EquipmentStatus;
 (function (EquipmentStatus) {
     EquipmentStatus["AVAILABLE"] = "AVAILABLE";

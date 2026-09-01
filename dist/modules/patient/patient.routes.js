@@ -5,6 +5,7 @@ const router = Router();
 router.use(authenticate);
 router.post('/', PatientController.register);
 router.get('/', PatientController.list);
+router.get('/:id/clinical-summary', PatientController.getClinicalSummary);
 router.get('/:id', PatientController.getById);
 router.post('/:id/vitals', PatientController.recordVitals);
 export default router;

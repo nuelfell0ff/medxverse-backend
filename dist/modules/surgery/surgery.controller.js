@@ -29,6 +29,7 @@ export class SurgeryController {
                 leadSurgeonId,
                 theatreId: req.body.theatreId,
                 procedureName: req.body.procedureName,
+                pricingCatalogueItemId: req.body.pricingCatalogueItemId,
                 icdCode: req.body.icdCode,
                 urgency: req.body.urgency,
                 priority: req.body.priority,
@@ -63,6 +64,7 @@ export class SurgeryController {
                 leadSurgeonId,
                 theatreId: req.body.theatreId,
                 procedureName: req.body.procedureName,
+                pricingCatalogueItemId: req.body.pricingCatalogueItemId,
                 icdCode: req.body.icdCode,
                 urgency: UrgencyLevel.EMERGENCY,
                 priority: req.body.priority ?? 100,
@@ -75,6 +77,21 @@ export class SurgeryController {
             res.status(201).json({
                 success: true,
                 data: surgeryCase,
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async getPricingCatalogues(req, res, next) {
+        try {
+            const authReq = req;
+            const items = await surgeryService.getPricingCatalogues(authReq.user.hospitalId, typeof req.query.procedureName === 'string'
+                ? req.query.procedureName
+                : undefined);
+            res.status(200).json({
+                success: true,
+                data: items,
             });
         }
         catch (error) {
@@ -211,7 +228,7 @@ export class SurgeryController {
     async addMedication(req, res, next) {
         try {
             const authReq = req;
-            const updated = await surgeryService.updateMedication(req.params.id, authReq.user.hospitalId, req.body);
+            const updated = await surgeryService.updateMedication(req.params.id, authReq.user.hospitalId, authReq.user._id, req.body);
             if (!updated) {
                 res.status(404).json({
                     success: false,
@@ -361,6 +378,29 @@ export class SurgeryController {
             }
             res.status(200).json({
                 success: true,
+                data: updated,
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async captureBilling(req, res, next) {
+        try {
+            const authReq = req;
+            const updated = await surgeryService.captureBilling(req.params.id, authReq.user.hospitalId, authReq.user._id, {
+                force: Boolean(req.body?.force),
+            });
+            if (!updated) {
+                res.status(404).json({
+                    success: false,
+                    message: 'Surgical case not found.',
+                });
+                return;
+            }
+            res.status(200).json({
+                success: true,
+                message: 'Surgery billing capture completed.',
                 data: updated,
             });
         }

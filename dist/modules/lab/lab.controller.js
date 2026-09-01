@@ -134,6 +134,38 @@ export class LabController {
         }
     }
     /* =========================================================
+       PRICING CATALOGUES
+    ========================================================= */
+    static async pricingCatalogues(req, res, next) {
+        try {
+            const { hospitalId } = LabController.getAuthContext(req);
+            const items = await LabService.getPricingCatalogues(hospitalId, typeof req.query.testName === 'string' ? req.query.testName : undefined);
+            res.status(200).json({
+                success: true,
+                data: items,
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    /* =========================================================
+       BILLING
+    ========================================================= */
+    static async captureBilling(req, res, next) {
+        try {
+            const { userId, hospitalId } = LabController.getAuthContext(req);
+            const updated = await LabService.captureBilling(hospitalId, req.params.id, userId);
+            res.status(200).json({
+                success: true,
+                data: updated,
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    /* =========================================================
        RECORD RESULTS
     ========================================================= */
     static async submitResults(req, res, next) {

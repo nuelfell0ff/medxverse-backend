@@ -1,6 +1,11 @@
+import { createHash } from 'crypto';
 import { Types } from 'mongoose';
 import { RadiologyOrderModel } from './radiology.model.js';
-import { AssignmentRole, ExaminationQueueStatus, RadiologyOrderStatus, ReportStatus, CriticalResultStatus, } from './radiology.types.js';
+import { PricingCatalogueModel } from '../billing/billing.model.js';
+import { Staff } from '../staff/staff.model.js';
+import { createCharge } from '../billing/billing.service.js';
+import { BillingSourceModule, ChargeCategory } from '../billing/billing.types.js';
+import { AssignmentRole, ExaminationQueueStatus, RadiologyOrderStatus, ReportStatus, CriticalResultStatus, RadiologyBillingStatus, } from './radiology.types.js';
 const isValidObjectId = (value) => Types.ObjectId.isValid(value);
 export class RadiologyService {
     assertObjectId(value, fieldName) {
@@ -12,6 +17,242 @@ export class RadiologyService {
         const timestamp = Date.now().toString(36).toUpperCase();
         const random = Math.random().toString(36).substring(2, 7).toUpperCase();
         return `RAD-${timestamp}-${random}`;
+    }
+    /**
+     * Return a stable fallback Billing service code for legacy Radiology orders
+     * that were created before a pricing catalogue was selected. New orders
+     * use the selected catalogue code as the authoritative service code.
+     */
+    getBillingServiceCode(order) {
+        const selectedCode = String(order.pricingCatalogueCode || '').trim().toUpperCase();
+        if (selectedCode)
+            return selectedCode;
+        const procedure = order.procedureName
+            .trim()
+            .toUpperCase()
+            .replace(/[^A-Z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+        if (!procedure) {
+            throw new Error('Radiology procedure name cannot be converted into a billing service code.');
+        }
+        return procedure.startsWith('RADIOLOGY_')
+            ? procedure
+            : `RADIOLOGY_${procedure}`;
+    }
+    getContrastBillingSourceId(orderId) {
+        return createHash('sha256')
+            .update(`radiology:${orderId}:contrast`)
+            .digest('hex')
+            .slice(0, 24);
+    }
+    parseServiceDate(value) {
+        const date = value ? new Date(value) : new Date();
+        if (Number.isNaN(date.getTime())) {
+            throw new Error('Invalid Radiology service date.');
+        }
+        return date;
+    }
+    /**
+     * Return active Radiology pricing catalogues for the hospital. A procedure
+     * filter accepts both the legacy procedure-specific code and the new
+     * generic RADIOLOGY_PROCEDURE catalogue code.
+     */
+    async getPricingCatalogues(hospitalId, procedureName, serviceDate) {
+        this.assertObjectId(hospitalId, 'hospital ID');
+        const now = this.parseServiceDate(serviceDate);
+        const filter = {
+            hospitalId: new Types.ObjectId(hospitalId),
+            departmentName: { $regex: /^Radiology$/i },
+            isActive: true,
+            $and: [
+                {
+                    $or: [
+                        { effectiveFrom: { $exists: false } },
+                        { effectiveFrom: { $lte: now } },
+                    ],
+                },
+                {
+                    $or: [
+                        { effectiveTo: { $exists: false } },
+                        { effectiveTo: null },
+                        { effectiveTo: { $gte: now } },
+                    ],
+                },
+            ],
+        };
+        if (procedureName?.trim()) {
+            const normalized = procedureName
+                .trim()
+                .toUpperCase()
+                .replace(/[^A-Z0-9]+/g, '_')
+                .replace(/^_+|_+$/g, '');
+            const procedureCode = normalized.startsWith('RADIOLOGY_')
+                ? normalized
+                : `RADIOLOGY_${normalized}`;
+            filter.$or = [
+                { code: procedureCode },
+                { code: 'RADIOLOGY_PROCEDURE' },
+            ];
+        }
+        return PricingCatalogueModel.find(filter)
+            .select('_id code name planName category departmentName price currency version effectiveFrom effectiveTo description isActive')
+            .sort({ planName: 1, name: 1, price: 1 })
+            .lean()
+            .exec();
+    }
+    async validatePricingCatalogue(hospitalId, catalogueItemId, serviceDate) {
+        this.assertObjectId(catalogueItemId, 'pricing catalogue item ID');
+        const date = this.parseServiceDate(serviceDate);
+        const catalogue = await PricingCatalogueModel.findOne({
+            _id: catalogueItemId,
+            hospitalId: new Types.ObjectId(hospitalId),
+            isActive: true,
+            departmentName: { $regex: /^Radiology$/i },
+        })
+            .lean()
+            .exec();
+        if (!catalogue) {
+            throw new Error('Selected pricing catalogue was not found, is inactive, or does not belong to Radiology.');
+        }
+        if (String(catalogue.category).toUpperCase() !== ChargeCategory.RADIOLOGY) {
+            throw new Error('Selected pricing catalogue must use the RADIOLOGY billing category.');
+        }
+        if (catalogue.effectiveFrom && new Date(catalogue.effectiveFrom) > date) {
+            throw new Error('Selected pricing catalogue is not effective for the Radiology service date.');
+        }
+        if (catalogue.effectiveTo && new Date(catalogue.effectiveTo) < date) {
+            throw new Error('Selected pricing catalogue has expired for the Radiology service date.');
+        }
+        return catalogue;
+    }
+    /**
+     * Capture all applicable radiology charges through the centralized Billing
+     * service. Billing failures are deliberately non-blocking: the examination
+     * workflow remains successful and the failure is recorded on the order for
+     * retry through the manual billing endpoint.
+     */
+    async captureBilling(orderId, hospitalId, capturedBy) {
+        this.assertObjectId(orderId, 'order ID');
+        this.assertObjectId(hospitalId, 'hospital ID');
+        if (capturedBy) {
+            this.assertObjectId(capturedBy, 'captured by ID');
+        }
+        const order = await RadiologyOrderModel.findOne({
+            _id: orderId,
+            hospitalId,
+        });
+        if (!order)
+            return null;
+        if (order.status !== RadiologyOrderStatus.REPORTED &&
+            order.status !== RadiologyOrderStatus.COMPLETED) {
+            throw new Error('Radiology billing can only be captured after the examination is reported or completed.');
+        }
+        const existingBilling = order.billing;
+        if (existingBilling?.status === RadiologyBillingStatus.CAPTURED) {
+            return this.populateOrder(orderId, hospitalId);
+        }
+        const billing = {
+            status: RadiologyBillingStatus.NOT_ATTEMPTED,
+            chargeIds: existingBilling?.chargeIds || [],
+            errors: [],
+            catalogueItemId: order.pricingCatalogueItemId,
+            catalogueCode: order.pricingCatalogueCode,
+            cataloguePlanName: order.pricingCataloguePlanName,
+            cataloguePrice: order.pricingCataloguePrice,
+            catalogueVersion: order.pricingCatalogueVersion,
+            catalogueCurrency: order.pricingCatalogueCurrency,
+            lastAttemptAt: new Date(),
+            capturedAt: existingBilling?.capturedAt,
+        };
+        const existingChargeIds = new Set(billing.chargeIds.map((id) => String(id)));
+        try {
+            let selectedCatalogue = undefined;
+            if (order.pricingCatalogueItemId) {
+                selectedCatalogue = await this.validatePricingCatalogue(hospitalId, String(order.pricingCatalogueItemId), order.reportedAt || order.updatedAt || new Date());
+            }
+            const mainServiceCode = selectedCatalogue?.code || this.getBillingServiceCode(order);
+            const mainCharge = await createCharge({
+                hospitalId,
+                patientId: String(order.patientId),
+                description: `${order.procedureName} - ${order.bodyPart}`,
+                serviceCode: mainServiceCode,
+                catalogueItemId: selectedCatalogue?._id || order.pricingCatalogueItemId,
+                category: ChargeCategory.RADIOLOGY,
+                sourceModule: BillingSourceModule.RADIOLOGY,
+                sourceId: String(order._id),
+                departmentName: 'Radiology',
+                quantity: 1,
+                notes: `Radiology examination ${order.accessionNumber || String(order._id)}`,
+                chargedBy: capturedBy,
+                chargeDate: order.reportedAt || order.updatedAt || new Date(),
+            });
+            if (mainCharge?._id && !existingChargeIds.has(String(mainCharge._id))) {
+                billing.chargeIds.push(mainCharge._id);
+                existingChargeIds.add(String(mainCharge._id));
+            }
+        }
+        catch (error) {
+            billing.errors.push(`Radiology examination: ${error?.message || 'Unable to create radiology billing charge.'}`);
+        }
+        if (order.contrast?.status === 'ADMINISTERED') {
+            try {
+                const contrastCharge = await createCharge({
+                    hospitalId,
+                    patientId: String(order.patientId),
+                    description: order.contrast.contrastName
+                        ? `Contrast - ${order.contrast.contrastName}`
+                        : 'Radiology contrast administration',
+                    serviceCode: 'RADIOLOGY_CONTRAST',
+                    category: ChargeCategory.RADIOLOGY,
+                    sourceModule: BillingSourceModule.RADIOLOGY,
+                    sourceId: this.getContrastBillingSourceId(String(order._id)),
+                    departmentName: 'Radiology',
+                    quantity: 1,
+                    notes: order.contrast.notes?.trim(),
+                    chargedBy: capturedBy,
+                    chargeDate: order.contrast.administeredAt || order.reportedAt || new Date(),
+                });
+                if (contrastCharge?._id && !existingChargeIds.has(String(contrastCharge._id))) {
+                    billing.chargeIds.push(contrastCharge._id);
+                    existingChargeIds.add(String(contrastCharge._id));
+                }
+            }
+            catch (error) {
+                billing.errors.push(`Contrast: ${error?.message || 'Unable to create contrast billing charge.'}`);
+            }
+        }
+        billing.status =
+            billing.errors.length === 0
+                ? RadiologyBillingStatus.CAPTURED
+                : billing.chargeIds.length > 0
+                    ? RadiologyBillingStatus.PARTIAL
+                    : RadiologyBillingStatus.FAILED;
+        if (billing.status === RadiologyBillingStatus.CAPTURED) {
+            billing.capturedAt = new Date();
+        }
+        await RadiologyOrderModel.findOneAndUpdate({ _id: orderId, hospitalId }, { $set: { billing } }, { new: true, runValidators: true }).exec();
+        return this.populateOrder(orderId, hospitalId);
+    }
+    /**
+     * Return a radiology order with every staff reference resolved.
+     *
+     * `assignments.userId` stores Staff document IDs, while `assignedBy`
+     * stores Account IDs for the authenticated user who made the assignment.
+     * Keeping this population in one place prevents the details page from
+     * receiving only raw ObjectIds after assignment/removal.
+     */
+    populateOrder(orderId, hospitalId) {
+        return RadiologyOrderModel.findOne({
+            _id: orderId,
+            hospitalId,
+        })
+            .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone email')
+            .populate('orderingDoctorId', 'firstName lastName role department')
+            .populate('radiologistId', 'firstName lastName role department')
+            .populate('assignments.userId', 'firstName middleName lastName title role jobTitle professionalTitle staffId contact employment')
+            .populate('assignments.assignedBy', 'firstName lastName role')
+            .populate('scheduling.modalityId', 'name modality manufacturer model status')
+            .exec();
     }
     async createOrder(input) {
         this.assertObjectId(input.hospitalId, 'hospital ID');
@@ -25,6 +266,18 @@ export class RadiologyService {
         }
         if (!input.clinicalIndication?.trim()) {
             throw new Error('Clinical indication is required');
+        }
+        let pricingCatalogue = undefined;
+        if (input.pricingCatalogueItemId) {
+            pricingCatalogue = await this.validatePricingCatalogue(input.hospitalId, input.pricingCatalogueItemId, input.scheduling?.scheduledDate);
+        }
+        else {
+            const available = await this.getPricingCatalogues(input.hospitalId, input.procedureName, input.scheduling?.scheduledDate);
+            if (available.length === 1)
+                pricingCatalogue = available[0];
+            if (available.length > 1) {
+                throw new Error('Multiple Radiology pricing catalogues are available for this examination. Please select one.');
+            }
         }
         const accessionNumber = input.accessionNumber?.trim() || this.generateAccessionNumber();
         const order = await RadiologyOrderModel.create({
@@ -45,6 +298,12 @@ export class RadiologyService {
                 }
                 : undefined,
             patientPreparation: input.patientPreparation,
+            pricingCatalogueItemId: pricingCatalogue?._id,
+            pricingCatalogueCode: pricingCatalogue?.code,
+            pricingCataloguePlanName: pricingCatalogue?.planName || pricingCatalogue?.name,
+            pricingCataloguePrice: pricingCatalogue?.price,
+            pricingCatalogueVersion: pricingCatalogue?.version,
+            pricingCatalogueCurrency: pricingCatalogue?.currency,
             contrast: input.contrast,
             pregnancyScreening: input.pregnancyScreening,
             procedureTracking: {
@@ -134,7 +393,7 @@ export class RadiologyService {
                 .populate('patientId', 'firstName lastName mrn gender dateOfBirth')
                 .populate('orderingDoctorId', 'firstName lastName role department')
                 .populate('radiologistId', 'firstName lastName role department')
-                .populate('assignments.userId', 'firstName lastName role department')
+                .populate('assignments.userId', 'firstName middleName lastName title role jobTitle professionalTitle staffId contact employment')
                 .populate('assignments.assignedBy', 'firstName lastName role')
                 .sort({
                 priority: 1,
@@ -155,17 +414,7 @@ export class RadiologyService {
     async getOrderById(orderId, hospitalId) {
         this.assertObjectId(orderId, 'order ID');
         this.assertObjectId(hospitalId, 'hospital ID');
-        return RadiologyOrderModel.findOne({
-            _id: orderId,
-            hospitalId,
-        })
-            .populate('patientId', 'firstName lastName mrn gender dateOfBirth phone email')
-            .populate('orderingDoctorId', 'firstName lastName role department')
-            .populate('radiologistId', 'firstName lastName role department')
-            .populate('assignments.userId', 'firstName lastName role department')
-            .populate('assignments.assignedBy', 'firstName lastName role')
-            .populate('scheduling.modalityId', 'name modality manufacturer model status')
-            .exec();
+        return this.populateOrder(orderId, hospitalId);
     }
     async updateOrder(orderId, hospitalId, input) {
         this.assertObjectId(orderId, 'order ID');
@@ -257,6 +506,19 @@ export class RadiologyService {
         if (!order) {
             return null;
         }
+        // The assigned person is a Staff record, not an Account record.
+        // Validate tenant ownership so a staff member from another hospital
+        // can never be attached to this radiology order.
+        const staffMember = await Staff.findOne({
+            _id: input.userId,
+            hospitalId,
+            isActive: true,
+        })
+            .select('_id firstName middleName lastName role jobTitle professionalTitle staffId')
+            .lean();
+        if (!staffMember) {
+            throw new Error('Staff member not found or inactive in this hospital');
+        }
         const assignments = order.assignments || [];
         const existingIndex = assignments.findIndex((assignment) => String(assignment.userId) === input.userId &&
             assignment.role === input.role);
@@ -272,12 +534,13 @@ export class RadiologyService {
                 notes: input.notes,
             });
         }
-        if (input.role === AssignmentRole.RADIOLOGIST) {
-            order.radiologistId = new Types.ObjectId(input.userId);
-        }
+        // `radiologistId` is an Account reference used by the reporting
+        // workflow, while assignment.userId is a Staff reference. Do not copy
+        // a Staff ObjectId into the Account-backed radiologistId field.
         order.assignments = assignments;
         await order.save();
-        return order;
+        // Re-fetch and populate Staff references before returning to the client.
+        return this.populateOrder(orderId, hospitalId);
     }
     async removeStaff(orderId, hospitalId, userId, role) {
         this.assertObjectId(orderId, 'order ID');
@@ -297,7 +560,8 @@ export class RadiologyService {
             order.radiologistId = undefined;
         }
         await order.save();
-        return order;
+        // Re-fetch and populate Staff references before returning to the client.
+        return this.populateOrder(orderId, hospitalId);
     }
     async updateExaminationStatus(orderId, hospitalId, input) {
         this.assertObjectId(orderId, 'order ID');
@@ -346,7 +610,28 @@ export class RadiologyService {
             order.radiologistNotes = input.notes;
         }
         await order.save();
-        return order;
+        if (input.status === RadiologyOrderStatus.REPORTED ||
+            input.status === RadiologyOrderStatus.COMPLETED) {
+            try {
+                return (await this.captureBilling(orderId, hospitalId)) || order;
+            }
+            catch (error) {
+                await RadiologyOrderModel.findOneAndUpdate({ _id: orderId, hospitalId }, {
+                    $set: {
+                        billing: {
+                            status: RadiologyBillingStatus.FAILED,
+                            chargeIds: order.billing?.chargeIds || [],
+                            errors: [
+                                error?.message || 'Unable to capture radiology billing.',
+                            ],
+                            lastAttemptAt: new Date(),
+                        },
+                    },
+                }).exec();
+                return this.populateOrder(orderId, hospitalId);
+            }
+        }
+        return this.populateOrder(orderId, hospitalId);
     }
     async updateQueue(orderId, hospitalId, input) {
         this.assertObjectId(orderId, 'order ID');
@@ -387,28 +672,76 @@ export class RadiologyService {
         this.assertObjectId(orderId, 'order ID');
         this.assertObjectId(hospitalId, 'hospital ID');
         const update = {};
-        Object.entries(input).forEach(([key, value]) => {
-            if (value !== undefined) {
-                update[`pacsMetadata.${key}`] =
-                    value instanceof Date
-                        ? value
-                        : key === 'studyDate' || key === 'sharedLinkExpiresAt'
-                            ? new Date(value)
-                            : value;
+        const stringFields = [
+            'studyInstanceUid',
+            'seriesInstanceUid',
+            'accessionNumber',
+            'studyId',
+            'dicomViewerUrl',
+            'storageLocation',
+            'storageStatus',
+            'sharedLink',
+        ];
+        for (const field of stringFields) {
+            const value = input[field];
+            if (value !== undefined && value !== null) {
+                update[`pacsMetadata.${field}`] =
+                    typeof value === 'string' ? value.trim() : value;
             }
-        });
-        update['pacsMetadata.modality'] =
-            input.modality;
-        const order = await RadiologyOrderModel.findOneAndUpdate({
+        }
+        const numericFields = [
+            'imageCount',
+            'seriesCount',
+        ];
+        for (const field of numericFields) {
+            const value = input[field];
+            if (value !== undefined && value !== null) {
+                if (!Number.isFinite(value) || value < 0) {
+                    throw new Error(`${field} must be a non-negative number`);
+                }
+                update[`pacsMetadata.${field}`] = value;
+            }
+        }
+        if (input.modality !== undefined && input.modality !== null) {
+            update['pacsMetadata.modality'] = input.modality;
+        }
+        if (input.dicomFileKeys !== undefined) {
+            update['pacsMetadata.dicomFileKeys'] = input.dicomFileKeys;
+        }
+        if (input.keyImageIds !== undefined) {
+            update['pacsMetadata.keyImageIds'] = input.keyImageIds;
+        }
+        if (input.priorStudyInstanceUids !== undefined) {
+            update['pacsMetadata.priorStudyInstanceUids'] =
+                input.priorStudyInstanceUids;
+        }
+        if (input.exportEnabled !== undefined) {
+            update['pacsMetadata.exportEnabled'] = input.exportEnabled;
+        }
+        if (input.studyDate !== undefined && input.studyDate !== null && input.studyDate !== '') {
+            const date = new Date(input.studyDate);
+            if (Number.isNaN(date.getTime())) {
+                throw new Error('Invalid PACS study date');
+            }
+            update['pacsMetadata.studyDate'] = date;
+        }
+        if (input.sharedLinkExpiresAt !== undefined && input.sharedLinkExpiresAt !== null && input.sharedLinkExpiresAt !== '') {
+            const date = new Date(input.sharedLinkExpiresAt);
+            if (Number.isNaN(date.getTime())) {
+                throw new Error('Invalid PACS shared-link expiry date');
+            }
+            update['pacsMetadata.sharedLinkExpiresAt'] = date;
+        }
+        if (Object.keys(update).length === 0) {
+            throw new Error('At least one PACS field is required');
+        }
+        return RadiologyOrderModel.findOneAndUpdate({
             _id: orderId,
             hospitalId,
-        }, {
-            $set: update,
-        }, {
+        }, { $set: update }, {
             new: true,
             runValidators: true,
         }).exec();
-        return order;
     }
     async updateContrast(orderId, hospitalId, input, administeredBy) {
         this.assertObjectId(orderId, 'order ID');
@@ -481,62 +814,71 @@ export class RadiologyService {
         this.assertObjectId(orderId, 'order ID');
         this.assertObjectId(hospitalId, 'hospital ID');
         this.assertObjectId(input.radiologistId, 'radiologist ID');
-        if (!input.findings?.trim()) {
+        const findings = input.findings?.trim();
+        const impression = input.impression?.trim();
+        if (!findings) {
             throw new Error('Findings are required');
         }
-        if (!input.impression?.trim()) {
+        if (!impression) {
             throw new Error('Impression is required');
         }
         const order = await RadiologyOrderModel.findOne({
             _id: orderId,
             hospitalId,
-        });
+        }).select('_id report');
         if (!order) {
             return null;
         }
         const now = new Date();
-        if (!order.report) {
-            order.report = {
-                status: ReportStatus.DRAFT,
-                findings: input.findings,
-                impression: input.impression,
-                radiologistNotes: input.radiologistNotes,
-                templateId: input.templateId,
-                version: 1,
-                draftedAt: now,
-                criticalResult: {
-                    status: input.criticalResult?.status ||
-                        CriticalResultStatus.NOT_APPLICABLE,
-                    ...input.criticalResult,
-                },
-                versions: [],
-            };
+        const nextVersion = (order.report?.version || 0) + 1;
+        const critical = input.criticalResult;
+        const set = {
+            radiologistId: new Types.ObjectId(input.radiologistId),
+            findings,
+            impression,
+            'report.status': ReportStatus.DRAFT,
+            'report.findings': findings,
+            'report.impression': impression,
+            'report.version': nextVersion,
+            'report.draftedAt': now,
+            status: RadiologyOrderStatus.REPORTING,
+        };
+        if (input.radiologistNotes !== undefined) {
+            set.radiologistNotes = input.radiologistNotes?.trim() || undefined;
+            set['report.radiologistNotes'] = input.radiologistNotes?.trim() || undefined;
         }
-        else {
-            const nextVersion = (order.report.version || 0) + 1;
-            order.report.version = nextVersion;
-            order.report.findings = input.findings;
-            order.report.impression = input.impression;
-            order.report.radiologistNotes =
-                input.radiologistNotes;
-            order.report.templateId = input.templateId;
-            order.report.draftedAt = now;
-            if (input.criticalResult) {
-                order.report.criticalResult = {
-                    ...(order.report.criticalResult || {}),
-                    ...input.criticalResult,
-                };
+        if (input.templateId !== undefined) {
+            set['report.templateId'] = input.templateId?.trim() || undefined;
+        }
+        if (critical) {
+            if (critical.status !== undefined) {
+                set['report.criticalResult.status'] = critical.status;
+            }
+            if (critical.finding !== undefined) {
+                set['report.criticalResult.finding'] = critical.finding?.trim() || undefined;
+            }
+            if (critical.notifiedUserId !== undefined && critical.notifiedUserId !== '') {
+                this.assertObjectId(critical.notifiedUserId, 'notified user ID');
+                set['report.criticalResult.notifiedUserId'] = new Types.ObjectId(critical.notifiedUserId);
+            }
+            if (critical.notificationMethod !== undefined) {
+                set['report.criticalResult.notificationMethod'] = critical.notificationMethod;
+            }
+            if (critical.notificationNotes !== undefined) {
+                set['report.criticalResult.notificationNotes'] = critical.notificationNotes?.trim() || undefined;
             }
         }
-        order.radiologistId = new Types.ObjectId(input.radiologistId);
-        // Keep legacy fields synchronized.
-        order.findings = input.findings;
-        order.impression = input.impression;
-        order.radiologistNotes =
-            input.radiologistNotes;
-        order.status = RadiologyOrderStatus.REPORTING;
-        await order.save();
-        return order;
+        else if (!order.report) {
+            set['report.criticalResult.status'] = CriticalResultStatus.NOT_APPLICABLE;
+        }
+        const updated = await RadiologyOrderModel.findOneAndUpdate({ _id: orderId, hospitalId }, {
+            $set: set,
+            ...(order.report ? {} : { $setOnInsert: {} }),
+        }, {
+            new: true,
+            runValidators: true,
+        }).exec();
+        return updated;
     }
     async signReport(orderId, hospitalId, input) {
         this.assertObjectId(orderId, 'order ID');
@@ -574,7 +916,24 @@ export class RadiologyService {
             order.procedureTracking.reportedAt = now;
         }
         await order.save();
-        return order;
+        try {
+            return (await this.captureBilling(orderId, hospitalId, input.radiologistId)) || order;
+        }
+        catch (error) {
+            await RadiologyOrderModel.findOneAndUpdate({ _id: orderId, hospitalId }, {
+                $set: {
+                    billing: {
+                        status: RadiologyBillingStatus.FAILED,
+                        chargeIds: order.billing?.chargeIds || [],
+                        errors: [
+                            error?.message || 'Unable to capture radiology billing.',
+                        ],
+                        lastAttemptAt: new Date(),
+                    },
+                },
+            }).exec();
+            return this.populateOrder(orderId, hospitalId);
+        }
     }
     async amendReport(orderId, hospitalId, input) {
         this.assertObjectId(orderId, 'order ID');

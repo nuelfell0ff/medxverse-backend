@@ -1,3 +1,6 @@
+/* =========================================================
+   ENUMS
+========================================================= */
 export var DrugCategory;
 (function (DrugCategory) {
     DrugCategory["ANTIBIOTICS"] = "ANTIBIOTICS";
@@ -25,3 +28,13 @@ export var DispenseStatus;
     DispenseStatus["PARTIALLY_DISPENSED"] = "PARTIALLY_DISPENSED";
     DispenseStatus["CANCELLED"] = "CANCELLED";
 })(DispenseStatus || (DispenseStatus = {}));
+/* =========================================================
+   BILLING
+========================================================= */
+export var PharmacyBillingStatus;
+(function (PharmacyBillingStatus) {
+    PharmacyBillingStatus["NOT_ATTEMPTED"] = "NOT_ATTEMPTED";
+    PharmacyBillingStatus["CAPTURED"] = "CAPTURED";
+    PharmacyBillingStatus["PARTIAL"] = "PARTIAL";
+    PharmacyBillingStatus["FAILED"] = "FAILED";
+})(PharmacyBillingStatus || (PharmacyBillingStatus = {}));

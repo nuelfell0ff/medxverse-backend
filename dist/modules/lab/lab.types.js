@@ -16,6 +16,12 @@ export var LabOrderStatus;
     LabOrderStatus["RECOLLECTION_REQUIRED"] = "RECOLLECTION_REQUIRED";
     LabOrderStatus["CANCELLED"] = "CANCELLED";
 })(LabOrderStatus || (LabOrderStatus = {}));
+export var LabBillingStatus;
+(function (LabBillingStatus) {
+    LabBillingStatus["NOT_ATTEMPTED"] = "NOT_ATTEMPTED";
+    LabBillingStatus["CAPTURED"] = "CAPTURED";
+    LabBillingStatus["FAILED"] = "FAILED";
+})(LabBillingStatus || (LabBillingStatus = {}));
 export var LabPriority;
 (function (LabPriority) {
     LabPriority["ROUTINE"] = "ROUTINE";

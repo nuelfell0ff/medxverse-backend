@@ -1,5 +1,5 @@
 import { Schema, model } from 'mongoose';
-import { ImagingModality, RadiologyOrderStatus, PriorityLevel, AssignmentRole, ExaminationQueueStatus, ReportStatus, CriticalResultStatus, PregnancyScreeningStatus, ContrastStatus, AIStudyPriority, } from './radiology.types.js';
+import { ImagingModality, RadiologyOrderStatus, PriorityLevel, AssignmentRole, ExaminationQueueStatus, ReportStatus, CriticalResultStatus, PregnancyScreeningStatus, ContrastStatus, AIStudyPriority, RadiologyBillingStatus, } from './radiology.types.js';
 /* =========================================================
    PACS METADATA
 ========================================================= */
@@ -90,9 +90,10 @@ const PacsMetadataSchema = new Schema({
 const AssignmentSchema = new Schema({
     userId: {
         type: Schema.Types.ObjectId,
-        // IMPORTANT:
-        // Your application uses Account rather than User.
-        ref: 'Account',
+        // Radiology staff records are stored in the Staff collection.
+        // The frontend assigns Staff document IDs, so this must populate
+        // against Staff rather than Account.
+        ref: 'Staff',
         required: true,
     },
     role: {
@@ -508,6 +509,40 @@ const AIAnalysisSchema = new Schema({
     _id: false,
 });
 /* =========================================================
+   BILLING
+========================================================= */
+const RadiologyBillingSchema = new Schema({
+    status: {
+        type: String,
+        enum: Object.values(RadiologyBillingStatus),
+        default: RadiologyBillingStatus.NOT_ATTEMPTED,
+        index: true,
+    },
+    chargeIds: [
+        {
+            type: Schema.Types.ObjectId,
+            ref: 'Charge',
+        },
+    ],
+    errors: {
+        type: [String],
+        default: [],
+    },
+    catalogueItemId: {
+        type: Schema.Types.ObjectId,
+        ref: 'PricingCatalogue',
+    },
+    catalogueCode: { type: String, trim: true, uppercase: true },
+    cataloguePlanName: { type: String, trim: true },
+    cataloguePrice: { type: Number, min: 0 },
+    catalogueVersion: { type: Number, min: 1 },
+    catalogueCurrency: { type: String, trim: true, uppercase: true },
+    lastAttemptAt: Date,
+    capturedAt: Date,
+}, {
+    _id: false,
+});
+/* =========================================================
    RADIOLOGY ORDER
 ========================================================= */
 const RadiologyOrderSchema = new Schema({
@@ -646,6 +681,40 @@ const RadiologyOrderSchema = new Schema({
     --------------------------------------------- */
     aiAnalysis: {
         type: AIAnalysisSchema,
+    },
+    /* ---------------------------------------------
+       Centralized Billing pricing catalogue
+    --------------------------------------------- */
+    pricingCatalogueItemId: {
+        type: Schema.Types.ObjectId,
+        ref: 'PricingCatalogue',
+        index: true,
+    },
+    pricingCatalogueCode: { type: String, trim: true, uppercase: true },
+    pricingCataloguePlanName: {
+        type: String,
+        trim: true,
+    },
+    pricingCataloguePrice: {
+        type: Number,
+        min: 0,
+    },
+    pricingCatalogueVersion: {
+        type: Number,
+        min: 1,
+    },
+    pricingCatalogueCurrency: {
+        type: String,
+        trim: true,
+        uppercase: true,
+    },
+    billing: {
+        type: RadiologyBillingSchema,
+        default: () => ({
+            status: RadiologyBillingStatus.NOT_ATTEMPTED,
+            chargeIds: [],
+            errors: [],
+        }),
     },
 }, {
     timestamps: true,

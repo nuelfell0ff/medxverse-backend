@@ -7,6 +7,10 @@ const router = Router();
 ========================================================= */
 router.use(authenticate);
 /* =========================================================
+   PRICING CATALOGUES
+========================================================= */
+router.get('/pricing-catalogues', LabController.pricingCatalogues);
+/* =========================================================
    ORDERS / DIGITAL REQUISITIONS / WORKLIST
 ========================================================= */
 router.post('/', LabController.create);
@@ -18,6 +22,10 @@ router.patch('/:id/collect-sample', LabController.collectSample);
 router.patch('/:id/accession', LabController.accessionSpecimen);
 router.patch('/:id/reject-sample', LabController.rejectSample);
 router.patch('/:id/recollect', LabController.recollectSample);
+/* =========================================================
+   BILLING
+========================================================= */
+router.post('/:id/billing/capture', LabController.captureBilling);
 /* =========================================================
    RESULTS
 ========================================================= */

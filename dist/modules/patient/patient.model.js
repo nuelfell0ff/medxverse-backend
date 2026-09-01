@@ -22,35 +22,48 @@ const PatientSchema = new Schema({
     phone: { type: String, required: true },
     email: { type: String },
     address: { type: String },
+    maritalStatus: { type: String, required: true },
+    occupation: { type: String, required: true },
+    nextOfKin: { type: String, required: true },
+    informant: { type: String, required: true },
     bloodGroup: { type: String },
     genotype: { type: String },
     policyNumber: { type: String },
     hmoId: { type: Schema.Types.ObjectId, ref: 'HmoProvider' },
-    vitalsHistory: [VitalsSchema],
-    allergies: [
-        {
-            allergen: { type: String, required: true },
-            reaction: { type: String, required: true },
-            severity: {
-                type: String,
-                enum: Object.values(AllergySeverity),
-                default: AllergySeverity.MODERATE,
+    vitalsHistory: { type: [VitalsSchema], default: [] },
+    allergies: {
+        type: [
+            {
+                allergen: { type: String, required: true },
+                reaction: { type: String, required: true },
+                severity: {
+                    type: String,
+                    enum: Object.values(AllergySeverity),
+                    default: AllergySeverity.MODERATE,
+                },
             },
-        },
-    ],
-    medicalHistory: [
-        {
-            condition: { type: String, required: true },
-            diagnosedDate: { type: Date },
-            status: {
-                type: String,
-                enum: Object.values(MedicalHistoryStatus),
-                default: MedicalHistoryStatus.ACTIVE,
+        ],
+        default: [],
+    },
+    medicalHistory: {
+        type: [
+            {
+                condition: { type: String, required: true },
+                diagnosedDate: { type: Date },
+                status: {
+                    type: String,
+                    enum: Object.values(MedicalHistoryStatus),
+                    default: MedicalHistoryStatus.ACTIVE,
+                },
+                notes: { type: String },
             },
-            notes: { type: String },
-        },
-    ],
+        ],
+        default: [],
+    },
     isFlagged: { type: Boolean, default: false },
     flagReason: { type: String },
 }, { timestamps: true });
+PatientSchema.index({ hospitalId: 1, createdAt: -1 });
+PatientSchema.index({ hospitalId: 1, lastName: 1, firstName: 1 });
+PatientSchema.index({ hospitalId: 1, phone: 1 });
 export const PatientModel = model('Patient', PatientSchema);

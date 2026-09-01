@@ -9,6 +9,7 @@ router.use(authenticate);
 |--------------------------------------------------------------------------
 */
 router.post('/', (req, res, next) => radiologyController.createOrder(req, res, next));
+router.get('/pricing-catalogues', (req, res, next) => radiologyController.getPricingCatalogues(req, res, next));
 router.get('/', (req, res, next) => radiologyController.getOrders(req, res, next));
 router.get('/:id', (req, res, next) => radiologyController.getOrderById(req, res, next));
 router.patch('/:id', (req, res, next) => radiologyController.updateOrder(req, res, next));
@@ -65,6 +66,12 @@ router.patch('/:id/report/critical-result', (req, res, next) => radiologyControl
 | MedxVerse AI
 |--------------------------------------------------------------------------
 */
+/*
+ *--------------------------------------------------------------------------
+ * Billing
+ *--------------------------------------------------------------------------
+ */
+router.post('/:id/billing/capture', (req, res, next) => radiologyController.captureBilling(req, res, next));
 router.patch('/:id/ai-analysis', (req, res, next) => radiologyController.updateAIAnalysis(req, res, next));
 /*
 |--------------------------------------------------------------------------

@@ -86,10 +86,10 @@ export interface CreatePatientDTO {
   phone: string;
   email?: string;
   address?: string;
-  maritalStatus?: string;
+  maritalStatus: string;
   occupation: string;
   nextOfKin: string;
-  informant?: string;
+  informant: string;
   bloodGroup?: BloodGroup;
   genotype?: Genotype;
   policyNumber?: string;

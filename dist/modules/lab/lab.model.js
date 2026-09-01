@@ -1,5 +1,5 @@
 import mongoose, { Schema, model } from 'mongoose';
-import { LabOrderStatus, LabPriority, LabDepartment, ResultFlag, SpecimenQuality, EntryMethod, SampleRoutingStatus, AuthorizationLevel, } from './lab.types.js';
+import { LabOrderStatus, LabPriority, LabDepartment, ResultFlag, SpecimenQuality, EntryMethod, SampleRoutingStatus, AuthorizationLevel, LabBillingStatus, } from './lab.types.js';
 /* =========================================================
    RESULT FIELD
 ========================================================= */
@@ -332,6 +332,28 @@ const LabOrderSchema = new Schema({
         type: Schema.Types.ObjectId,
         ref: 'TestCatalog',
     },
+    catalogueItemId: {
+        type: Schema.Types.ObjectId,
+        ref: 'PricingCatalogue',
+        index: true,
+    },
+    cataloguePlanName: {
+        type: String,
+        trim: true,
+    },
+    cataloguePrice: {
+        type: Number,
+        min: 0,
+    },
+    catalogueVersion: {
+        type: Number,
+        min: 1,
+    },
+    catalogueCurrency: {
+        type: String,
+        trim: true,
+        uppercase: true,
+    },
     testName: {
         type: String,
         required: true,
@@ -463,6 +485,36 @@ const LabOrderSchema = new Schema({
         type: Number,
         min: 0,
     },
+    billingStatus: {
+        type: String,
+        enum: Object.values(LabBillingStatus),
+        default: LabBillingStatus.NOT_ATTEMPTED,
+        index: true,
+    },
+    billingChargeId: {
+        type: Schema.Types.ObjectId,
+        ref: 'Charge',
+    },
+    billingServiceCode: {
+        type: String,
+        trim: true,
+    },
+    billingAmount: {
+        type: Number,
+        min: 0,
+    },
+    billingCurrency: {
+        type: String,
+        trim: true,
+        uppercase: true,
+    },
+    billingError: {
+        type: String,
+        trim: true,
+    },
+    billingCapturedAt: {
+        type: Date,
+    },
     notes: {
         type: String,
         trim: true,
@@ -487,6 +539,10 @@ LabOrderSchema.index({
     hospitalId: 1,
     testCategory: 1,
     status: 1,
+});
+LabOrderSchema.index({
+    hospitalId: 1,
+    catalogueItemId: 1,
 });
 LabOrderSchema.index({
     hospitalId: 1,

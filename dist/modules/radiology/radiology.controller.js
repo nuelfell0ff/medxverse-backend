@@ -13,6 +13,7 @@ export class RadiologyController {
                 bodyPart: req.body.bodyPart,
                 clinicalIndication: req.body.clinicalIndication,
                 priority: req.body.priority,
+                pricingCatalogueItemId: req.body.pricingCatalogueItemId,
                 accessionNumber: req.body.accessionNumber,
                 scheduling: req.body.scheduling,
                 patientPreparation: req.body.patientPreparation,
@@ -22,6 +23,21 @@ export class RadiologyController {
             res.status(201).json({
                 success: true,
                 data: order,
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async getPricingCatalogues(req, res, next) {
+        try {
+            const authReq = req;
+            const catalogues = await radiologyService.getPricingCatalogues(authReq.user.hospitalId, typeof req.query.procedureName === 'string'
+                ? req.query.procedureName
+                : undefined);
+            res.status(200).json({
+                success: true,
+                data: catalogues,
             });
         }
         catch (error) {
@@ -431,6 +447,26 @@ export class RadiologyController {
             res.status(200).json({
                 success: true,
                 data: updated,
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async captureBilling(req, res, next) {
+        try {
+            const authReq = req;
+            const order = await radiologyService.captureBilling(req.params.id, authReq.user.hospitalId, authReq.user._id);
+            if (!order) {
+                res.status(404).json({
+                    success: false,
+                    message: 'Radiology order not found',
+                });
+                return;
+            }
+            res.status(200).json({
+                success: true,
+                data: order,
             });
         }
         catch (error) {

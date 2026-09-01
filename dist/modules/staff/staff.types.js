@@ -1,3 +1,6 @@
+/**
+ * Staff roles
+ */
 export var StaffRole;
 (function (StaffRole) {
     StaffRole["DOCTOR"] = "DOCTOR";
@@ -16,6 +19,9 @@ export var StaffRole;
     StaffRole["ACCOUNTANT"] = "ACCOUNTANT";
     StaffRole["OTHER"] = "OTHER";
 })(StaffRole || (StaffRole = {}));
+/**
+ * Staff categories
+ */
 export var StaffCategory;
 (function (StaffCategory) {
     StaffCategory["CLINICAL"] = "CLINICAL";
@@ -23,6 +29,9 @@ export var StaffCategory;
     StaffCategory["ADMINISTRATIVE"] = "ADMINISTRATIVE";
     StaffCategory["SUPPORT"] = "SUPPORT";
 })(StaffCategory || (StaffCategory = {}));
+/**
+ * Staff classification
+ */
 export var StaffClassification;
 (function (StaffClassification) {
     StaffClassification["CONSULTANT"] = "CONSULTANT";
@@ -33,6 +42,12 @@ export var StaffClassification;
     StaffClassification["JUNIOR"] = "JUNIOR";
     StaffClassification["GENERAL"] = "GENERAL";
 })(StaffClassification || (StaffClassification = {}));
+/**
+ * Employment type
+ *
+ * IMPORTANT:
+ * These values must match the Mongoose enum exactly.
+ */
 export var EmploymentType;
 (function (EmploymentType) {
     EmploymentType["FULL_TIME"] = "FULL_TIME";
@@ -43,6 +58,9 @@ export var EmploymentType;
     EmploymentType["INTERN"] = "INTERN";
     EmploymentType["VOLUNTEER"] = "VOLUNTEER";
 })(EmploymentType || (EmploymentType = {}));
+/**
+ * Staff status
+ */
 export var StaffStatus;
 (function (StaffStatus) {
     StaffStatus["ACTIVE"] = "ACTIVE";
@@ -51,6 +69,9 @@ export var StaffStatus;
     StaffStatus["SUSPENDED"] = "SUSPENDED";
     StaffStatus["TERMINATED"] = "TERMINATED";
 })(StaffStatus || (StaffStatus = {}));
+/**
+ * Credential status
+ */
 export var CredentialStatus;
 (function (CredentialStatus) {
     CredentialStatus["PENDING"] = "PENDING";
@@ -58,6 +79,9 @@ export var CredentialStatus;
     CredentialStatus["EXPIRED"] = "EXPIRED";
     CredentialStatus["REJECTED"] = "REJECTED";
 })(CredentialStatus || (CredentialStatus = {}));
+/**
+ * Clinical privilege status
+ */
 export var PrivilegeStatus;
 (function (PrivilegeStatus) {
     PrivilegeStatus["ACTIVE"] = "ACTIVE";
@@ -65,6 +89,9 @@ export var PrivilegeStatus;
     PrivilegeStatus["SUSPENDED"] = "SUSPENDED";
     PrivilegeStatus["PENDING_RENEWAL"] = "PENDING_RENEWAL";
 })(PrivilegeStatus || (PrivilegeStatus = {}));
+/**
+ * Training status
+ */
 export var TrainingStatus;
 (function (TrainingStatus) {
     TrainingStatus["PENDING"] = "PENDING";
@@ -72,6 +99,9 @@ export var TrainingStatus;
     TrainingStatus["COMPLETED"] = "COMPLETED";
     TrainingStatus["EXPIRED"] = "EXPIRED";
 })(TrainingStatus || (TrainingStatus = {}));
+/**
+ * Leave status
+ */
 export var LeaveStatus;
 (function (LeaveStatus) {
     LeaveStatus["PENDING"] = "PENDING";
@@ -79,6 +109,9 @@ export var LeaveStatus;
     LeaveStatus["REJECTED"] = "REJECTED";
     LeaveStatus["CANCELLED"] = "CANCELLED";
 })(LeaveStatus || (LeaveStatus = {}));
+/**
+ * Attendance status
+ */
 export var AttendanceStatus;
 (function (AttendanceStatus) {
     AttendanceStatus["PRESENT"] = "PRESENT";
@@ -87,6 +120,9 @@ export var AttendanceStatus;
     AttendanceStatus["HALF_DAY"] = "HALF_DAY";
     AttendanceStatus["ON_LEAVE"] = "ON_LEAVE";
 })(AttendanceStatus || (AttendanceStatus = {}));
+/**
+ * Availability status
+ */
 export var AvailabilityStatus;
 (function (AvailabilityStatus) {
     AvailabilityStatus["AVAILABLE"] = "AVAILABLE";

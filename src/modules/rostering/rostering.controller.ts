@@ -8,7 +8,9 @@ const getUserId = (req: Request) => {
   return (
     user?._id ||
     user?.id ||
-    user?.staffId
+    user?.staffId ||
+    user?.userId ||
+    user?.sub
   );
 };
 

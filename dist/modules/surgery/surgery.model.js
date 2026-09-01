@@ -3,7 +3,7 @@ import { SurgeryStatus, UrgencyLevel, AnesthesiaType, SurgicalRole, ASAClassific
 const SurgicalTeamMemberSchema = new Schema({
     userId: {
         type: Schema.Types.ObjectId,
-        ref: 'Account',
+        ref: 'Staff',
         required: true,
         index: true,
     },
@@ -81,7 +81,7 @@ const PreOpAssessmentSchema = new Schema({
     clearedAt: Date,
     clearedBy: {
         type: Schema.Types.ObjectId,
-        ref: 'Account',
+        ref: 'Staff',
     },
     notes: String,
 }, { _id: false });
@@ -261,8 +261,12 @@ const WHOSignInSchema = new Schema({
     anesthesiaSafetyConfirmed: Boolean,
     pulseOximeterOn: Boolean,
     allergiesReviewed: Boolean,
+    allergyKnown: Boolean,
     airwayRisk: Boolean,
     bloodLossRisk: Boolean,
+    bloodLossRiskOver500ml: Boolean,
+    siteMarked: Boolean,
+    notes: String,
 }, { _id: false });
 const WHOTimeOutSchema = new Schema({
     completed: {
@@ -275,11 +279,17 @@ const WHOTimeOutSchema = new Schema({
         ref: 'Account',
     },
     patientConfirmed: Boolean,
+    patientIdentityConfirmed: Boolean,
     procedureConfirmed: Boolean,
     surgicalSiteConfirmed: Boolean,
+    confirmPatientSiteProcedure: Boolean,
+    consentVerified: Boolean,
+    siteMarked: Boolean,
     teamIntroduced: Boolean,
     antibioticProphylaxisConfirmed: Boolean,
+    antibioticProphylaxisGiven: Boolean,
     imagingAvailable: Boolean,
+    imagingDisplayed: Boolean,
     criticalConcernsSurgeon: String,
     criticalConcernsAnaesthetist: String,
     criticalConcernsNursing: String,
@@ -301,6 +311,9 @@ const WHOSignOutSchema = new Schema({
     specimenLabeled: Boolean,
     equipmentIssuesNoted: String,
     postOperativePlan: String,
+    postOpRecoveryPlan: String,
+    countsCorrect: Boolean,
+    notes: String,
 }, { _id: false });
 const WHOChecklistSchema = new Schema({
     signIn: {
@@ -400,6 +413,31 @@ const RecoveryAssessmentSchema = new Schema({
     },
     notes: String,
 }, { _id: false });
+const SurgeryBillingSchema = new Schema({
+    status: {
+        type: String,
+        enum: ['NOT_ATTEMPTED', 'CAPTURED', 'PARTIAL', 'FAILED'],
+        default: 'NOT_ATTEMPTED',
+    },
+    chargeIds: {
+        type: [Schema.Types.ObjectId],
+        default: [],
+    },
+    errors: {
+        type: [String],
+        default: [],
+    },
+    catalogueItemId: {
+        type: Schema.Types.ObjectId,
+        ref: 'PricingCatalogue',
+    },
+    cataloguePlanName: String,
+    cataloguePrice: Number,
+    catalogueVersion: Number,
+    currency: String,
+    lastAttemptAt: Date,
+    capturedAt: Date,
+}, { _id: false });
 const SurgeryCaseSchema = new Schema({
     hospitalId: {
         type: Schema.Types.ObjectId,
@@ -415,7 +453,7 @@ const SurgeryCaseSchema = new Schema({
     },
     leadSurgeonId: {
         type: Schema.Types.ObjectId,
-        ref: 'Account',
+        ref: 'Staff',
         required: true,
         index: true,
     },
@@ -429,6 +467,28 @@ const SurgeryCaseSchema = new Schema({
         type: String,
         required: true,
         trim: true,
+    },
+    pricingCatalogueItemId: {
+        type: Schema.Types.ObjectId,
+        ref: 'PricingCatalogue',
+        index: true,
+    },
+    pricingCataloguePlanName: {
+        type: String,
+        trim: true,
+    },
+    pricingCataloguePrice: {
+        type: Number,
+        min: 0,
+    },
+    pricingCatalogueVersion: {
+        type: Number,
+        min: 1,
+    },
+    pricingCatalogueCurrency: {
+        type: String,
+        trim: true,
+        uppercase: true,
     },
     icdCode: {
         type: String,
@@ -504,6 +564,19 @@ const SurgeryCaseSchema = new Schema({
     anesthesiaRecord: AnesthesiaRecordSchema,
     intraopDocs: IntraopDocumentationSchema,
     recoveryAssessment: RecoveryAssessmentSchema,
+    billing: {
+        type: SurgeryBillingSchema,
+        default: () => ({
+            status: 'NOT_ATTEMPTED',
+            chargeIds: [],
+            errors: [],
+        }),
+    },
+    postOpNotes: {
+        type: String,
+        trim: true,
+        maxlength: 10000,
+    },
     cancellationReason: String,
     postponementReason: String,
     createdBy: {

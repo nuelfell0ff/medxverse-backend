@@ -1,10 +1,25 @@
 import { Types } from 'mongoose';
 import { LabOrderModel, } from './lab.model.js';
-import { LabOrderStatus, LabPriority, ResultFlag, EntryMethod, SampleRoutingStatus, AuthorizationLevel, SpecimenQuality, } from './lab.types.js';
+import { LabOrderStatus, LabPriority, ResultFlag, EntryMethod, SampleRoutingStatus, AuthorizationLevel, SpecimenQuality, LabBillingStatus, } from './lab.types.js';
+import { createCharge, } from '../billing/billing.service.js';
+import { BillingSourceModule, ChargeCategory, } from '../billing/billing.types.js';
+import { PricingCatalogueModel } from '../billing/billing.model.js';
 /* =========================================================
    HELPERS
 ========================================================= */
 const ACCOUNT_SELECT = 'name email phone accountType';
+/* =========================================================
+   BILLING HELPERS
+========================================================= */
+const buildLabServiceCode = (codeOrName) => {
+    const normalized = codeOrName
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    return normalized.startsWith('LAB_') ? normalized : `LAB_${normalized}`;
+};
+const getBillingErrorMessage = (error) => error instanceof Error ? error.message : 'Unable to capture laboratory charge.';
 /* =========================================================
    SERVICE
 ========================================================= */
@@ -76,6 +91,137 @@ export class LabService {
         return order;
     }
     /* =========================================================
+       PRICING CATALOGUES
+    ========================================================= */
+    static async getPricingCatalogues(hospitalId, testName) {
+        if (!Types.ObjectId.isValid(hospitalId)) {
+            const error = new Error('Invalid hospital ID.');
+            error.statusCode = 400;
+            throw error;
+        }
+        const now = new Date();
+        const filter = {
+            hospitalId: new Types.ObjectId(hospitalId),
+            isActive: true,
+            departmentName: { $regex: '^LABORATORY$', $options: 'i' },
+            $and: [
+                {
+                    $or: [
+                        { effectiveFrom: { $exists: false } },
+                        { effectiveFrom: null },
+                        { effectiveFrom: { $lte: now } },
+                    ],
+                },
+                {
+                    $or: [
+                        { effectiveTo: { $exists: false } },
+                        { effectiveTo: null },
+                        { effectiveTo: { $gt: now } },
+                    ],
+                },
+            ],
+        };
+        const items = await PricingCatalogueModel.find(filter)
+            .select('_id name planName code price currency version departmentName effectiveFrom effectiveTo category description')
+            .sort({ name: 1, version: -1 })
+            .lean();
+        // Do not require the catalogue code to match the laboratory test name.
+        // The selected catalogue is the authoritative price for the order.
+        // testName is retained only for API compatibility and optional client filtering.
+        if (!testName?.trim())
+            return items;
+        const normalizedSearch = testName.trim().toLowerCase();
+        return items.filter((item) => {
+            const name = String(item.name || '').trim().toLowerCase();
+            const planName = String(item.planName || '').trim().toLowerCase();
+            const code = String(item.code || '').trim().toUpperCase();
+            const isGeneric = code === 'LABORATORY' ||
+                code === 'LABORATORY_PROCEDURE' ||
+                code === 'LAB_TEST' ||
+                name === 'laboratory' ||
+                planName === 'laboratory';
+            return (isGeneric ||
+                name.includes(normalizedSearch) ||
+                planName.includes(normalizedSearch) ||
+                code.toLowerCase().includes(normalizedSearch));
+        });
+    }
+    /* =========================================================
+       BILLING CAPTURE
+    ========================================================= */
+    static async captureBillingForOrder(order, chargedBy) {
+        try {
+            if (order.billingChargeId || order.billingStatus === LabBillingStatus.CAPTURED) {
+                order.billingStatus = LabBillingStatus.CAPTURED;
+                return order;
+            }
+            if (!order.catalogueItemId) {
+                throw new Error('No Laboratory pricing catalogue is attached to this order.');
+            }
+            const catalogue = await PricingCatalogueModel.findOne({
+                _id: order.catalogueItemId,
+                hospitalId: order.hospitalId,
+                isActive: true,
+                departmentName: { $regex: '^LABORATORY$', $options: 'i' },
+            }).lean();
+            if (!catalogue) {
+                throw new Error('The selected Laboratory pricing catalogue is no longer active or does not belong to this hospital.');
+            }
+            const now = new Date();
+            if (catalogue.effectiveFrom && new Date(catalogue.effectiveFrom) > now) {
+                throw new Error('The selected Laboratory pricing catalogue is not yet effective.');
+            }
+            if (catalogue.effectiveTo && new Date(catalogue.effectiveTo) <= now) {
+                throw new Error('The selected Laboratory pricing catalogue has expired.');
+            }
+            const serviceCode = String(catalogue.code || '').trim().toUpperCase();
+            if (!serviceCode) {
+                throw new Error('The selected Laboratory pricing catalogue has no billing code.');
+            }
+            const charge = await createCharge({
+                hospitalId: order.hospitalId,
+                patientId: order.patientId,
+                catalogueItemId: catalogue._id,
+                serviceCode,
+                description: order.panelName
+                    ? `${order.testName} - ${order.panelName}`
+                    : order.testName,
+                category: ChargeCategory.LABORATORY,
+                sourceModule: BillingSourceModule.LABORATORY,
+                sourceId: order._id,
+                departmentName: 'LABORATORY',
+                chargedBy,
+                chargeDate: order.createdAt,
+            });
+            order.billingStatus = LabBillingStatus.CAPTURED;
+            order.billingChargeId = charge._id;
+            order.billingServiceCode = serviceCode;
+            order.billingAmount = charge.netAmount;
+            order.billingCurrency = charge.currency;
+            order.cataloguePlanName = String(catalogue.planName || catalogue.name || order.cataloguePlanName || '');
+            order.cataloguePrice = Number(catalogue.price ?? order.cataloguePrice ?? 0);
+            order.catalogueVersion = Number(catalogue.version ?? order.catalogueVersion ?? 1);
+            order.catalogueCurrency = String(catalogue.currency || order.catalogueCurrency || 'NGN').toUpperCase();
+            order.billingError = undefined;
+            order.billingCapturedAt = new Date();
+            await order.save();
+            return order;
+        }
+        catch (error) {
+            order.billingStatus = LabBillingStatus.FAILED;
+            order.billingError = getBillingErrorMessage(error);
+            await order.save();
+            return order;
+        }
+    }
+    static async captureBilling(hospitalId, orderId, chargedBy) {
+        const order = await this.getOrderById(hospitalId, orderId);
+        if (order.billingStatus === LabBillingStatus.CAPTURED) {
+            return order;
+        }
+        return this.populateOrder(await this.captureBillingForOrder(order, chargedBy));
+    }
+    /* =========================================================
        CREATE ORDER
     ========================================================= */
     static async createOrder(hospitalId, requestingUserId, dto) {
@@ -122,6 +268,86 @@ export class LabService {
                 : LabPriority.ROUTINE);
         const isStat = dto.isStat === true ||
             priority === LabPriority.STAT;
+        let selectedCatalogue;
+        if (dto.catalogueItemId) {
+            if (!Types.ObjectId.isValid(dto.catalogueItemId)) {
+                const error = new Error('Invalid pricing catalogue item ID.');
+                error.statusCode = 400;
+                throw error;
+            }
+            selectedCatalogue = await PricingCatalogueModel.findOne({
+                _id: new Types.ObjectId(dto.catalogueItemId),
+                hospitalId: new Types.ObjectId(hospitalId),
+                isActive: true,
+                departmentName: { $regex: '^LABORATORY$', $options: 'i' },
+            }).lean();
+            if (!selectedCatalogue) {
+                const error = new Error('The selected pricing catalogue is not an active Laboratory catalogue for this hospital.');
+                error.statusCode = 400;
+                throw error;
+            }
+            const now = new Date();
+            if (selectedCatalogue.effectiveFrom && new Date(selectedCatalogue.effectiveFrom) > now) {
+                const error = new Error('The selected pricing catalogue is not yet effective.');
+                error.statusCode = 400;
+                throw error;
+            }
+            if (selectedCatalogue.effectiveTo && new Date(selectedCatalogue.effectiveTo) <= now) {
+                const error = new Error('The selected pricing catalogue has expired.');
+                error.statusCode = 400;
+                throw error;
+            }
+            if (!selectedCatalogue.code?.trim()) {
+                const error = new Error('The selected Laboratory pricing catalogue has no billing code.');
+                error.statusCode = 400;
+                throw error;
+            }
+        }
+        else {
+            const candidates = await PricingCatalogueModel.find({
+                hospitalId: new Types.ObjectId(hospitalId),
+                isActive: true,
+                departmentName: { $regex: '^LABORATORY$', $options: 'i' },
+                $or: [
+                    { effectiveFrom: { $exists: false } },
+                    { effectiveFrom: null },
+                    { effectiveFrom: { $lte: new Date() } },
+                ],
+                $and: [{
+                        $or: [
+                            { effectiveTo: { $exists: false } },
+                            { effectiveTo: null },
+                            { effectiveTo: { $gt: new Date() } },
+                        ],
+                    }],
+            }).lean();
+            const normalizedTest = dto.testName.trim().toLowerCase();
+            const exactMatches = candidates.filter((item) => {
+                const code = String(item.code || '').trim().toLowerCase();
+                const name = String(item.name || '').trim().toLowerCase();
+                const planName = String(item.planName || '').trim().toLowerCase();
+                return code === normalizedTest || name === normalizedTest || planName === normalizedTest;
+            });
+            const genericMatches = candidates.filter((item) => {
+                const code = String(item.code || '').trim().toUpperCase();
+                const name = String(item.name || '').trim().toUpperCase();
+                const planName = String(item.planName || '').trim().toUpperCase();
+                return (code === 'LABORATORY' ||
+                    code === 'LABORATORY_PROCEDURE' ||
+                    code === 'LAB_TEST' ||
+                    name === 'LABORATORY' ||
+                    planName === 'LABORATORY');
+            });
+            const matching = exactMatches.length ? exactMatches : genericMatches;
+            if (matching.length === 1) {
+                selectedCatalogue = matching[0];
+            }
+            else if (matching.length > 1) {
+                const error = new Error('Multiple Laboratory pricing catalogues match this test. Please select a pricing catalogue.');
+                error.statusCode = 400;
+                throw error;
+            }
+        }
         const duplicateSince = new Date(Date.now() -
             24 * 60 * 60 * 1000);
         const existingDuplicate = await LabOrderModel.findOne({
@@ -176,6 +402,11 @@ export class LabService {
                         Types.ObjectId.isValid(dto.testCatalogId)
                         ? new Types.ObjectId(dto.testCatalogId)
                         : undefined,
+                    catalogueItemId: selectedCatalogue?._id,
+                    cataloguePlanName: selectedCatalogue?.name,
+                    cataloguePrice: selectedCatalogue?.price,
+                    catalogueVersion: selectedCatalogue?.version,
+                    catalogueCurrency: selectedCatalogue?.currency,
                     testName: dto.testName.trim(),
                     testCategory: dto.testCategory,
                     panelName: dto.panelName?.trim() ||
@@ -205,6 +436,7 @@ export class LabService {
                     notes: dto.notes?.trim() ||
                         undefined,
                 });
+                await this.captureBillingForOrder(order, requestingUserId);
                 return await this.populateOrder(order);
             }
             catch (error) {

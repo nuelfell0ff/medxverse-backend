@@ -3,8 +3,11 @@ import { surgeryController } from './surgery.controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
 const router = Router();
 router.use(authenticate);
+// Hospital-owned module: authentication is required, but surgical roles are
+// not route-level permissions. Hospital ownership is enforced by the service.
 router.post('/', (req, res, next) => surgeryController.scheduleCase(req, res, next));
 router.post('/emergency', (req, res, next) => surgeryController.scheduleEmergencyCase(req, res, next));
+router.get('/pricing-catalogues', (req, res, next) => surgeryController.getPricingCatalogues(req, res, next));
 router.get('/', (req, res, next) => surgeryController.getCases(req, res, next));
 router.get('/:id', (req, res, next) => surgeryController.getCaseById(req, res, next));
 router.patch('/:id/pre-op', (req, res, next) => surgeryController.updatePreOp(req, res, next));
@@ -17,8 +20,12 @@ router.patch('/:id/who-checklist', (req, res, next) => surgeryController.updateW
 router.post('/:id/vitals', (req, res, next) => surgeryController.addVitalsLog(req, res, next));
 router.patch('/:id/start', (req, res, next) => surgeryController.startSurgery(req, res, next));
 router.patch('/:id/intraop-docs', (req, res, next) => surgeryController.updateIntraopDocs(req, res, next));
+// Backward-compatible alias for clients that submit intra-operative
+// documentation with POST. PATCH remains the canonical method above.
+router.post('/:id/intraop-docs', (req, res, next) => surgeryController.updateIntraopDocs(req, res, next));
 router.patch('/:id/anesthesia', (req, res, next) => surgeryController.updateAnesthesia(req, res, next));
 router.patch('/:id/complete', (req, res, next) => surgeryController.completeSurgery(req, res, next));
+router.post('/:id/billing', (req, res, next) => surgeryController.captureBilling(req, res, next));
 router.patch('/:id/recovery', (req, res, next) => surgeryController.updateRecovery(req, res, next));
 router.patch('/:id/cancel', (req, res, next) => surgeryController.cancelCase(req, res, next));
 router.patch('/:id/postpone', (req, res, next) => surgeryController.postponeCase(req, res, next));
