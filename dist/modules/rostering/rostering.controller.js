@@ -1,10 +1,10 @@
 import * as RosteringService from './rostering.service.js';
 const getUserId = (req) => {
     const user = req.user;
-    return (user?._id ||
-        user?.id ||
-        user?.staffId ||
+    return (user?.staffId ||
         user?.userId ||
+        user?._id ||
+        user?.id ||
         user?.sub);
 };
 const handleError = (res, error) => {

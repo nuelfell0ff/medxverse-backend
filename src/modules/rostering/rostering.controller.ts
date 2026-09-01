@@ -6,10 +6,10 @@ const getUserId = (req: Request) => {
   const user = (req as any).user;
 
   return (
-    user?._id ||
-    user?.id ||
     user?.staffId ||
     user?.userId ||
+    user?._id ||
+    user?.id ||
     user?.sub
   );
 };
