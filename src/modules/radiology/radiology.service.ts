@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { Types } from 'mongoose';
+import { v2 as cloudinary } from 'cloudinary';
 
 import { RadiologyOrderModel } from './radiology.model.js';
 import { PricingCatalogueModel } from '../billing/billing.model.js';
@@ -20,6 +21,7 @@ import {
   UpdateContrastInput,
   UpdateExaminationStatusInput,
   UpdatePacsMetadataInput,
+  UploadPacsImagesInput,
   UpdatePregnancyScreeningInput,
   UpdateRadiationExposureInput,
   UpdateRadiologyOrderInput,
@@ -33,6 +35,12 @@ import {
 
 const isValidObjectId = (value: string): boolean =>
   Types.ObjectId.isValid(value);
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 export class RadiologyService {
   private assertObjectId(value: string, fieldName: string): void {
@@ -1004,6 +1012,247 @@ export class RadiologyService {
         runValidators: true,
       }
     ).exec();
+  }
+
+  private async uploadPacsImage(
+    file: Express.Multer.File,
+    orderId: string,
+    hospitalId: string,
+    uploadedBy?: string
+  ): Promise<{
+    _id: Types.ObjectId;
+    url: string;
+    secureUrl: string;
+    publicId: string;
+    originalFilename?: string;
+    format?: string;
+    resourceType?: string;
+    bytes?: number;
+    width?: number;
+    height?: number;
+    uploadedAt: Date;
+    uploadedBy?: Types.ObjectId;
+  }> {
+    if (!file?.buffer?.length) {
+      throw new Error('A valid image file is required.');
+    }
+
+    const allowedMimeTypes = new Set([
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif',
+      'image/bmp',
+      'image/tiff',
+      'image/jpg',
+    ]);
+
+    if (!allowedMimeTypes.has(file.mimetype.toLowerCase())) {
+      throw new Error(
+        `Unsupported radiology image type: ${file.mimetype}. Allowed types are JPEG, PNG, WEBP, GIF, BMP and TIFF.`
+      );
+    }
+
+    const maxBytes = 25 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      throw new Error('Each radiology image must be 25 MB or smaller.');
+    }
+
+    if (!process.env.CLOUDINARY_CLOUD_NAME ||
+        !process.env.CLOUDINARY_API_KEY ||
+        !process.env.CLOUDINARY_API_SECRET) {
+      throw new Error('Cloudinary environment variables are not configured.');
+    }
+
+    const folder = `medxverse/radiology/${hospitalId}/${orderId}`;
+
+    const uploaded = await new Promise<any>((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder,
+          resource_type: 'image',
+          use_filename: false,
+          unique_filename: true,
+          overwrite: false,
+          tags: ['medxverse', 'radiology'],
+          context: {
+            hospitalId,
+            radiologyOrderId: orderId,
+          },
+        },
+        (error, result) => {
+          if (error || !result) {
+            reject(error || new Error('Cloudinary upload failed.'));
+            return;
+          }
+          resolve(result);
+        }
+      );
+
+      stream.end(file.buffer);
+    });
+
+    return {
+      _id: new Types.ObjectId(),
+      url: uploaded.url,
+      secureUrl: uploaded.secure_url,
+      publicId: uploaded.public_id,
+      originalFilename: file.originalname,
+      format: uploaded.format,
+      resourceType: uploaded.resource_type,
+      bytes: uploaded.bytes,
+      width: uploaded.width,
+      height: uploaded.height,
+      uploadedAt: new Date(),
+      uploadedBy: uploadedBy
+        ? new Types.ObjectId(uploadedBy)
+        : undefined,
+    };
+  }
+
+  public async uploadPacsImages(
+    orderId: string,
+    hospitalId: string,
+    input: UploadPacsImagesInput,
+    uploadedBy?: string
+  ): Promise<IRadiologyOrderDocument | null> {
+    this.assertObjectId(orderId, 'order ID');
+    this.assertObjectId(hospitalId, 'hospital ID');
+
+    if (uploadedBy) {
+      this.assertObjectId(uploadedBy, 'uploaded by user ID');
+    }
+
+    const files = input.files || [];
+    if (!files.length) {
+      throw new Error('At least one radiology image is required.');
+    }
+
+    if (files.length > 20) {
+      throw new Error('You can upload a maximum of 20 radiology images at once.');
+    }
+
+    const order = await RadiologyOrderModel.findOne({
+      _id: orderId,
+      hospitalId,
+    });
+
+    if (!order) {
+      return null;
+    }
+
+    if (order.status === RadiologyOrderStatus.CANCELLED) {
+      throw new Error('Images cannot be uploaded to a cancelled radiology order.');
+    }
+
+    if (order.status === RadiologyOrderStatus.COMPLETED) {
+      throw new Error('Images cannot be uploaded to a completed radiology order.');
+    }
+
+    const uploadedImages: any[] = [];
+
+    try {
+      for (const file of files) {
+        const image = await this.uploadPacsImage(
+          file,
+          orderId,
+          hospitalId,
+          uploadedBy
+        );
+        uploadedImages.push(image);
+      }
+
+      const currentImages = order.pacsMetadata?.images || [];
+
+      if (!order.pacsMetadata) {
+        order.pacsMetadata = {
+          images: uploadedImages,
+          storageStatus: 'STORED',
+        } as any;
+      } else {
+        order.pacsMetadata.images = [
+          ...currentImages,
+          ...uploadedImages,
+        ];
+        order.pacsMetadata.storageStatus = 'STORED';
+      }
+
+      if (!order.pacsMetadata) {
+        throw new Error('PACS metadata could not be initialized.');
+      }
+
+      order.pacsMetadata.imageCount =
+        order.pacsMetadata.images?.length || 0;
+
+      await order.save();
+
+      return this.populateOrder(orderId, hospitalId);
+    } catch (error) {
+      // If a later file fails after earlier uploads succeeded, clean up the
+      // Cloudinary assets already created by this request.
+      await Promise.allSettled(
+        uploadedImages.map((image) =>
+          cloudinary.uploader.destroy(image.publicId, {
+            resource_type: image.resourceType || 'image',
+          })
+        )
+      );
+
+      throw error;
+    }
+  }
+
+  public async deletePacsImage(
+    orderId: string,
+    hospitalId: string,
+    imageId: string
+  ): Promise<IRadiologyOrderDocument | null> {
+    this.assertObjectId(orderId, 'order ID');
+    this.assertObjectId(hospitalId, 'hospital ID');
+    this.assertObjectId(imageId, 'PACS image ID');
+
+    const order = await RadiologyOrderModel.findOne({
+      _id: orderId,
+      hospitalId,
+    });
+
+    if (!order) {
+      return null;
+    }
+
+    const images = order.pacsMetadata?.images || [];
+    const image = images.find(
+      (item: any) => String(item._id) === imageId
+    );
+
+    if (!image) {
+      throw new Error('PACS image not found.');
+    }
+
+    await cloudinary.uploader.destroy(image.publicId, {
+      resource_type: image.resourceType || 'image',
+    });
+
+    if (order.pacsMetadata) {
+      order.pacsMetadata.images = images.filter(
+        (item: any) => String(item._id) !== imageId
+      );
+
+      if (!order.pacsMetadata) {
+        throw new Error('PACS metadata could not be initialized.');
+      }
+
+      order.pacsMetadata.imageCount =
+        order.pacsMetadata.images?.length || 0;
+
+      if (!order.pacsMetadata.images.length) {
+        order.pacsMetadata.storageStatus = 'PENDING';
+      }
+    }
+
+    await order.save();
+
+    return this.populateOrder(orderId, hospitalId);
   }
 
   public async updatePacsData(

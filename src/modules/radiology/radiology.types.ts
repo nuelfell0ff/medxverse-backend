@@ -185,6 +185,21 @@ export interface RadiationExposure {
   notes?: string;
 }
 
+export interface PacsImage {
+  _id?: Types.ObjectId;
+  url: string;
+  secureUrl: string;
+  publicId: string;
+  originalFilename?: string;
+  format?: string;
+  resourceType?: string;
+  bytes?: number;
+  width?: number;
+  height?: number;
+  uploadedAt: Date;
+  uploadedBy?: Types.ObjectId;
+}
+
 export interface PacsMetadata {
   studyInstanceUid?: string;
   seriesInstanceUid?: string;
@@ -203,6 +218,7 @@ export interface PacsMetadata {
   exportEnabled?: boolean;
   sharedLink?: string;
   sharedLinkExpiresAt?: Date;
+  images?: PacsImage[];
 }
 
 export interface CriticalResult {
@@ -381,6 +397,14 @@ export interface UpdateExaminationStatusInput {
 export interface UpdateQueueInput {
   queuePosition?: number;
   queueStatus?: ExaminationQueueStatus;
+}
+
+export interface UploadPacsImagesInput {
+  files: Express.Multer.File[];
+}
+
+export interface DeletePacsImageInput {
+  imageId: string;
 }
 
 export interface UpdatePacsMetadataInput {

@@ -19,6 +19,62 @@ import {
    PACS METADATA
 ========================================================= */
 
+const PacsImageSchema = new Schema(
+  {
+    url: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    secureUrl: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    publicId: {
+      type: String,
+      required: true,
+      trim: true,
+      index: true,
+    },
+    originalFilename: {
+      type: String,
+      trim: true,
+    },
+    format: {
+      type: String,
+      trim: true,
+    },
+    resourceType: {
+      type: String,
+      trim: true,
+    },
+    bytes: {
+      type: Number,
+      min: 0,
+    },
+    width: {
+      type: Number,
+      min: 0,
+    },
+    height: {
+      type: Number,
+      min: 0,
+    },
+    uploadedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    uploadedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'Account',
+    },
+  },
+  {
+    timestamps: false,
+  }
+);
+
 const PacsMetadataSchema = new Schema(
   {
     studyInstanceUid: {
@@ -113,6 +169,11 @@ const PacsMetadataSchema = new Schema(
 
     sharedLinkExpiresAt: {
       type: Date,
+    },
+
+    images: {
+      type: [PacsImageSchema],
+      default: [],
     },
   },
   {

@@ -435,6 +435,74 @@ export class RadiologyController {
     }
   }
 
+  public async uploadPacsImages(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const files = Array.isArray(req.files)
+        ? req.files
+        : [];
+
+      const updated = await radiologyService.uploadPacsImages(
+        req.params.id,
+        authReq.user.hospitalId,
+        { files: files as Express.Multer.File[] },
+        authReq.user._id
+      );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Radiology images uploaded successfully',
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async deletePacsImage(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+
+      const updated = await radiologyService.deletePacsImage(
+        req.params.id,
+        authReq.user.hospitalId,
+        req.params.imageId
+      );
+
+      if (!updated) {
+        res.status(404).json({
+          success: false,
+          message: 'Radiology order not found',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Radiology image deleted successfully',
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   public async updatePacsData(
     req: Request,
     res: Response,
