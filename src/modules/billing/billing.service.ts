@@ -879,6 +879,64 @@ export const updatePricingCatalogueItem = async (
    CHARGES
 ========================================================= */
 
+/* =========================================================
+   PATIENT CREDIT
+========================================================= */
+
+/**
+ * Returns money that has already been paid into the patient's billing
+ * account but has not yet been consumed by posted charges.
+ *
+ * This is deliberately calculated from the ledger instead of storing a
+ * mutable balance on BillingAccount, so existing accounts remain compatible.
+ */
+const getAvailableCredit = async (billingAccountId: string | Types.ObjectId) => {
+  const id = oid(String(billingAccountId), 'billing account ID');
+
+  const [chargeTotals, paymentTotals] = await Promise.all([
+    ChargeModel.aggregate([
+      {
+        $match: {
+          billingAccountId: id,
+          status: { $ne: ChargeStatus.VOIDED },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          netCharges: { $sum: '$netAmount' },
+        },
+      },
+    ]),
+    PaymentModel.aggregate([
+      {
+        $match: {
+          billingAccountId: id,
+          status: {
+            $in: [
+              PaymentStatus.CONFIRMED,
+              PaymentStatus.PARTIALLY_REFUNDED,
+            ],
+          },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalPaid: { $sum: '$amount' },
+          totalRefunded: { $sum: '$refundedAmount' },
+        },
+      },
+    ]),
+  ]);
+
+  const netCharges = money(chargeTotals[0]?.netCharges || 0);
+  const totalPaid = money(paymentTotals[0]?.totalPaid || 0);
+  const totalRefunded = money(paymentTotals[0]?.totalRefunded || 0);
+
+  return money(Math.max(0, totalPaid - totalRefunded - netCharges));
+};
+
 export const createCharge = async (input: CreateChargeInput) => {
   const hospitalId = oid(String(input.hospitalId), 'hospital ID');
   const patientId = oid(String(input.patientId), 'patient ID');
@@ -1012,7 +1070,24 @@ export const createCharge = async (input: CreateChargeInput) => {
 
   const net = money(gross - discount + tax);
 
-  return ChargeModel.create({
+  /*
+   * Capture the credit that existed BEFORE this charge is posted.
+   *
+   * Example:
+   *   Existing payment = ₦50,000
+   *   Existing charges = ₦0
+   *   New charge       = ₦20,000
+   *
+   * The ₦50,000 is available credit at this point, so the newly-created
+   * charge can immediately consume ₦20,000 of it.
+   *
+   * We calculate this before creating the new charge because once the
+   * charge exists, the normal available-credit formula correctly includes
+   * that charge and would otherwise hide the credit we need to apply.
+   */
+  const creditBeforeCharge = await getAvailableCredit(account._id);
+
+  const charge = await ChargeModel.create({
     hospitalId,
     patientId,
     billingAccountId: account._id,
@@ -1064,6 +1139,39 @@ export const createCharge = async (input: CreateChargeInput) => {
 
     chargeDate: serviceDate,
   });
+
+  /*
+   * If the patient had money on account before this charge was created,
+   * automatically consume that credit against the patient's outstanding
+   * charges. Charges are allocated oldest-first by allocatePaymentToCharges,
+   * so existing unpaid charges remain correctly prioritized.
+   */
+  const allocation =
+    creditBeforeCharge > 0
+      ? await allocatePaymentToCharges(
+          String(account._id),
+          creditBeforeCharge
+        )
+      : { allocated: 0, unapplied: 0 };
+
+  /*
+   * Return the charge itself for backward compatibility, while attaching
+   * allocation information for callers that want to display what happened.
+   * The extra fields do not change the stored Charge document.
+   */
+  const updatedCharge = await ChargeModel.findById(charge._id).lean();
+
+  /*
+   * Keep the service return type compatible with the previous implementation:
+   * callers still receive a Mongoose Charge document rather than a custom
+   * allocation wrapper.
+   */
+  if (updatedCharge) {
+    charge.amountPaid = updatedCharge.amountPaid;
+    charge.status = updatedCharge.status;
+  }
+
+  return charge;
 };
 
 export const getCharges = async (

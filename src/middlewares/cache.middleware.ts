@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { redisClient } from '../config/redis.js';
 
-// Extend Express Request interface if custom user property exists
 interface AuthenticatedRequest extends Request {
   user?: {
     id: string;
@@ -9,7 +8,11 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
-export const cache = (durationInSeconds: number = 300) => {
+/**
+ * Cache middleware for GET routes.
+ * @param durationInSeconds Time-to-live (TTL) for cache in seconds.
+ */
+export const cacheMiddleware = (durationInSeconds: number = 300) => {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     if (req.method !== 'GET') {
       return next();
@@ -26,7 +29,6 @@ export const cache = (durationInSeconds: number = 300) => {
         return;
       }
 
-      // Preserve original res.json behavior with explicit payload capture
       const originalJson = res.json.bind(res);
       res.json = (body: any): Response => {
         if (res.statusCode === 200) {
@@ -38,7 +40,7 @@ export const cache = (durationInSeconds: number = 300) => {
       next();
     } catch (err) {
       console.error('Cache Middleware Error:', err);
-      next(); // Fail open if Redis drops
+      next(); // Fail open: proceed if Redis encounters an issue
     }
   };
 };
