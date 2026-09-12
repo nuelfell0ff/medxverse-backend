@@ -1,8 +1,226 @@
 {
-  "startedAt": "2026-09-12T12:25:20.638Z",
-  "dryRun": true,
-  "module": "pharmacy",
-  "modules": {},
-  "touchedPatients": [],
-  "completedAt": "2026-09-12T12:25:20.640Z"
+  "startedAt": "2026-09-12T13:03:27.826Z",
+  "dryRun": false,
+  "modules": {
+    "InpatientAdmission": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "EmergencyCase": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "ICUAdmission": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "Consultation": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "Outpatient": {
+      "scanned": 11,
+      "imported": 11,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "TelemedicineSession": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "LabOrder": {
+      "scanned": 4,
+      "imported": 4,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "RadiologyOrder": {
+      "scanned": 5,
+      "imported": 5,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "DispenseRecord": {
+      "scanned": 8,
+      "imported": 8,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "SurgeryCase": {
+      "scanned": 3,
+      "imported": 3,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "SurgicalCase": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "DentalProcedure": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "EyeExam": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "OpticalPrescription": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "MentalHealthAssessment": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "PsychotherapySession": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "MchRecord": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "TransfusionRequest": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "DietaryOrder": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "MealDelivery": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "DentalChart": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "Appointment": {
+      "scanned": 8,
+      "imported": 8,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "TripRequest": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "HmoClaim": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "HmoPreAuth": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "BillingAccount": {
+      "scanned": 7,
+      "imported": 7,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "PaymentPlan": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "BillingCharge": {
+      "scanned": 12,
+      "imported": 0,
+      "skipped": 12,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "BillingPayment": {
+      "scanned": 17,
+      "imported": 0,
+      "skipped": 17,
+      "failed": 0,
+      "unmatched": 0
+    },
+    "BillingRefund": {
+      "scanned": 0,
+      "imported": 0,
+      "skipped": 0,
+      "failed": 0,
+      "unmatched": 0
+    }
+  },
+  "touchedPatients": [
+    "6a77491847a12686fe530d2a",
+    "6a77ae2ef57497e6ccba0a83",
+    "6a824c1d46a30dbb68868187",
+    "6a8d9ad6dd24a04a700d7560",
+    "6a88a19f8c2d2ccb90210776",
+    "6a80628f04054f88358a5628",
+    "6a96287250a5c15fbd09f8a7"
+  ],
+  "completedAt": "2026-09-12T13:04:52.045Z"
 }

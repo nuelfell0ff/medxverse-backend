@@ -1,4 +1,4 @@
-import { Schema, model } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 import { DrugCategory, UnitOfMeasure, DispenseStatus, PharmacyBillingStatus, } from './pharmacy.types.js';
 /* =========================================================
    INVENTORY ITEM
@@ -265,5 +265,7 @@ InventoryItemSchema.index({
 /* =========================================================
    MODELS
 ========================================================= */
-export const InventoryItemModel = model('InventoryItem', InventoryItemSchema);
-export const DispenseRecordModel = model('DispenseRecord', DispenseRecordSchema);
+export const InventoryItemModel = mongoose.models.InventoryItem ||
+    mongoose.model('InventoryItem', InventoryItemSchema);
+export const DispenseRecordModel = mongoose.models.DispenseRecord ||
+    mongoose.model('DispenseRecord', DispenseRecordSchema);
