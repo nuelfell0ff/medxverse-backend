@@ -3,13 +3,21 @@ import { emergencyController } from './emergency.controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
-
 router.use(authenticate);
 
-router.post('/', (req, res, next) => emergencyController.createCase(req, res, next));
-router.get('/', (req, res, next) => emergencyController.getCases(req, res, next));
-router.get('/:id', (req, res, next) => emergencyController.getCaseById(req, res, next));
-router.patch('/:id/triage', (req, res, next) => emergencyController.updateTriage(req, res, next));
-router.patch('/:id/status', (req, res, next) => emergencyController.updateStatus(req, res, next));
+router.get('/board', (req, res, next) => emergencyController.getBoard(req, res, next));
+router.get('/bays', (req, res, next) => emergencyController.getBays(req, res, next));
+router.post('/bays', (req, res, next) => emergencyController.createBay(req, res, next));
+router.get('/visits', (req, res, next) => emergencyController.getVisits(req, res, next));
+router.post('/visits', (req, res, next) => emergencyController.createVisit(req, res, next));
+router.get('/visits/:id', (req, res, next) => emergencyController.getVisit(req, res, next));
+router.post('/visits/:id/triage', (req, res, next) => emergencyController.triage(req, res, next));
+router.post('/visits/:id/bay', (req, res, next) => emergencyController.assignBay(req, res, next));
+router.patch('/visits/:id/bay/release', (req, res, next) => emergencyController.releaseBay(req, res, next));
+router.patch('/visits/:id/status', (req, res, next) => emergencyController.updateStatus(req, res, next));
+router.post('/visits/:id/orders', (req, res, next) => emergencyController.createOrder(req, res, next));
+router.patch('/orders/:orderId', (req, res, next) => emergencyController.updateOrder(req, res, next));
+router.post('/visits/:id/disposition', (req, res, next) => emergencyController.disposition(req, res, next));
+router.get('/visits/:id/status-history', (req, res, next) => emergencyController.statusHistory(req, res, next));
 
 export default router;

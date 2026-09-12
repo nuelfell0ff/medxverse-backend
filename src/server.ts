@@ -2,8 +2,10 @@ import http from 'http';
 import app from './app.js';
 import { connectDB } from './config/db.js';
 import { env } from './config/env.js';
+import { attachEmergencyWebSocket } from './modules/emergency/emergency.socket.js';
 
 const server = http.createServer(app);
+attachEmergencyWebSocket(server);
 
 const startServer = async (): Promise<void> => {
   // Connect to MongoDB

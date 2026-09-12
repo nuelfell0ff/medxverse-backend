@@ -1,162 +1,178 @@
 import { Request, Response, NextFunction } from 'express';
 import { emergencyService } from './emergency.service.js';
 import {
-  TriageCategory,
-  EmergencyStatus,
+  AcuityLevel,
   ArrivalMode,
+  DispositionType,
+  EDOrderStatus,
+  EDOrderType,
+  EDVisitStatus,
+  TriageScale,
   TraumaType,
 } from './emergency.types.js';
 
 export interface AuthenticatedRequest extends Request {
-  user: {
-    _id: string;
-    hospitalId: string;
-    [key: string]: unknown;
-  };
+  user: { _id: string; hospitalId: string; [key: string]: unknown };
 }
 
 export class EmergencyController {
-  public async createCase(req: Request, res: Response, next: NextFunction): Promise<void> {
+  private auth(req: Request) { return (req as AuthenticatedRequest).user; }
+
+  public async createVisit(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const triagedById = authReq.user._id;
-
-      const {
-        patientId,
-        isUnidentified,
-        temporaryIdentifier,
-        chiefComplaint,
-        arrivalMode,
-        triageCategory,
-        triageVitals,
-        assignedBay,
-        traumaType,
-        attendingDoctorId,
-      } = req.body;
-
-      const emergencyCase = await emergencyService.createCase({
-        hospitalId,
-        patientId,
-        isUnidentified: Boolean(isUnidentified),
-        temporaryIdentifier,
-        chiefComplaint,
-        arrivalMode: arrivalMode as ArrivalMode,
-        triageCategory: triageCategory as TriageCategory,
-        triageVitals,
-        assignedBay,
-        traumaType: (traumaType as TraumaType) || TraumaType.NONE,
-        attendingDoctorId,
-        triagedById,
+      const user = this.auth(req);
+      const visit = await emergencyService.createVisit({
+        ...req.body,
+        hospitalId: user.hospitalId,
+        actorId: user._id,
+        arrivalMode: req.body.arrivalMode as ArrivalMode,
+        traumaType: req.body.traumaType as TraumaType | undefined,
       });
-
-      res.status(201).json({ success: true, data: emergencyCase });
-    } catch (error) {
-      next(error);
-    }
+      res.status(201).json({ success: true, data: visit });
+    } catch (error) { next(error); }
   }
 
-  public async getCases(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async getBoard(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-
-      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
-      const status = req.query.status as EmergencyStatus | undefined;
-      const triageCategory = req.query.triageCategory as TriageCategory | undefined;
-      const traumaType = req.query.traumaType as TraumaType | undefined;
-      const patientId = req.query.patientId as string | undefined;
-      const isUnidentified =
-        req.query.isUnidentified !== undefined
-          ? req.query.isUnidentified === 'true'
-          : undefined;
-
-      const result = await emergencyService.getCases(hospitalId, {
-        page,
-        limit,
-        status,
-        triageCategory,
-        traumaType,
-        patientId,
-        isUnidentified,
+      const user = this.auth(req);
+      const data = await emergencyService.getBoard(user.hospitalId, {
+        status: req.query.status as EDVisitStatus | undefined,
+        acuityLevel: req.query.acuityLevel ? Number(req.query.acuityLevel) as AcuityLevel : undefined,
+        zone: req.query.zone as string | undefined,
+        page: Number(req.query.page || 1),
+        limit: Number(req.query.limit || 50),
       });
-
-      res.status(200).json({ success: true, data: result });
-    } catch (error) {
-      next(error);
-    }
+      res.json({ success: true, data });
+    } catch (error) { next(error); }
   }
 
-  public async getCaseById(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async getVisits(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const id = req.params.id as string;
-
-      const emergencyCase = await emergencyService.getCaseById(id, hospitalId);
-
-      if (!emergencyCase) {
-        res.status(404).json({ success: false, message: 'Emergency case not found' });
-        return;
-      }
-
-      res.status(200).json({ success: true, data: emergencyCase });
-    } catch (error) {
-      next(error);
-    }
+      const user = this.auth(req);
+      const data = await emergencyService.getVisits(user.hospitalId, {
+        status: req.query.status as EDVisitStatus | undefined,
+        acuityLevel: req.query.acuityLevel ? Number(req.query.acuityLevel) as AcuityLevel : undefined,
+        patientId: req.query.patientId as string | undefined,
+        visitNumber: req.query.visitNumber as string | undefined,
+        page: Number(req.query.page || 1),
+        limit: Number(req.query.limit || 20),
+      });
+      res.json({ success: true, data });
+    } catch (error) { next(error); }
   }
 
-  public async updateTriage(req: Request, res: Response, next: NextFunction): Promise<void> {
+  public async getVisit(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const id = req.params.id as string;
+      const data = await emergencyService.getVisitById(req.params.id as string, this.auth(req).hospitalId);
+      if (!data) { res.status(404).json({ success: false, message: 'ED visit not found' }); return; }
+      res.json({ success: true, data });
+    } catch (error) { next(error); }
+  }
 
-      const { triageCategory, triageVitals, assignedBay, attendingDoctorId } = req.body;
-
-      const updated = await emergencyService.updateTriage(id, hospitalId, {
-        triageCategory: triageCategory as TriageCategory,
-        triageVitals,
-        assignedBay,
-        attendingDoctorId,
+  public async triage(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = this.auth(req);
+      const data = await emergencyService.createTriage(req.params.id as string, user.hospitalId, user._id, {
+        scale: req.body.scale as TriageScale,
+        acuityLevel: Number(req.body.acuityLevel) as AcuityLevel,
+        chiefComplaint: req.body.chiefComplaint,
+        vitals: req.body.vitals,
+        resourceNeeds: req.body.resourceNeeds,
+        notes: req.body.notes,
       });
+      res.status(201).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
 
-      if (!updated) {
-        res.status(404).json({ success: false, message: 'Emergency case not found' });
-        return;
-      }
+  public async getBays(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try { res.json({ success: true, data: await emergencyService.getBays(this.auth(req).hospitalId) }); }
+    catch (error) { next(error); }
+  }
 
-      res.status(200).json({ success: true, data: updated });
-    } catch (error) {
-      next(error);
-    }
+  public async createBay(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = this.auth(req);
+      const data = await emergencyService.createBay(user.hospitalId, user._id, req.body);
+      res.status(201).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  public async assignBay(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = this.auth(req);
+      const data = await emergencyService.assignBay(req.params.id as string, user.hospitalId, user._id, {
+        bayId: req.body.bayId,
+        bayCode: req.body.bayCode,
+        reason: req.body.reason,
+      });
+      res.status(201).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  public async releaseBay(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = this.auth(req);
+      const data = await emergencyService.releaseBay(req.params.id as string, user.hospitalId, user._id, req.body.reason);
+      if (!data) { res.status(404).json({ success: false, message: 'Active bay assignment not found' }); return; }
+      res.json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  public async createOrder(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = this.auth(req);
+      const data = await emergencyService.createOrder(req.params.id as string, user.hospitalId, user._id, {
+        type: req.body.type as EDOrderType,
+        name: req.body.name,
+        sourceSystem: req.body.sourceSystem,
+        sourceRecordId: req.body.sourceRecordId,
+        notes: req.body.notes,
+      });
+      res.status(201).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  public async updateOrder(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = this.auth(req);
+      const data = await emergencyService.updateOrder(req.params.orderId as string, user.hospitalId, user._id, {
+        status: req.body.status as EDOrderStatus,
+        resultSummary: req.body.resultSummary,
+        notes: req.body.notes,
+      });
+      if (!data) { res.status(404).json({ success: false, message: 'ED order not found' }); return; }
+      res.json({ success: true, data });
+    } catch (error) { next(error); }
   }
 
   public async updateStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const id = req.params.id as string;
-
-      const { status, dispositionNotes, admittedToWardId, transferredToFacility } = req.body;
-
-      const updated = await emergencyService.updateStatus(id, hospitalId, {
-        status: status as EmergencyStatus,
-        dispositionNotes,
-        admittedToWardId,
-        transferredToFacility,
+      const user = this.auth(req);
+      const data = await emergencyService.updateStatus(req.params.id as string, user.hospitalId, user._id, {
+        status: req.body.status as EDVisitStatus,
+        reason: req.body.reason,
       });
+      if (!data) { res.status(404).json({ success: false, message: 'ED visit not found' }); return; }
+      res.json({ success: true, data });
+    } catch (error) { next(error); }
+  }
 
-      if (!updated) {
-        res.status(404).json({ success: false, message: 'Emergency case not found' });
-        return;
-      }
+  public async disposition(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = this.auth(req);
+      const data = await emergencyService.recordDisposition(req.params.id as string, user.hospitalId, user._id, {
+        disposition: req.body.disposition as DispositionType,
+        notes: req.body.notes,
+        wardId: req.body.wardId,
+        transferFacility: req.body.transferFacility,
+      });
+      res.status(201).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
 
-      res.status(200).json({ success: true, data: updated });
-    } catch (error) {
-      next(error);
-    }
+  public async statusHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try { res.json({ success: true, data: await emergencyService.getStatusHistory(req.params.id as string, this.auth(req).hospitalId) }); }
+    catch (error) { next(error); }
   }
 }
 
