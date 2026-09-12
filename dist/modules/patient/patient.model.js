@@ -84,6 +84,8 @@ const ObservationSchema = ResourceBaseSchema.clone();
 const ConditionSchema = ResourceBaseSchema.clone();
 const MedicationStatementSchema = ResourceBaseSchema.clone();
 const DocumentReferenceSchema = ResourceBaseSchema.clone();
+const ProcedureSchema = ResourceBaseSchema.clone();
+const ClaimSchema = ResourceBaseSchema.clone();
 const EHRResourceOptions = {
     timestamps: true,
     minimize: false,
@@ -96,12 +98,14 @@ attachResourceType(ObservationSchema, 'Observation');
 attachResourceType(ConditionSchema, 'Condition');
 attachResourceType(MedicationStatementSchema, 'MedicationStatement');
 attachResourceType(DocumentReferenceSchema, 'DocumentReference');
+attachResourceType(ProcedureSchema, 'Procedure');
+attachResourceType(ClaimSchema, 'Claim');
 const EhrEventSchema = new Schema({
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
     resourceType: {
         type: String,
-        enum: ['Patient', 'Encounter', 'Observation', 'Condition', 'MedicationStatement', 'DocumentReference'],
+        enum: ['Patient', 'Encounter', 'Observation', 'Condition', 'MedicationStatement', 'DocumentReference', 'Procedure', 'Claim'],
         required: true,
         index: true,
     },
@@ -118,6 +122,10 @@ const EhrEventSchema = new Schema({
     sensitive: { type: Boolean, default: false, index: true },
     sensitivityCode: String,
     changedFields: { type: [String], default: [] },
+    sourceKey: { type: String, sparse: true, unique: true, index: true },
+    sourceSystem: { type: String, index: true },
+    sourceModel: { type: String, index: true },
+    sourceRecordId: { type: String, index: true },
 }, { timestamps: true, minimize: false });
 EhrEventSchema.index({ patientId: 1, resourceType: 1, resourceId: 1, version: 1 }, { unique: true });
 EhrEventSchema.index({ hospitalId: 1, patientId: 1, occurredAt: -1 });
@@ -140,7 +148,7 @@ const ConsentRecordSchema = new Schema({
     status: { type: String, enum: ['ACTIVE', 'REVOKED', 'PENDING'], required: true, index: true },
     resourceTypes: {
         type: [String],
-        enum: ['Patient', 'Encounter', 'Observation', 'Condition', 'MedicationStatement', 'DocumentReference', 'ALL'],
+        enum: ['Patient', 'Encounter', 'Observation', 'Condition', 'MedicationStatement', 'DocumentReference', 'Procedure', 'Claim', 'ALL'],
         required: true,
     },
     sensitivityCode: String,
@@ -167,6 +175,8 @@ export const ObservationModel = mongoose.models.Observation || model('Observatio
 export const ConditionModel = mongoose.models.Condition || model('Condition', ConditionSchema);
 export const MedicationStatementModel = mongoose.models.MedicationStatement || model('MedicationStatement', MedicationStatementSchema);
 export const DocumentReferenceModel = mongoose.models.DocumentReference || model('DocumentReference', DocumentReferenceSchema);
+export const ProcedureModel = mongoose.models.Procedure || model('Procedure', ProcedureSchema);
+export const ClaimModel = mongoose.models.Claim || model('Claim', ClaimSchema);
 export const EhrEventModel = mongoose.models.EhrEvent || model('EhrEvent', EhrEventSchema);
 export const EhrAuditLogModel = mongoose.models.EhrAuditLog || model('EhrAuditLog', EhrAuditLogSchema);
 export const ConsentRecordModel = mongoose.models.ConsentRecord || model('ConsentRecord', ConsentRecordSchema);

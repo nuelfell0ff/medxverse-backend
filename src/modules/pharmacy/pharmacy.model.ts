@@ -1,4 +1,4 @@
-import { Schema, model } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 
 import {
   IInventoryItemDocument,
@@ -337,13 +337,15 @@ InventoryItemSchema.index({
 ========================================================= */
 
 export const InventoryItemModel =
-  model<IInventoryItemDocument>(
+  mongoose.models.InventoryItem ||
+  mongoose.model<IInventoryItemDocument>(
     'InventoryItem',
     InventoryItemSchema
   );
 
 export const DispenseRecordModel =
-  model<IDispenseRecordDocument>(
+  mongoose.models.DispenseRecord ||
+  mongoose.model<IDispenseRecordDocument>(
     'DispenseRecord',
     DispenseRecordSchema
   );

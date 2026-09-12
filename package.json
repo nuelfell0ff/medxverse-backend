@@ -7,7 +7,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "tsx watch src/server.ts"
+    "dev": "tsx watch src/server.ts",
+    "migrate:patient": "tsx scripts/migrate-patient-mpi.ts",
+    "migrate:ehr": "tsx scripts/backfill-unified-ehr.ts"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
