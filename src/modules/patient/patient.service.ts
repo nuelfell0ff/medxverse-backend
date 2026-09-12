@@ -7,6 +7,8 @@ import {
   ConditionModel,
   MedicationStatementModel,
   DocumentReferenceModel,
+  ProcedureModel,
+  ClaimModel,
   EhrEventModel,
   ConsentRecordModel,
   EhrAuditLogModel,
@@ -37,6 +39,8 @@ const RESOURCE_MODELS: Record<Exclude<FhirResourceType, 'Patient'>, any> = {
   Condition: ConditionModel,
   MedicationStatement: MedicationStatementModel,
   DocumentReference: DocumentReferenceModel,
+  Procedure: ProcedureModel,
+  Claim: ClaimModel,
 };
 
 const RESTRICTED_CODES = new Set(['MENTAL_HEALTH', 'HIV', 'HIV_STATUS', 'PSYCHIATRIC']);
@@ -96,6 +100,11 @@ export class PatientService {
       sensitive?: boolean;
       sensitivityCode?: string;
       changedFields?: string[];
+      sourceKey?: string;
+      sourceSystem?: string;
+      sourceModel?: string;
+      sourceRecordId?: string;
+      occurredAt?: Date;
       resource: AnyRecord;
     },
     session?: mongoose.ClientSession
@@ -124,8 +133,12 @@ export class PatientService {
         sensitive: Boolean(data.sensitive),
         sensitivityCode: data.sensitivityCode,
         changedFields: data.changedFields || [],
+        sourceKey: data.sourceKey,
+        sourceSystem: data.sourceSystem,
+        sourceModel: data.sourceModel,
+        sourceRecordId: data.sourceRecordId,
         resource: data.resource,
-        occurredAt: new Date(),
+        occurredAt: data.occurredAt || new Date(),
       }],
       { session }
     ).then((rows) => rows[0]);
@@ -511,7 +524,15 @@ export class PatientService {
   static async createEHRResource(
     hospitalId: string,
     actor: Actor,
-    dto: CreateEHRResourceDTO
+    dto: CreateEHRResourceDTO & {
+      occurredAt?: string | Date;
+      sourceKey?: string;
+      sourceSystem?: string;
+      sourceModel?: string;
+      sourceRecordId?: string;
+      recordedBy?: string;
+      refreshView?: boolean;
+    }
   ): Promise<Record<string, unknown>> {
     if (dto.resourceType === 'Patient') this.bad('Patient resources must be changed through the Patient endpoint.');
 
@@ -545,7 +566,7 @@ export class PatientService {
       sensitive,
       sensitivityCode: dto.sensitivityCode,
       data: resource,
-      recordedBy: new Types.ObjectId(actor.userId),
+      recordedBy: new Types.ObjectId(dto.recordedBy || actor.userId),
       department: dto.department,
     });
 
@@ -562,12 +583,119 @@ export class PatientService {
       sensitive,
       sensitivityCode: dto.sensitivityCode,
       changedFields: Object.keys(dto.resource),
+      sourceKey: dto.sourceKey,
+      sourceSystem: dto.sourceSystem,
+      sourceModel: dto.sourceModel,
+      sourceRecordId: dto.sourceRecordId,
+      occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : undefined,
       resource,
     });
     await this.audit(hospitalId, patientId, actor, 'WRITE', Object.keys(dto.resource), true, dto.reason, dto.resourceType, resourceId);
 
     await this.refreshEhrView(hospitalId, patientId);
     return resource;
+  }
+
+  static async importHistoricalEHRResource(
+    hospitalId: string,
+    dto: CreateEHRResourceDTO & {
+      occurredAt: string | Date;
+      sourceKey: string;
+      sourceSystem?: string;
+      sourceModel?: string;
+      sourceRecordId?: string;
+      recordedBy?: string;
+      refreshView?: boolean;
+    }
+  ): Promise<{ status: 'IMPORTED' | 'SKIPPED'; resourceId: string }> {
+    if (dto.resourceType === 'Patient') this.bad('Patient resources must be migrated through the MPI migration.');
+    this.assertObjectId(hospitalId, 'hospital ID');
+    this.assertObjectId(dto.patientId, 'patient ID');
+
+    const existing = await EhrEventModel.findOne({ sourceKey: dto.sourceKey }).lean().exec();
+    if (existing) return { status: 'SKIPPED', resourceId: String((existing as any).resourceId) };
+
+    await this.assertPatient(hospitalId, dto.patientId);
+    if (dto.encounterId && Types.ObjectId.isValid(dto.encounterId)) {
+      // Historical resources may refer to legacy encounter IDs that have not yet been
+      // backfilled. We intentionally do not fail the whole migration for that case.
+    }
+
+    const resourceId = dto.id || `legacy-${dto.sourceModel || 'Resource'}-${dto.sourceRecordId || new Types.ObjectId().toString()}`;
+    const occurredAt = new Date(dto.occurredAt);
+    const safeOccurredAt = Number.isNaN(occurredAt.getTime()) ? new Date() : occurredAt;
+    const recordedBy = dto.recordedBy && Types.ObjectId.isValid(dto.recordedBy)
+      ? dto.recordedBy
+      : '000000000000000000000001';
+    const sensitive = this.isSensitive(dto.sensitivityCode, dto.sensitive);
+    const resource = this.toFhirResource(dto.resourceType, resourceId, 1, dto.resource, safeOccurredAt, sensitive, dto.sensitivityCode);
+    const model = this.resourceModel(dto.resourceType);
+
+    const duplicateResource = await model.findOne({ hospitalId: new Types.ObjectId(hospitalId), resourceId }).lean().exec();
+    if (duplicateResource) {
+      await EhrEventModel.create({
+        hospitalId: new Types.ObjectId(hospitalId),
+        patientId: new Types.ObjectId(dto.patientId),
+        resourceType: dto.resourceType,
+        resourceId,
+        version: 1,
+        action: 'CREATE',
+        occurredAt: safeOccurredAt,
+        recordedBy: new Types.ObjectId(recordedBy),
+        department: dto.department,
+        encounterId: dto.encounterId && Types.ObjectId.isValid(dto.encounterId) ? new Types.ObjectId(dto.encounterId) : undefined,
+        reason: dto.reason || 'Historical EHR backfill',
+        sensitive,
+        sensitivityCode: dto.sensitivityCode,
+        changedFields: Object.keys(dto.resource),
+        sourceKey: dto.sourceKey,
+        sourceSystem: dto.sourceSystem || 'LEGACY_MIGRATION',
+        sourceModel: dto.sourceModel,
+        sourceRecordId: dto.sourceRecordId,
+        resource,
+      });
+      if (dto.refreshView !== false) await this.refreshEhrView(hospitalId, dto.patientId);
+      return { status: 'IMPORTED', resourceId };
+    }
+
+    await model.create({
+      hospitalId: new Types.ObjectId(hospitalId),
+      patientId: new Types.ObjectId(dto.patientId),
+      encounterId: dto.encounterId && Types.ObjectId.isValid(dto.encounterId) ? new Types.ObjectId(dto.encounterId) : undefined,
+      resourceId,
+      version: 1,
+      status: dto.status || resource.status,
+      code: dto.code || resource.code?.coding?.[0],
+      sensitive,
+      sensitivityCode: dto.sensitivityCode,
+      data: resource,
+      recordedBy: new Types.ObjectId(recordedBy),
+      department: dto.department,
+    });
+
+    await this.appendEvent({
+      hospitalId,
+      patientId: dto.patientId,
+      resourceType: dto.resourceType,
+      resourceId,
+      action: 'CREATE',
+      recordedBy,
+      department: dto.department,
+      encounterId: dto.encounterId && Types.ObjectId.isValid(dto.encounterId) ? dto.encounterId : undefined,
+      reason: dto.reason || 'Historical EHR backfill',
+      sensitive,
+      sensitivityCode: dto.sensitivityCode,
+      changedFields: Object.keys(dto.resource),
+      sourceKey: dto.sourceKey,
+      sourceSystem: dto.sourceSystem || 'LEGACY_MIGRATION',
+      sourceModel: dto.sourceModel,
+      sourceRecordId: dto.sourceRecordId,
+      occurredAt: safeOccurredAt,
+      resource,
+    });
+
+    if (dto.refreshView !== false) await this.refreshEhrView(hospitalId, dto.patientId);
+    return { status: 'IMPORTED', resourceId };
   }
 
   static async updateEHRResource(
@@ -652,6 +780,8 @@ export class PatientService {
       Condition: [],
       MedicationStatement: [],
       DocumentReference: [],
+      Procedure: [],
+      Claim: [],
     };
 
     const timeline: AnyRecord[] = [];
@@ -930,6 +1060,8 @@ export class PatientService {
       conditions: chart.resources.Condition.map((r) => this.resourceSummary('Condition', r)),
       medications: chart.resources.MedicationStatement.map((r) => this.resourceSummary('MedicationStatement', r)),
       documents: chart.resources.DocumentReference.map((r) => this.resourceSummary('DocumentReference', r)),
+      procedures: chart.resources.Procedure.map((r) => this.resourceSummary('Procedure', r)),
+      claims: chart.resources.Claim.map((r) => this.resourceSummary('Claim', r)),
       legacy,
     };
   }
@@ -987,6 +1119,10 @@ export class PatientService {
     };
   }
 
+  static async rebuildEHRView(hospitalId: string, patientId: string): Promise<void> {
+    await this.refreshEhrView(hospitalId, patientId);
+  }
+
   private static async refreshEhrView(hospitalId: string, patientId: string) {
     const events = await EhrEventModel.find({
       hospitalId: new Types.ObjectId(hospitalId),
@@ -1027,6 +1163,8 @@ export class PatientService {
       Condition: [],
       MedicationStatement: [],
       DocumentReference: [],
+      Procedure: [],
+      Claim: [],
     };
 
     for (const resource of latest.values()) {

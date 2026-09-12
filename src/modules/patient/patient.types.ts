@@ -27,7 +27,9 @@ export type FhirResourceType =
   | 'Observation'
   | 'Condition'
   | 'MedicationStatement'
-  | 'DocumentReference';
+  | 'DocumentReference'
+  | 'Procedure'
+  | 'Claim';
 
 export type ConsentResourceType = FhirResourceType | 'ALL';
 
@@ -196,6 +198,11 @@ export interface IEhrEvent {
   sensitive: boolean;
   sensitivityCode?: string;
   changedFields?: string[];
+  sourceKey?: string;
+  sourceSystem?: string;
+  sourceModel?: string;
+  sourceRecordId?: string;
+  recordedAt?: Date;
 }
 
 export interface IEhrEventDocument extends IEhrEvent, Document {
@@ -286,6 +293,8 @@ export interface PatientClinicalSummary {
   conditions: IClinicalSummaryItem[];
   medications: IClinicalSummaryItem[];
   documents: IClinicalSummaryItem[];
+  procedures: IClinicalSummaryItem[];
+  claims: IClinicalSummaryItem[];
   legacy: {
     surgery: IClinicalSummaryItem[];
     radiology: IClinicalSummaryItem[];
