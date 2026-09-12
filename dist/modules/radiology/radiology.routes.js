@@ -1,7 +1,15 @@
 import { Router } from 'express';
 import { radiologyController } from './radiology.controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
+import multer from 'multer';
 const router = Router();
+const pacsUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        files: 20,
+        fileSize: 25 * 1024 * 1024,
+    },
+});
 router.use(authenticate);
 /*
 |--------------------------------------------------------------------------
@@ -44,6 +52,8 @@ router.patch('/:id/queue', (req, res, next) => radiologyController.updateQueue(r
 |--------------------------------------------------------------------------
 */
 router.patch('/:id/pacs', (req, res, next) => radiologyController.updatePacsData(req, res, next));
+router.post('/:id/pacs/images', pacsUpload.array('images', 20), (req, res, next) => radiologyController.uploadPacsImages(req, res, next));
+router.delete('/:id/pacs/images/:imageId', (req, res, next) => radiologyController.deletePacsImage(req, res, next));
 /*
 |--------------------------------------------------------------------------
 | Patient Safety

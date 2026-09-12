@@ -4,6 +4,7 @@ import { LabOrderStatus, LabPriority, ResultFlag, EntryMethod, SampleRoutingStat
 import { createCharge, } from '../billing/billing.service.js';
 import { BillingSourceModule, ChargeCategory, } from '../billing/billing.types.js';
 import { PricingCatalogueModel } from '../billing/billing.model.js';
+import { publishEhrResource } from '../patient/ehr.publisher.js';
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -745,6 +746,31 @@ export class LabService {
             notes: 'Laboratory results entered into the LIS.',
         });
         await order.save();
+        await publishEhrResource({
+            hospitalId,
+            patientId: order.patientId.toString(),
+            actorId: technicianId,
+            role: 'LAB_TECHNICIAN',
+            resourceType: 'Observation',
+            resourceId: order._id.toString(),
+            status: order.status,
+            department: 'Laboratory',
+            code: { system: 'LOINC', display: order.testName },
+            resource: {
+                resourceType: 'Observation',
+                id: order._id.toString(),
+                status: order.status,
+                code: { coding: [{ system: 'LOINC', display: order.testName }] },
+                effectiveDateTime: order.createdAt,
+                value: order.results,
+                interpretation: order.results?.map((result) => result.flag),
+                note: order.notes,
+                specimenType: order.sampleType,
+                laboratory: { accessionNumber: order.accessionNumber, testCategory: order.testCategory },
+                sourceOrderId: order._id.toString(),
+            },
+            reason: 'Laboratory results published to Unified EHR.',
+        });
         return this.populateOrder(order);
     }
     /* =========================================================
@@ -868,6 +894,31 @@ export class LabService {
             notes: `Version ${order.version}: ${dto.reason}`,
         });
         await order.save();
+        await publishEhrResource({
+            hospitalId,
+            patientId: order.patientId.toString(),
+            actorId: amendedBy,
+            role: 'LAB_TECHNICIAN',
+            resourceType: 'Observation',
+            resourceId: order._id.toString(),
+            status: order.status,
+            department: 'Laboratory',
+            code: { system: 'LOINC', display: order.testName },
+            resource: {
+                resourceType: 'Observation',
+                id: order._id.toString(),
+                status: order.status,
+                code: { coding: [{ system: 'LOINC', display: order.testName }] },
+                effectiveDateTime: order.createdAt,
+                value: order.results,
+                interpretation: order.results?.map((result) => result.flag),
+                note: order.notes,
+                version: order.version,
+                amendmentReason: dto.reason,
+                sourceOrderId: order._id.toString(),
+            },
+            reason: `Laboratory result amended: ${dto.reason}`,
+        });
         return this.populateOrder(order);
     }
     /* =========================================================

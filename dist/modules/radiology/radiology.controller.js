@@ -226,6 +226,51 @@ export class RadiologyController {
             next(error);
         }
     }
+    async uploadPacsImages(req, res, next) {
+        try {
+            const authReq = req;
+            const files = Array.isArray(req.files)
+                ? req.files
+                : [];
+            const updated = await radiologyService.uploadPacsImages(req.params.id, authReq.user.hospitalId, { files: files }, authReq.user._id);
+            if (!updated) {
+                res.status(404).json({
+                    success: false,
+                    message: 'Radiology order not found',
+                });
+                return;
+            }
+            res.status(200).json({
+                success: true,
+                message: 'Radiology images uploaded successfully',
+                data: updated,
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async deletePacsImage(req, res, next) {
+        try {
+            const authReq = req;
+            const updated = await radiologyService.deletePacsImage(req.params.id, authReq.user.hospitalId, req.params.imageId);
+            if (!updated) {
+                res.status(404).json({
+                    success: false,
+                    message: 'Radiology order not found',
+                });
+                return;
+            }
+            res.status(200).json({
+                success: true,
+                message: 'Radiology image deleted successfully',
+                data: updated,
+            });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
     async updatePacsData(req, res, next) {
         try {
             const authReq = req;

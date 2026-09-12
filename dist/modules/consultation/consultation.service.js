@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { ConsultationModel } from './consultation.model.js';
 import { ConsultationStatus, } from './consultation.types.js';
+import { publishEhrResource } from '../patient/ehr.publisher.js';
 export class ConsultationService {
     static async createConsultation(hospitalId, doctorId, dto) {
         const consultation = await ConsultationModel.create({
@@ -17,6 +18,33 @@ export class ConsultationService {
             prescriptions: dto.prescriptions || [],
             labOrders: dto.labOrders || [],
             followUpDate: dto.followUpDate ? new Date(dto.followUpDate) : undefined,
+        });
+        await publishEhrResource({
+            hospitalId,
+            patientId: dto.patientId,
+            actorId: doctorId,
+            role: 'DOCTOR',
+            resourceType: 'Encounter',
+            resourceId: consultation._id.toString(),
+            status: consultation.status,
+            department: 'Consultation',
+            resource: {
+                resourceType: 'Encounter',
+                id: consultation._id.toString(),
+                status: consultation.status,
+                class: 'AMB',
+                type: { coding: [{ system: 'LOCAL', code: consultation.encounterType, display: consultation.encounterType }] },
+                reason: consultation.chiefComplaint,
+                historyOfPresentIllness: consultation.historyOfPresentIllness,
+                physicalExamination: consultation.physicalExamination,
+                diagnosis: consultation.diagnoses,
+                treatmentPlan: consultation.treatmentPlan,
+                prescriptions: consultation.prescriptions,
+                labOrders: consultation.labOrders,
+                followUpDate: consultation.followUpDate,
+                sourceConsultationId: consultation._id.toString(),
+            },
+            reason: 'Consultation published to Unified EHR.',
         });
         return consultation.populate([
             { path: 'patientId', select: 'firstName lastName mrn dateOfBirth gender bloodGroup genotype' },
@@ -98,6 +126,31 @@ export class ConsultationService {
             }
         }
         await consultation.save();
+        await publishEhrResource({
+            hospitalId,
+            patientId: consultation.patientId.toString(),
+            actorId: consultation.doctorId.toString(),
+            role: 'DOCTOR',
+            resourceType: 'Encounter',
+            resourceId: consultation._id.toString(),
+            status: consultation.status,
+            department: 'Consultation',
+            resource: {
+                resourceType: 'Encounter',
+                id: consultation._id.toString(),
+                status: consultation.status,
+                type: { coding: [{ system: 'LOCAL', code: consultation.encounterType, display: consultation.encounterType }] },
+                reason: consultation.chiefComplaint,
+                historyOfPresentIllness: consultation.historyOfPresentIllness,
+                physicalExamination: consultation.physicalExamination,
+                diagnosis: consultation.diagnoses,
+                treatmentPlan: consultation.treatmentPlan,
+                prescriptions: consultation.prescriptions,
+                labOrders: consultation.labOrders,
+                followUpDate: consultation.followUpDate,
+            },
+            reason: 'Updated consultation published to Unified EHR.',
+        });
         return consultation;
     }
 }

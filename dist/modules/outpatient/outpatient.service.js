@@ -2,6 +2,7 @@ import { OutpatientModel } from './outpatient.model.js';
 import { BillingCaptureStatus, ConsultationStatus, OUTPATIENT_CONSULTATION_SERVICE_CODE, } from './outpatient.types.js';
 import { createCharge, resolvePrice, } from '../billing/billing.service.js';
 import { BillingSourceModule, ChargeCategory, } from '../billing/billing.types.js';
+import { publishEhrResource } from '../patient/ehr.publisher.js';
 export class OutpatientService {
     async createEncounter(input) {
         let catalogue = undefined;
@@ -16,7 +17,7 @@ export class OutpatientService {
                 serviceDate: new Date(),
             });
         }
-        return OutpatientModel.create({
+        const encounter = await OutpatientModel.create({
             ...input,
             status: ConsultationStatus.IN_QUEUE,
             queuedAt: new Date(),
@@ -35,6 +36,28 @@ export class OutpatientService {
                 catalogueCurrency: catalogue?.currency,
             },
         });
+        await publishEhrResource({
+            hospitalId: input.hospitalId,
+            patientId: input.patientId,
+            actorId: input.doctorId || input.hospitalId,
+            role: 'OUTPATIENT',
+            resourceType: 'Encounter',
+            resourceId: encounter._id.toString(),
+            status: encounter.status,
+            department: 'Outpatient',
+            resource: {
+                resourceType: 'Encounter',
+                id: encounter._id.toString(),
+                status: encounter.status,
+                class: 'AMB',
+                type: { coding: [{ system: 'LOCAL', code: 'OUTPATIENT', display: 'Outpatient encounter' }] },
+                reason: encounter.chiefComplaint,
+                period: { start: encounter.queuedAt },
+                sourceEncounterId: encounter._id.toString(),
+            },
+            reason: 'Outpatient encounter published to Unified EHR.',
+        });
+        return encounter;
     }
     async getQueue(hospitalId, query) {
         const page = Math.max(1, query.page || 1);
@@ -213,6 +236,27 @@ export class OutpatientService {
             .exec();
         if (!updated)
             return null;
+        await publishEhrResource({
+            hospitalId,
+            patientId: updated.patientId.toString(),
+            actorId: completedBy || updated.doctorId?.toString() || hospitalId,
+            role: 'OUTPATIENT',
+            resourceType: 'Encounter',
+            resourceId: String(updated._id),
+            status: updated.status,
+            department: 'Outpatient',
+            resource: {
+                resourceType: 'Encounter',
+                id: String(updated._id),
+                status: updated.status,
+                class: 'AMB',
+                reason: updated.chiefComplaint,
+                period: { start: updated.queuedAt, end: updated.consultationEndedAt },
+                diagnosis: updated.diagnoses || [],
+                notes: updated.consultationNotes,
+            },
+            reason: 'Completed outpatient consultation published to Unified EHR.',
+        });
         // Billing is intentionally attempted after the clinical completion is
         // persisted. A billing/catalogue failure is recorded on the encounter
         // and does not roll back the completed consultation.

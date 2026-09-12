@@ -8,6 +8,7 @@ import {
   TransferBedInput,
   DischargePatientInput,
 } from './admissions.types.js';
+import { publishEhrResource } from '../patient/ehr.publisher.js';
 
 export class AdmissionsService {
   public async admitPatient(input: CreateAdmissionInput): Promise<IInpatientAdmissionDocument> {
@@ -22,11 +23,36 @@ export class AdmissionsService {
       throw new Error(`Bed ${input.bedNumber} in ward ${input.wardId} is currently occupied.`);
     }
 
-    return InpatientAdmissionModel.create({
+    const admission = await InpatientAdmissionModel.create({
       ...input,
       status: AdmissionStatus.ADMITTED,
       admittedAt: new Date(),
     });
+
+    await publishEhrResource({
+      hospitalId: input.hospitalId,
+      patientId: input.patientId,
+      actorId: input.admittingDoctorId,
+      role: 'ADMISSIONS',
+      resourceType: 'Encounter',
+      resourceId: admission._id.toString(),
+      status: admission.status,
+      department: 'Inpatient',
+      resource: {
+        resourceType: 'Encounter',
+        id: admission._id.toString(),
+        status: admission.status,
+        class: 'IMP',
+        type: { coding: [{ system: 'LOCAL', code: 'INPATIENT', display: 'Inpatient admission' }] },
+        period: { start: admission.admittedAt },
+        reason: admission.admissionReason,
+        location: { wardId: admission.wardId, bedNumber: admission.bedNumber, bedType: admission.bedType },
+        sourceAdmissionId: admission._id.toString(),
+      },
+      reason: 'Inpatient admission published to Unified EHR.',
+    });
+
+    return admission;
   }
 
   public async getAdmissions(
@@ -126,7 +152,7 @@ export class AdmissionsService {
     hospitalId: string,
     input: DischargePatientInput
   ): Promise<IInpatientAdmissionDocument | null> {
-    return InpatientAdmissionModel.findOneAndUpdate(
+    const updated = await InpatientAdmissionModel.findOneAndUpdate(
       { _id: admissionId, hospitalId, status: AdmissionStatus.ADMITTED },
       {
         $set: {
@@ -137,6 +163,32 @@ export class AdmissionsService {
       },
       { new: true }
     ).exec();
+
+    if (updated) {
+      await publishEhrResource({
+        hospitalId,
+        patientId: updated.patientId.toString(),
+        actorId: updated.admittingDoctorId.toString(),
+        role: 'ADMISSIONS',
+        resourceType: 'Encounter',
+        resourceId: updated._id.toString(),
+        status: updated.status,
+        department: 'Inpatient',
+        resource: {
+          resourceType: 'Encounter',
+          id: updated._id.toString(),
+          status: updated.status,
+          class: 'IMP',
+          period: { start: updated.admittedAt, end: updated.dischargedAt },
+          reason: updated.admissionReason,
+          dischargeSummary: updated.dischargeSummary,
+          location: { wardId: updated.wardId, bedNumber: updated.bedNumber, bedType: updated.bedType },
+        },
+        reason: 'Inpatient discharge published to Unified EHR.',
+      });
+    }
+
+    return updated;
   }
 }
 

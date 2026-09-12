@@ -1,11 +1,12 @@
 import { Types } from 'mongoose';
 import { TelemedicineSessionModel, TelemedicineMessageModel } from './telemedicine.model.js';
 import { ConsultationStatus, } from './telemedicine.types.js';
+import { publishEhrResource } from '../patient/ehr.publisher.js';
 export class TelemedicineService {
     async createSession(input) {
         const meetingRoomId = `telemed-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
         const meetingUrl = `https://telemed.hospital.com/room/${meetingRoomId}`;
-        return TelemedicineSessionModel.create({
+        const session = await TelemedicineSessionModel.create({
             ...input,
             hospitalId: new Types.ObjectId(input.hospitalId),
             patientId: new Types.ObjectId(input.patientId),
@@ -16,6 +17,28 @@ export class TelemedicineService {
             status: ConsultationStatus.WAITING_ROOM,
             joinedWaitingRoomAt: new Date(),
         });
+        await publishEhrResource({
+            hospitalId: input.hospitalId,
+            patientId: input.patientId,
+            actorId: input.doctorId,
+            role: 'TELEMEDICINE',
+            resourceType: 'Encounter',
+            resourceId: session._id.toString(),
+            status: session.status,
+            department: 'Telemedicine',
+            resource: {
+                resourceType: 'Encounter',
+                id: session._id.toString(),
+                status: session.status,
+                class: 'VR',
+                type: { coding: [{ system: 'LOCAL', code: input.consultationType, display: 'Telemedicine consultation' }] },
+                reason: input.chiefComplaint,
+                period: { start: session.scheduledStartTime },
+                sourceTelemedicineSessionId: session._id.toString(),
+            },
+            reason: 'Telemedicine encounter published to Unified EHR.',
+        });
+        return session;
     }
     async getSessions(hospitalId, query) {
         const page = Math.max(1, query.page || 1);
@@ -71,7 +94,33 @@ export class TelemedicineService {
             updateData.clinicalNotes = input.clinicalNotes;
         if (input.recordingUrl)
             updateData.recordingUrl = input.recordingUrl;
-        return TelemedicineSessionModel.findOneAndUpdate({ _id: sessionId, hospitalId }, { $set: updateData }, { new: true }).exec();
+        const updated = await TelemedicineSessionModel.findOneAndUpdate({ _id: sessionId, hospitalId }, { $set: updateData }, { new: true }).exec();
+        if (updated) {
+            await publishEhrResource({
+                hospitalId,
+                patientId: updated.patientId.toString(),
+                actorId: updated.doctorId.toString(),
+                role: 'TELEMEDICINE',
+                resourceType: 'Encounter',
+                resourceId: updated._id.toString(),
+                status: updated.status,
+                department: 'Telemedicine',
+                resource: {
+                    resourceType: 'Encounter',
+                    id: updated._id.toString(),
+                    status: updated.status,
+                    class: 'VR',
+                    period: { start: updated.actualStartTime || updated.scheduledStartTime, end: updated.endTime },
+                    reason: updated.chiefComplaint,
+                    clinicalNotes: updated.clinicalNotes,
+                    durationMinutes: updated.durationMinutes,
+                    recordingUrl: updated.recordingUrl,
+                    sourceTelemedicineSessionId: updated._id.toString(),
+                },
+                reason: 'Updated telemedicine encounter published to Unified EHR.',
+            });
+        }
+        return updated;
     }
     async sendMessage(input) {
         return TelemedicineMessageModel.create({

@@ -29,6 +29,7 @@ import {
   SurgeryBillingStatus,
   CaptureSurgeryBillingInput,
 } from './surgery.types.js';
+import { publishEhrResource } from '../patient/ehr.publisher.js';
 
 const ACTIVE_STATUSES = [
   SurgeryStatus.SCHEDULED,
@@ -581,6 +582,30 @@ export class SurgeryService {
         updatedBy:
           new Types.ObjectId(createdBy),
       });
+
+    await publishEhrResource({
+      hospitalId,
+      patientId,
+      actorId: createdBy,
+      role: 'SURGERY',
+      resourceType: 'DocumentReference',
+      resourceId: surgeryCase._id.toString(),
+      status: surgeryCase.status,
+      department: 'Surgery',
+      resource: {
+        resourceType: 'DocumentReference',
+        id: surgeryCase._id.toString(),
+        status: surgeryCase.status,
+        code: { coding: [{ system: 'LOCAL', code: input.icdCode || 'SURGERY', display: input.procedureName }] },
+        subject: { reference: `Patient/${patientId}` },
+        scheduledStartTime: start,
+        scheduledEndTime: end,
+        anesthesiaType: input.anesthesiaType,
+        urgency: input.urgency,
+        sourceSurgeryCaseId: surgeryCase._id.toString(),
+      },
+      reason: 'Surgical case published to Unified EHR.',
+    });
 
     return surgeryCase;
   }
@@ -2003,6 +2028,34 @@ export class SurgeryService {
     ).exec();
 
     if (!completedCase) return null;
+
+    await publishEhrResource({
+      hospitalId,
+      patientId: completedCase.patientId.toString(),
+      actorId: updatedBy,
+      role: 'SURGERY',
+      resourceType: 'DocumentReference',
+      resourceId: completedCase._id.toString(),
+      status: completedCase.status,
+      department: 'Surgery',
+      resource: {
+        resourceType: 'DocumentReference',
+        id: completedCase._id.toString(),
+        status: 'current',
+        type: { coding: [{ system: 'LOCAL', code: 'OPERATIVE_RECORD', display: 'Operative record' }] },
+        date: completedCase.actualEndTime || new Date(),
+        description: completedCase.procedureName,
+        content: [{
+          attachment: {
+            contentType: 'text/plain',
+            title: `${completedCase.procedureName} operative record`,
+            data: completedCase.postOpNotes || completedCase.intraopDocs || '',
+          },
+        }],
+        sourceSurgeryCaseId: completedCase._id.toString(),
+      },
+      reason: 'Completed surgical record published to Unified EHR.',
+    });
 
     // Billing is intentionally non-blocking: a missing price catalogue entry
     // must never prevent the clinical surgery from completing.

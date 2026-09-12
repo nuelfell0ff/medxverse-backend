@@ -31,6 +31,7 @@ import {
   BillingSourceModule,
   ChargeCategory,
 } from '../billing/billing.types.js';
+import { publishEhrResource } from '../patient/ehr.publisher.js';
 
 /* =========================================================
    HELPERS
@@ -726,6 +727,34 @@ export class PharmacyService {
 
       throw error;
     }
+
+    await publishEhrResource({
+      hospitalId,
+      patientId: dispenseRecord.patientId.toString(),
+      actorId: dispensedByUserId,
+      role: 'PHARMACY',
+      resourceType: 'MedicationStatement',
+      resourceId: dispenseRecord._id.toString(),
+      status: dispenseRecord.status,
+      department: 'Pharmacy',
+      resource: {
+        resourceType: 'MedicationStatement',
+        id: dispenseRecord._id.toString(),
+        status: dispenseRecord.status,
+        effectiveDateTime: dispenseRecord.createdAt,
+        medication: dispenseRecord.items.map((item: any) => ({
+          inventoryItemId: item.inventoryItemId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+          billingCode: item.billingCode,
+        })),
+        note: dispenseRecord.notes,
+        sourceDispenseId: dispenseRecord._id.toString(),
+        consultationId: dispenseRecord.consultationId?.toString(),
+      },
+      reason: 'Pharmacy dispense published to Unified EHR.',
+    });
 
     /*
      * Billing is isolated from the dispensing workflow. The dispense is

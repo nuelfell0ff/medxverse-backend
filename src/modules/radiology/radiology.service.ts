@@ -7,6 +7,7 @@ import { PricingCatalogueModel } from '../billing/billing.model.js';
 import { Staff } from '../staff/staff.model.js';
 import { createCharge } from '../billing/billing.service.js';
 import { BillingSourceModule, ChargeCategory } from '../billing/billing.types.js';
+import { publishEhrResource } from '../patient/ehr.publisher.js';
 
 import {
   AssignRadiologyStaffInput,
@@ -923,6 +924,7 @@ export class RadiologyService {
 
     await order.save();
 
+
     if (
       input.status === RadiologyOrderStatus.REPORTED ||
       input.status === RadiologyOrderStatus.COMPLETED
@@ -1609,6 +1611,37 @@ export class RadiologyService {
     }
 
     await order.save();
+
+    await publishEhrResource({
+      hospitalId,
+      patientId: order.patientId.toString(),
+      actorId: input.radiologistId,
+      role: 'RADIOLOGIST',
+      resourceType: 'DocumentReference',
+      resourceId: order._id.toString(),
+      status: ReportStatus.FINAL,
+      department: 'Radiology',
+      code: { system: 'LOCAL', code: 'RADIOLOGY_REPORT', display: order.procedureName },
+      resource: {
+        resourceType: 'DocumentReference',
+        id: order._id.toString(),
+        status: 'current',
+        type: { coding: [{ system: 'LOCAL', code: 'RADIOLOGY_REPORT', display: 'Radiology report' }] },
+        date: order.report?.signedAt || now,
+        description: order.procedureName,
+        content: [{
+          attachment: {
+            contentType: 'text/plain',
+            title: `${order.procedureName} report`,
+            data: order.report?.findings && order.report?.impression
+              ? `Findings: ${order.report.findings}\nImpression: ${order.report.impression}`
+              : order.report?.findings || order.report?.impression || '',
+          },
+        }],
+        context: { sourceOrderId: order._id.toString(), accessionNumber: order.accessionNumber },
+      },
+      reason: 'Final radiology report published to Unified EHR.',
+    });
 
     try {
       return (await this.captureBilling(
