@@ -106,7 +106,7 @@ export class EmergencyService {
     });
 
     await this.publishVisitToEhr(visit, input.actorId);
-    this.emitBoardChanged(input.hospitalId, 'ED_VISIT_CREATED', String(visit._id));
+    this.emitBoardChanged(input.hospitalId, 'ED_VISIT_CREATED', visit._id.toString());
     return visit;
   }
 
@@ -115,19 +115,35 @@ export class EmergencyService {
     if (!visit) throw new Error('ED visit not found.');
     if (TERMINAL_STATUSES.includes(visit.status)) throw new Error('Cannot triage a closed ED visit.');
 
+    const chiefComplaint = (input.chiefComplaint || visit.chiefComplaint || '').trim();
+    if (!chiefComplaint) throw new Error('Chief complaint is required before triage can be saved.');
+
+    const acuityLevel = Number(input.acuityLevel);
+    if (![1, 2, 3, 4, 5].includes(acuityLevel)) {
+      throw new Error('Acuity level must be between 1 and 5.');
+    }
+
+    if (!Object.values(TriageScale).includes(input.scale)) {
+      throw new Error('Triage scale must be ESI or CTAS.');
+    }
+
+    const safeVitals = input.vitals ? Object.fromEntries(
+      Object.entries(input.vitals).filter(([, value]) => value !== undefined && value !== null && Number.isFinite(Number(value)))
+    ) : undefined;
+
     const triage = await TriageAssessmentModel.create({
       hospitalId: toObjectId(hospitalId),
       visitId: visit._id,
       patientId: visit.patientId,
       scale: input.scale,
-      acuityLevel: input.acuityLevel,
-      chiefComplaint: input.chiefComplaint || visit.chiefComplaint,
-      vitals: input.vitals,
+      acuityLevel,
+      chiefComplaint,
+      vitals: safeVitals,
       resourceNeeds: input.resourceNeeds || visit.resourceNeeds,
       assessedById: toObjectId(actorId),
       assessedAt: new Date(),
       isReassessment: Boolean(visit.currentTriageAssessmentId),
-      notes: input.notes,
+      notes: input.notes?.trim() || undefined,
     });
 
     visit.currentTriageAssessmentId = triage._id;
@@ -141,7 +157,7 @@ export class EmergencyService {
 
     await visit.save();
     await this.publishTriageToEhr(visit, triage, actorId);
-    this.emitBoardChanged(hospitalId, 'TRIAGE_UPDATED', String(visit._id));
+    this.emitBoardChanged(hospitalId, 'TRIAGE_UPDATED', visit._id.toString());
     return triage;
   }
 
@@ -198,7 +214,7 @@ export class EmergencyService {
     visit.priorityScore = calculatePriorityScore(visit.currentAcuityLevel, visit.arrivalAt);
     await visit.save();
 
-    this.emitBoardChanged(hospitalId, 'BAY_ASSIGNED', String(visit._id));
+    this.emitBoardChanged(hospitalId, 'BAY_ASSIGNED', visit._id.toString());
     return assignment;
   }
 
@@ -248,7 +264,7 @@ export class EmergencyService {
       await visit.save();
     }
 
-    this.emitBoardChanged(hospitalId, 'ORDER_CREATED', String(visit._id));
+    this.emitBoardChanged(hospitalId, 'ORDER_CREATED', visit._id.toString());
     return order;
   }
 
@@ -291,10 +307,7 @@ export class EmergencyService {
     const visit = await EDVisitModel.findOne({ _id: visitId, hospitalId });
     if (!visit) return null;
 
-    const currentStatus = visit.status as EDVisitStatus;
-    const nextStatus = input.status as EDVisitStatus;
-
-    if (currentStatus !== nextStatus && !ALLOWED_TRANSITIONS[currentStatus].includes(nextStatus)) {
+    if (visit.status !== input.status && !ALLOWED_TRANSITIONS[visit.status].includes(input.status)) {
       throw new Error(`Invalid ED status transition: ${visit.status} -> ${input.status}`);
     }
 
@@ -308,7 +321,7 @@ export class EmergencyService {
     if (TERMINAL_STATUSES.includes(input.status)) await this.releaseBay(visitId, hospitalId, actorId, 'ED visit closed.');
 
     await this.publishVisitToEhr(visit, actorId);
-    this.emitBoardChanged(hospitalId, 'STATUS_CHANGED', String(visit._id));
+    this.emitBoardChanged(hospitalId, 'STATUS_CHANGED', visit._id.toString());
     return visit;
   }
 
@@ -323,7 +336,7 @@ export class EmergencyService {
     if (TERMINAL_STATUSES.includes(visit.status)) throw new Error('Disposition has already been completed.');
 
     const targetStatus = this.dispositionToStatus(input.disposition);
-    if (!ALLOWED_TRANSITIONS[visit.status as EDVisitStatus].includes(targetStatus)) {
+    if (!ALLOWED_TRANSITIONS[visit.status].includes(targetStatus)) {
       throw new Error(`Visit is not ready for disposition from status ${visit.status}.`);
     }
 
@@ -349,13 +362,13 @@ export class EmergencyService {
     await visit.save();
 
     await this.publishDispositionToEhr(visit, record, actorId);
-    this.emitBoardChanged(hospitalId, 'DISPOSITION_RECORDED', String(visit._id));
+    this.emitBoardChanged(hospitalId, 'DISPOSITION_RECORDED', visit._id.toString());
 
     // The event is the integration boundary. Bed Management, Discharge Planning and Referral
     // listeners can subscribe without coupling the ED module to those modules.
     if (workflow) emergencyEvents.emit('downstream.workflow', {
       hospitalId,
-      visitId: String(visit._id),
+      visitId: visit._id.toString(),
       dispositionId: record._id.toString(),
       workflow,
       patientId: visit.patientId?.toString(),
@@ -381,16 +394,11 @@ export class EmergencyService {
 
     if (query.zone) {
       const zoneBays = await EDBayModel.find({ hospitalId, zone: query.zone }).select('_id').lean().exec();
-      const assignments = await BayAssignmentModel.find({
-        hospitalId,
-        status: BayAssignmentStatus.ASSIGNED,
-        bayId: { $in: zoneBays.map((b) => b._id) },
-      }).select('visitId').lean().exec();
-
+      const ids = new Set(zoneBays.map((bay) => bay._id.toString()));
+      const assignments = await BayAssignmentModel.find({ hospitalId, status: BayAssignmentStatus.ASSIGNED, bayId: { $in: zoneBays.map((b) => b._id) } }).select('visitId').lean().exec();
       const visitIds = new Set(assignments.map((a) => a.visitId.toString()));
-      visits = visits.filter(
-        (v) => !v.currentBayAssignmentId || visitIds.has(String(v._id))
-      );
+      visits = visits.filter((v) => !v.currentBayAssignmentId || visitIds.has(v._id.toString()));
+      void ids;
     }
 
     const total = visits.length;
@@ -418,9 +426,9 @@ export class EmergencyService {
     const items = pagedVisits.map((visit) => ({
       visit: visit as unknown as IEDVisitDocument,
       patient: visit.patientId,
-      triage: latestTriage.get(String(visit._id)) || null,
-      bay: latestBay.get(String(visit._id)) || null,
-      orders: orderMap.get(String(visit._id)) || [],
+      triage: latestTriage.get(visit._id.toString()) || null,
+      bay: latestBay.get(visit._id.toString()) || null,
+      orders: orderMap.get(visit._id.toString()) || [],
       waitTimeMinutes: Math.max(0, Math.floor((Date.now() - new Date(visit.arrivalAt).getTime()) / 60000)),
       priorityScore: calculatePriorityScore(visit.currentAcuityLevel, new Date(visit.arrivalAt)),
     }));
@@ -476,14 +484,8 @@ export class EmergencyService {
   }
 
   public async getStatusHistory(visitId: string, hospitalId: string) {
-    const visit = await EDVisitModel.findOne({ _id: visitId, hospitalId })
-      .select('statusTransitions')
-      .lean()
-      .exec();
-
-    if (!visit) return [];
-
-    return ((visit as { statusTransitions?: unknown[] }).statusTransitions || []);
+    const visit = await EDVisitModel.findOne({ _id: visitId, hospitalId }).select('statusTransitions').lean().exec();
+    return visit?.statusTransitions || [];
   }
 
   private async selectBay(hospitalId: string, acuity: AcuityLevel, resourceNeeds: Record<string, unknown>, input: AssignBayInput) {
@@ -539,12 +541,12 @@ export class EmergencyService {
       actorId,
       role: 'EMERGENCY',
       resourceType: 'Encounter',
-      resourceId: String(visit._id),
+      resourceId: visit._id.toString(),
       status: visit.status,
       department: 'Emergency Department',
       resource: {
         resourceType: 'Encounter',
-        id: String(visit._id),
+        id: visit._id.toString(),
         status: visit.status,
         class: 'EMERGENCY',
         type: { coding: [{ system: 'LOCAL', code: 'ED', display: 'Emergency Department visit' }] },
@@ -577,7 +579,7 @@ export class EmergencyService {
         effectiveDateTime: triage.assessedAt,
         vitals: triage.vitals,
         resourceNeeds: triage.resourceNeeds,
-        encounterId: String(visit._id),
+        encounterId: visit._id.toString(),
       },
       reason: 'ED triage assessment published to Unified EHR.',
     });
@@ -591,12 +593,12 @@ export class EmergencyService {
       actorId,
       role: 'EMERGENCY',
       resourceType: 'Encounter',
-      resourceId: String(visit._id),
+      resourceId: visit._id.toString(),
       status: visit.status,
       department: 'Emergency Department',
       resource: {
         resourceType: 'Encounter',
-        id: String(visit._id),
+        id: visit._id.toString(),
         status: visit.status,
         disposition: record.disposition,
         dispositionNotes: record.notes,
