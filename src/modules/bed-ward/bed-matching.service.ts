@@ -57,48 +57,62 @@ export class BedMatchingService {
     const hospitalId = objectId(input.hospitalId);
     const requirements = input.requirements || {};
 
-    const wards = await WardModel.find({
-      hospitalId,
-      active: true,
-      ...(requirements.department ? { department: new RegExp(`^${requirements.department}$`, 'i') } : {}),
-    }).lean().exec();
-
+    const wards = await WardModel.find({ hospitalId, active: true }).lean().exec();
     if (!wards.length) return [];
-
-    const wardIds = wards.map((ward) => ward._id);
-    const beds = await BedModel.find({
-      hospitalId,
-      wardId: { $in: wardIds },
-      status: BedStatus.AVAILABLE,
-    }).lean().exec();
-
     const wardMap = new Map(wards.map((ward) => [String(ward._id), ward]));
+    const beds = await BedModel.find({ hospitalId, wardId: { $in: wards.map((ward) => ward._id) }, status: BedStatus.AVAILABLE }).lean().exec();
 
-    const suggestions: Array<BedMatchSuggestion | null> = beds
-      .map((bed) => {
-        const ward = wardMap.get(String(bed.wardId));
-        if (!ward) return null;
+    const exact: BedMatchSuggestion[] = [];
+    const fallback: BedMatchSuggestion[] = [];
 
-        const match = requirementMatches(requirements, {
-          supportedAcuityLevels: bed.supportedAcuityLevels || [],
-          capabilities: bed.capabilities as Map<string, boolean> | Record<string, boolean>,
-          genderRestriction: bed.genderRestriction,
-          bedType: bed.bedType,
-        });
-        if (!match.compatible) return null;
+    for (const bed of beds) {
+      const ward = wardMap.get(String(bed.wardId));
+      if (!ward) continue;
+      const match = requirementMatches(requirements, {
+        supportedAcuityLevels: bed.supportedAcuityLevels || [],
+        capabilities: bed.capabilities as Map<string, boolean> | Record<string, boolean>,
+        genderRestriction: bed.genderRestriction,
+        bedType: bed.bedType,
+      });
 
+      if (match.compatible && (!requirements.department || ward.department?.toLowerCase() === requirements.department.toLowerCase())) {
         let score = 100;
         if (requirements.department && ward.department?.toLowerCase() === requirements.department.toLowerCase()) score += 40;
         if (requirements.bedType && bed.bedType === requirements.bedType.toUpperCase()) score += 35;
         if (requirements.acuityLevel && bed.supportedAcuityLevels.includes(Number(requirements.acuityLevel))) score += 30;
+        exact.push({ bed: bed as unknown as BedMatchSuggestion['bed'], ward: ward as unknown as BedMatchSuggestion['ward'], score, reasons: match.reasons, warnings: match.warnings });
+        continue;
+      }
 
-        return { bed: bed as unknown as BedMatchSuggestion['bed'], ward: ward as unknown as BedMatchSuggestion['ward'], score, reasons: match.reasons, warnings: match.warnings };
-      })
-      .filter((value): value is BedMatchSuggestion => Boolean(value))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, Math.max(1, Math.min(50, limit)));
+      // No perfect match: keep the available bed as a fallback option and
+      // explain exactly what the operator should verify before selecting it.
+      const reasons: string[] = ['Available now'];
+      const warnings: string[] = ['No fully matching bed was available; operator review required.'];
+      let score = 45;
+      if (requirements.department) {
+        if (ward.department?.toLowerCase() === requirements.department.toLowerCase()) { score += 25; reasons.push('Same department'); }
+        else warnings.push(`Different department: ${ward.department || 'unspecified'}`);
+      }
+      if (requirements.bedType) {
+        if (bed.bedType === requirements.bedType.toUpperCase()) { score += 20; reasons.push('Requested bed type'); }
+        else warnings.push(`Bed type is ${bed.bedType}, requested ${requirements.bedType.toUpperCase()}`);
+      }
+      if (requirements.acuityLevel) {
+        if (bed.supportedAcuityLevels.includes(Number(requirements.acuityLevel))) { score += 20; reasons.push(`Supports acuity ${requirements.acuityLevel}`); }
+        else warnings.push(`Does not list acuity ${requirements.acuityLevel} support`);
+      }
+      const caps = bed.capabilities instanceof Map ? Object.fromEntries(bed.capabilities) : (bed.capabilities || {});
+      for (const [key, label] of [['isolation','Isolation'],['negativePressure','Negative-pressure'],['oxygen','Oxygen'],['cardiacMonitor','Cardiac monitoring'],['pediatric','Pediatric'],['bariatric','Bariatric'],['mentalHealthSafeSpace','Mental-health safe space']] as const) {
+        if (requirements[key]) {
+          if (caps[key] === true) { score += 8; reasons.push(`${label} capability`); }
+          else warnings.push(`Missing ${label} capability`);
+        }
+      }
+      if (requirements.gender && bed.genderRestriction && bed.genderRestriction.toUpperCase() !== requirements.gender.toUpperCase()) warnings.push(`Gender restriction: ${bed.genderRestriction}`);
+      fallback.push({ bed: bed as unknown as BedMatchSuggestion['bed'], ward: ward as unknown as BedMatchSuggestion['ward'], score, reasons, warnings });
+    }
 
-    return suggestions.filter(Boolean) as BedMatchSuggestion[];
+    return [...exact.sort((a,b)=>b.score-a.score), ...fallback.sort((a,b)=>b.score-a.score)].slice(0, Math.max(1, Math.min(50, limit)));
   }
 }
 

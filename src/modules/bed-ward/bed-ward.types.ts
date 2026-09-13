@@ -1,5 +1,10 @@
 import { Document, Types } from 'mongoose';
 
+export enum WardCleaningStatus {
+  IDLE = 'IDLE',
+  IN_PROGRESS = 'IN_PROGRESS',
+}
+
 export enum BedStatus {
   AVAILABLE = 'AVAILABLE',
   OCCUPIED = 'OCCUPIED',
@@ -67,6 +72,11 @@ export interface IWardDocument extends Document {
   building?: string;
   specialty?: string;
   active: boolean;
+  cleaningStatus: WardCleaningStatus;
+  cleaningStartedAt?: Date;
+  cleaningCompletedAt?: Date;
+  cleaningStartedById?: Types.ObjectId;
+  cleaningCompletedById?: Types.ObjectId;
   notes?: string;
   createdAt: Date;
   updatedAt: Date;

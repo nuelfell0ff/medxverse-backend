@@ -24,6 +24,16 @@ export class BedWardController {
     } catch (error) { next(error); }
   }
 
+  public async startWardCleaning(req: Request, res: Response, next: NextFunction) {
+    try { const value = await bedWardService.startWardCleaning(req.params.id, hospitalId(req as AuthRequest), actorId(req as AuthRequest), req.body?.notes); res.json({ success: true, ward: value }); }
+    catch (error) { next(error); }
+  }
+
+  public async completeWardCleaning(req: Request, res: Response, next: NextFunction) {
+    try { const value = await bedWardService.completeWardCleaning(req.params.id, hospitalId(req as AuthRequest), actorId(req as AuthRequest), req.body?.notes); res.json({ success: true, ward: value }); }
+    catch (error) { next(error); }
+  }
+
   public async getWards(req: Request, res: Response, next: NextFunction) {
     try { res.json({ success: true, wards: await bedWardService.getWards(hospitalId(req as AuthRequest)) }); }
     catch (error) { next(error); }

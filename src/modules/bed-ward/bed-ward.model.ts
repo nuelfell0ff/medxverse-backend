@@ -11,6 +11,7 @@ import {
   ITransferRequestDocument,
   IWardDocument,
   TransferRequestStatus,
+  WardCleaningStatus,
 } from './bed-ward.types.js';
 
 const WardSchema = new Schema<IWardDocument>(
@@ -23,6 +24,11 @@ const WardSchema = new Schema<IWardDocument>(
     building: { type: String, trim: true },
     specialty: { type: String, trim: true },
     active: { type: Boolean, default: true, index: true },
+    cleaningStatus: { type: String, enum: Object.values(WardCleaningStatus), default: WardCleaningStatus.IDLE, index: true },
+    cleaningStartedAt: Date,
+    cleaningCompletedAt: Date,
+    cleaningStartedById: { type: Schema.Types.ObjectId, ref: 'User' },
+    cleaningCompletedById: { type: Schema.Types.ObjectId, ref: 'User' },
     notes: { type: String, trim: true },
   },
   { timestamps: true },

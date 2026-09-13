@@ -8,6 +8,8 @@ router.use(authenticate);
 router.get('/dashboard', (req, res, next) => bedWardController.getDashboard(req, res, next));
 router.get('/wards', (req, res, next) => bedWardController.getWards(req, res, next));
 router.post('/wards', (req, res, next) => bedWardController.createWard(req, res, next));
+router.post('/wards/:id/cleaning/start', (req, res, next) => bedWardController.startWardCleaning(req, res, next));
+router.post('/wards/:id/cleaning/complete', (req, res, next) => bedWardController.completeWardCleaning(req, res, next));
 
 router.get('/beds', (req, res, next) => bedWardController.getBeds(req, res, next));
 router.post('/beds', (req, res, next) => bedWardController.createBed(req, res, next));

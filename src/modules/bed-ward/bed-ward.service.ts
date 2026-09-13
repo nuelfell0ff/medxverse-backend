@@ -295,6 +295,174 @@ export class BedWardService {
     return result;
   }
 
+  public async startWardCleaning(
+    wardId: string,
+    hospitalId: string,
+    actorId: string,
+    notes?: string,
+  ) {
+    const ward = await WardModel.findOne({
+      _id: objectId(wardId),
+      hospitalId: objectId(hospitalId),
+      active: true,
+    }).exec();
+
+    if (!ward) throw new Error('Active ward not found.');
+
+    const now = new Date();
+
+    // A ward can only be put into housekeeping while it has no occupied beds.
+    const occupiedBeds = await BedModel.countDocuments({
+      hospitalId: objectId(hospitalId),
+      wardId: ward._id,
+      status: BedStatus.OCCUPIED,
+    });
+
+    if (occupiedBeds > 0) {
+      throw new Error(
+        `Ward cannot be placed into cleaning while ${occupiedBeds} bed(s) are occupied.`,
+      );
+    }
+
+    const currentStatus = (ward as typeof ward & {
+      cleaningStatus?: 'IDLE' | 'IN_PROGRESS';
+    }).cleaningStatus;
+
+    if (currentStatus === 'IN_PROGRESS') {
+      return ward;
+    }
+
+    const updated = await WardModel.findOneAndUpdate(
+      {
+        _id: ward._id,
+        hospitalId: objectId(hospitalId),
+        active: true,
+      },
+      {
+        $set: {
+          cleaningStatus: 'IN_PROGRESS',
+          cleaningStartedAt: now,
+          cleaningCompletedAt: undefined,
+          cleaningStartedById: objectId(actorId),
+          cleaningNotes: notes?.trim() || undefined,
+        },
+      },
+      { new: true },
+    ).exec();
+
+    if (!updated) throw new Error('Ward changed concurrently. Refresh and retry.');
+
+    const wardBeds = await BedModel.find({
+      hospitalId,
+      wardId: updated._id,
+      isActive: true,
+    }).select('_id').exec();
+
+    await Promise.all(
+      wardBeds.map((bed) =>
+        emitHousekeeping({
+          hospitalId,
+          wardId: String(updated._id),
+          bedId: String(bed._id),
+          task: 'CLEANING_REQUIRED',
+          occurredAt: now.toISOString(),
+        }),
+      ),
+    );
+
+    emitBedBoardChanged({
+      hospitalId,
+      wardId: String(updated._id),
+      event: 'WARD_CLEANING_STARTED',
+      occurredAt: now.toISOString(),
+    });
+
+    return updated;
+  }
+
+  public async completeWardCleaning(
+    wardId: string,
+    hospitalId: string,
+    actorId: string,
+    notes?: string,
+  ) {
+    const ward = await WardModel.findOne({
+      _id: objectId(wardId),
+      hospitalId: objectId(hospitalId),
+      active: true,
+    }).exec();
+
+    if (!ward) throw new Error('Active ward not found.');
+
+    const currentStatus = (ward as typeof ward & {
+      cleaningStatus?: 'IDLE' | 'IN_PROGRESS';
+    }).cleaningStatus;
+
+    if (currentStatus !== 'IN_PROGRESS') {
+      throw new Error('Ward is not currently in cleaning state.');
+    }
+
+    const bedsStillCleaning = await BedModel.countDocuments({
+      hospitalId: objectId(hospitalId),
+      wardId: ward._id,
+      status: BedStatus.CLEANING,
+    });
+
+    if (bedsStillCleaning > 0) {
+      throw new Error(
+        `Ward cleaning cannot be completed while ${bedsStillCleaning} bed(s) are still being cleaned.`,
+      );
+    }
+
+    const now = new Date();
+
+    const updated = await WardModel.findOneAndUpdate(
+      {
+        _id: ward._id,
+        hospitalId: objectId(hospitalId),
+        active: true,
+      },
+      {
+        $set: {
+          cleaningStatus: 'IDLE',
+          cleaningCompletedAt: now,
+          cleaningCompletedById: objectId(actorId),
+          ...(notes?.trim() ? { cleaningNotes: notes.trim() } : {}),
+        },
+      },
+      { new: true },
+    ).exec();
+
+    if (!updated) throw new Error('Ward changed concurrently. Refresh and retry.');
+
+    const wardBeds = await BedModel.find({
+      hospitalId,
+      wardId: updated._id,
+      isActive: true,
+    }).select('_id').exec();
+
+    await Promise.all(
+      wardBeds.map((bed) =>
+        emitHousekeeping({
+          hospitalId,
+          wardId: String(updated._id),
+          bedId: String(bed._id),
+          task: 'CLEANING_COMPLETED',
+          occurredAt: now.toISOString(),
+        }),
+      ),
+    );
+
+    emitBedBoardChanged({
+      hospitalId,
+      wardId: String(updated._id),
+      event: 'WARD_CLEANING_COMPLETED',
+      occurredAt: now.toISOString(),
+    });
+
+    return updated;
+  }
+
   public async suggestBeds(input: import('./bed-ward.types.js').BedMatchRequest) {
     return bedMatchingService.suggest(input);
   }
@@ -566,7 +734,16 @@ export class BedWardService {
       BedModel.find({ hospitalId: hospitalObjectId }).lean().exec(),
     ]);
 
-    const byWard = new Map<string, WardDashboardItem>();
+    // The dashboard response may carry ward-level housekeeping metadata (for example
+    // cleaningStatus). Keep that metadata on the local dashboard item without
+    // widening the shared WardDashboardItem contract used elsewhere.
+    type WardDashboardItemWithCleaning = WardDashboardItem & {
+      cleaningStatus?: 'IDLE' | 'IN_PROGRESS';
+      cleaningStartedAt?: Date | string;
+      cleaningCompletedAt?: Date | string;
+    };
+
+    const byWard = new Map<string, WardDashboardItemWithCleaning>();
     for (const ward of wards) {
       byWard.set(String(ward._id), {
         wardId: String(ward._id),
