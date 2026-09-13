@@ -184,6 +184,9 @@ export interface IEDBay {
   bayCode: string;
   name?: string;
   zone?: string;
+  type?: string;
+  capacity: number;
+  occupiedCount: number;
   status: EDBayStatus;
   supportedAcuityLevels: AcuityLevel[];
   resourceCapabilities: IResourceNeeds;
@@ -282,6 +285,8 @@ export interface CreateBayInput {
   bayCode: string;
   name?: string;
   zone?: string;
+  type?: string;
+  capacity?: number;
   supportedAcuityLevels?: AcuityLevel[];
   resourceCapabilities?: IResourceNeeds;
   notes?: string;

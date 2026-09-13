@@ -232,20 +232,47 @@ export class EmergencyService {
 
   public async createBay(hospitalId: string, actorId: string, input: CreateBayInput) {
     void actorId;
+    const capacity = Math.max(1, Math.floor(Number(input.capacity) || 1));
     return EDBayModel.create({
       hospitalId: toObjectId(hospitalId),
-      bayCode: input.bayCode,
-      name: input.name,
-      zone: input.zone,
+      bayCode: input.bayCode?.trim(),
+      name: input.name?.trim(),
+      zone: input.zone?.trim(),
+      type: input.type?.trim(),
+      capacity,
+      occupiedCount: 0,
       status: EDBayStatus.AVAILABLE,
       supportedAcuityLevels: input.supportedAcuityLevels || [1, 2, 3, 4, 5],
       resourceCapabilities: input.resourceCapabilities || {},
-      notes: input.notes,
+      notes: input.notes?.trim(),
     });
   }
 
   public async getBays(hospitalId: string) {
-    return EDBayModel.find({ hospitalId }).sort({ zone: 1, bayCode: 1 }).lean().exec();
+    const bays = await EDBayModel.find({ hospitalId }).sort({ zone: 1, bayCode: 1 }).lean().exec();
+    if (!bays.length) return [];
+
+    const bayIds = bays.map((bay) => bay._id);
+    const assignments = await BayAssignmentModel.find({
+      hospitalId,
+      bayId: { $in: bayIds },
+      status: BayAssignmentStatus.ASSIGNED,
+    }).select('bayId').lean().exec();
+
+    const occupancy = new Map<string, number>();
+    assignments.forEach((assignment) => {
+      if (!assignment.bayId) return;
+      const key = String(assignment.bayId);
+      occupancy.set(key, (occupancy.get(key) || 0) + 1);
+    });
+
+    return bays.map((bay) => {
+      const capacity = Math.max(1, Number(bay.capacity) || 1);
+      const occupiedCount = occupancy.get(String(bay._id)) || 0;
+      const availableCapacity = Math.max(0, capacity - occupiedCount);
+      const status = availableCapacity > 0 ? EDBayStatus.AVAILABLE : EDBayStatus.OCCUPIED;
+      return { ...bay, capacity, occupiedCount, availableCapacity, status };
+    });
   }
 
   public async assignBay(visitId: string, hospitalId: string, actorId: string, input: AssignBayInput) {
@@ -254,37 +281,82 @@ export class EmergencyService {
     if (TERMINAL_STATUSES.includes(visit.status)) throw new Error('Cannot assign a bay to a closed ED visit.');
     if (!visit.currentAcuityLevel) throw new Error('Complete triage before assigning a bay.');
 
-    const bay = await this.selectBay(hospitalId, visit.currentAcuityLevel, visit.resourceNeeds, input);
-    if (!bay) throw new Error('No suitable ED bay is currently available.');
-
-    await BayAssignmentModel.updateMany(
-      { hospitalId, visitId: visit._id, status: BayAssignmentStatus.ASSIGNED },
-      { $set: { status: BayAssignmentStatus.RELEASED, releasedAt: new Date() } }
-    );
-
-    const assignment = await BayAssignmentModel.create({
-      hospitalId: toObjectId(hospitalId),
+    const existingAssignment = await BayAssignmentModel.findOne({
+      hospitalId,
       visitId: visit._id,
-      patientId: visit.patientId,
-      bayId: bay._id,
-      bayCode: bay.bayCode,
-      assignedById: toObjectId(actorId),
-      assignedAt: new Date(),
       status: BayAssignmentStatus.ASSIGNED,
-      reason: input.reason,
-    });
+    }).sort({ assignedAt: -1 }).exec();
 
-    await EDBayModel.updateOne({ _id: bay._id, hospitalId }, { $set: { status: EDBayStatus.OCCUPIED } });
-
-    visit.currentBayAssignmentId = assignment._id;
-    if (visit.status === EDVisitStatus.TRIAGED || visit.status === EDVisitStatus.WAITING_FOR_BAY) {
-      this.appendStatusTransition(visit, EDVisitStatus.IN_BAY, actorId, 'ED bay assigned.');
+    if (existingAssignment && input.bayId && String(existingAssignment.bayId) === String(input.bayId)) {
+      return existingAssignment;
     }
-    visit.priorityScore = calculatePriorityScore(visit.currentAcuityLevel, visit.arrivalAt);
-    await visit.save();
+    if (existingAssignment && input.bayCode && existingAssignment.bayCode === input.bayCode) {
+      return existingAssignment;
+    }
 
-    this.emitBoardChanged(hospitalId, 'BAY_ASSIGNED', String(visit._id));
-    return assignment;
+    const bay = await this.selectBay(hospitalId, visit.currentAcuityLevel, visit.resourceNeeds, input);
+    if (!bay) throw new Error('No suitable ED bay capacity is currently available.');
+
+    // Release an old assignment only after a valid target bay has been selected.
+    if (existingAssignment) {
+      existingAssignment.status = BayAssignmentStatus.RELEASED;
+      existingAssignment.releasedAt = new Date();
+      existingAssignment.reason = 'Reassigned to another ED bay.';
+      await existingAssignment.save();
+      if (existingAssignment.bayId) {
+        await this.recalculateBayOccupancy(existingAssignment.bayId, hospitalId);
+      }
+    }
+
+    // Reserve one capacity slot atomically so two concurrent assignments cannot
+    // consume the same final slot.
+    const reservedBay = await EDBayModel.findOneAndUpdate(
+      {
+        _id: bay._id,
+        hospitalId,
+        $expr: { $lt: [{ $ifNull: ['$occupiedCount', 0] }, { $ifNull: ['$capacity', 1] }] },
+      },
+      { $inc: { occupiedCount: 1 } },
+      { new: true }
+    ).exec();
+
+    if (!reservedBay) throw new Error('No suitable ED bay capacity is currently available.');
+
+    try {
+      const assignment = await BayAssignmentModel.create({
+        hospitalId: toObjectId(hospitalId),
+        visitId: visit._id,
+        patientId: visit.patientId,
+        bayId: reservedBay._id,
+        bayCode: reservedBay.bayCode,
+        assignedById: toObjectId(actorId),
+        assignedAt: new Date(),
+        status: BayAssignmentStatus.ASSIGNED,
+        reason: input.reason,
+      });
+
+      const full = Number(reservedBay.occupiedCount) >= Math.max(1, Number(reservedBay.capacity) || 1);
+      await EDBayModel.updateOne(
+        { _id: reservedBay._id, hospitalId },
+        { $set: { status: full ? EDBayStatus.OCCUPIED : EDBayStatus.AVAILABLE } }
+      ).exec();
+
+      visit.currentBayAssignmentId = assignment._id;
+      if (visit.status === EDVisitStatus.TRIAGED || visit.status === EDVisitStatus.WAITING_FOR_BAY) {
+        this.appendStatusTransition(visit, EDVisitStatus.IN_BAY, actorId, 'ED bay assigned.');
+      }
+      visit.priorityScore = calculatePriorityScore(visit.currentAcuityLevel, visit.arrivalAt);
+      await visit.save();
+
+      this.emitBoardChanged(hospitalId, 'BAY_ASSIGNED', String(visit._id));
+      return assignment;
+    } catch (error) {
+      await EDBayModel.updateOne(
+        { _id: reservedBay._id, hospitalId },
+        { $inc: { occupiedCount: -1 }, $set: { status: EDBayStatus.AVAILABLE } }
+      ).exec();
+      throw error;
+    }
   }
 
   public async releaseBay(visitId: string, hospitalId: string, actorId: string, reason?: string) {
@@ -297,7 +369,7 @@ export class EmergencyService {
     await assignment.save();
 
     if (assignment.bayId) {
-      await EDBayModel.updateOne({ _id: assignment.bayId, hospitalId }, { $set: { status: EDBayStatus.AVAILABLE } });
+      await this.recalculateBayOccupancy(assignment.bayId, hospitalId);
     }
 
     await EDVisitModel.updateOne(
@@ -547,10 +619,10 @@ export class EmergencyService {
     if (!visit) return null;
 
     const [triages, assignments, orders, dispositions] = await Promise.all([
-      TriageAssessmentModel.find({ hospitalId, visitId }).sort({ assessedAt: -1 }).populate('assessedById', 'firstName lastName role').exec(),
-      BayAssignmentModel.find({ hospitalId, visitId }).sort({ assignedAt: -1 }).populate('assignedById', 'firstName lastName role').exec(),
-      EDOrderModel.find({ hospitalId, visitId }).sort({ orderedAt: -1 }).populate('orderedById', 'firstName lastName role').exec(),
-      DispositionRecordModel.find({ hospitalId, visitId }).sort({ decidedAt: -1 }).populate('decidedById', 'firstName lastName role').exec(),
+      TriageAssessmentModel.find({ hospitalId, visitId }).sort({ assessedAt: -1 }).exec(),
+      BayAssignmentModel.find({ hospitalId, visitId }).sort({ assignedAt: -1 }).exec(),
+      EDOrderModel.find({ hospitalId, visitId }).sort({ orderedAt: -1 }).exec(),
+      DispositionRecordModel.find({ hospitalId, visitId }).sort({ decidedAt: -1 }).exec(),
     ]);
 
     return { visit, triages, assignments, orders, dispositions };
@@ -565,14 +637,60 @@ export class EmergencyService {
   private async selectBay(hospitalId: string, acuity: AcuityLevel, resourceNeeds: Record<string, unknown>, input: AssignBayInput) {
     const filter: Record<string, unknown> = {
       hospitalId,
-      status: EDBayStatus.AVAILABLE,
       supportedAcuityLevels: acuity,
     };
     if (input.bayId) filter._id = toObjectId(input.bayId);
     if (input.bayCode) filter.bayCode = input.bayCode;
 
     const bays = await EDBayModel.find(filter).sort({ zone: 1, bayCode: 1 }).exec();
-    return bays.find((bay) => resourceMatches(resourceNeeds, bay.resourceCapabilities || {})) || null;
+    if (!bays.length) return null;
+
+    const bayIds = bays.map((bay) => bay._id);
+    const assignments = await BayAssignmentModel.find({
+      hospitalId,
+      bayId: { $in: bayIds },
+      status: BayAssignmentStatus.ASSIGNED,
+    }).select('bayId').lean().exec();
+
+    const occupancy = new Map<string, number>();
+    assignments.forEach((assignment) => {
+      if (!assignment.bayId) return;
+      const key = String(assignment.bayId);
+      occupancy.set(key, (occupancy.get(key) || 0) + 1);
+    });
+
+    return bays.find((bay) => {
+      const capacity = Math.max(1, Number(bay.capacity) || 1);
+      const occupiedCount = occupancy.get(String(bay._id)) || 0;
+      return occupiedCount < capacity && resourceMatches(resourceNeeds, bay.resourceCapabilities || {});
+    }) || null;
+  }
+
+  private async recalculateBayOccupancy(bayId: Types.ObjectId, hospitalId: string) {
+    const occupiedCount = await BayAssignmentModel.countDocuments({
+      hospitalId,
+      bayId,
+      status: BayAssignmentStatus.ASSIGNED,
+    });
+    const bay = await EDBayModel.findOne({ _id: bayId, hospitalId })
+      .select('capacity')
+      .lean()
+      .exec();
+    if (!bay) return;
+
+    // Mongoose's lean() inference can widen findOne() to a document/array union
+    // in this project. Narrow it explicitly because this query returns one bay.
+    const bayCapacity = (bay as unknown as { capacity?: number }).capacity;
+    const capacity = Math.max(1, Number(bayCapacity) || 1);
+    await EDBayModel.updateOne(
+      { _id: bayId, hospitalId },
+      {
+        $set: {
+          occupiedCount,
+          status: occupiedCount >= capacity ? EDBayStatus.OCCUPIED : EDBayStatus.AVAILABLE,
+        },
+      }
+    ).exec();
   }
 
   private appendStatusTransition(visit: IEDVisitDocument, to: EDVisitStatus, actorId: string, reason?: string) {

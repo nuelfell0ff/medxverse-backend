@@ -1,62 +1,23 @@
-# MedXverse Emergency Department Management
+# MedXverse Emergency Department — Capacity Fix
 
-This module replaces the legacy `EmergencyCase` implementation with a structured ED workflow.
+This version fixes ED bay capacity so a bay configured for multiple patients remains available until all capacity slots are occupied.
 
-## Core entities
+## Capacity behavior
 
-- `EDVisit`
-- `TriageAssessment`
-- `EDBay`
-- `BayAssignment`
-- `EDOrder`
-- `DispositionRecord`
+- `capacity` is the maximum number of concurrent active ED assignments a physical bay can hold.
+- `occupiedCount` tracks the current number of active assignments.
+- `availableCapacity = capacity - occupiedCount` is returned by `GET /api/v1/emergency/bays`.
+- A bay configured with capacity `3` and one assigned patient returns `occupiedCount: 1`, `availableCapacity: 2`, and remains `AVAILABLE`.
+- Once all 3 slots are occupied, the bay becomes `OCCUPIED` and is no longer selectable.
+- Releasing/discharging a patient recalculates occupancy and makes the freed slot available again.
+- Assignment reservation uses an atomic MongoDB conditional update to prevent two concurrent requests from consuming the same final slot.
+- Existing bays created before capacity support may not have a persisted capacity value; they default to capacity `1`. Recreate or update those legacy bays with their intended capacity.
 
-## Main API
+## Bay API
 
-Base path: `/api/v1/emergency`
+- `GET /api/v1/emergency/bays` — returns configured bays plus `capacity`, `occupiedCount`, `availableCapacity`, and derived status.
+- `POST /api/v1/emergency/bays` — accepts `capacity`, `type`, `name`, `zone`, acuity levels, and resource capabilities.
+- `POST /api/v1/emergency/visits/:id/bay` — assigns one patient into one available bay capacity slot.
+- `PATCH /api/v1/emergency/visits/:id/bay/release` — releases the patient's slot and recalculates bay occupancy.
 
-- `GET /board` — real-time-board snapshot, prioritized by acuity + wait time
-- `GET /visits` — paginated ED visits
-- `POST /visits` — register an ED arrival
-- `GET /visits/:id` — complete ED visit workspace
-- `POST /visits/:id/triage` — create initial triage or reassessment
-- `GET /bays` — configured ED bays
-- `POST /bays` — configure an ED bay
-- `POST /visits/:id/bay` — assign best matching or requested bay
-- `PATCH /visits/:id/bay/release` — release active bay
-- `PATCH /visits/:id/status` — controlled status transition
-- `POST /visits/:id/orders` — place ED lab/imaging/medication/other order
-- `PATCH /orders/:orderId` — update order/result status
-- `POST /visits/:id/disposition` — admit/discharge/transfer/death/LWBS/LAMA
-- `GET /visits/:id/status-history` — append-only status transition history
-
-## Real-time board
-
-The backend exposes a WebSocket channel at:
-
-`/ws/emergency?token=<access-token>`
-
-The server sends:
-
-- `connected`
-- `board.snapshot`
-- `board.changed` when a refresh cannot be generated immediately
-
-The WebSocket is attached in `src/server.ts`.
-
-## Integrations
-
-- Unified EHR: ED encounters and triage observations are published through the existing `publishEhrResource` bridge.
-- Bed Management: admission disposition emits `downstream.workflow` with `BED_MANAGEMENT`.
-- Discharge Planning: discharge disposition emits `DISCHARGE_PLANNING`.
-- Referral/Transfer: transfer disposition emits `REFERRAL`.
-- Laboratory/Radiology/Pharmacy: ED orders carry `type`, `sourceSystem`, and `sourceRecordId` so downstream modules can reconcile results.
-
-## Important implementation notes
-
-- Patient status transitions are recorded in `EDVisit.statusTransitions`; prior entries are never removed by the service.
-- Triage assessments and bay assignments are historical records rather than silent overwrites.
-- Board priority is `acuity weight + elapsed wait minutes`, so a lower-acuity patient gains priority as wait time increases.
-- Board responses include `boardVersion` and `serverTime`, allowing the frontend to maintain a local cached snapshot during temporary connectivity loss.
-- The in-process event bus is suitable for the current single-server deployment. For multi-instance production deployment, mirror `emergencyEvents` through Redis/pub-sub or a durable outbox so WebSocket clients on every instance receive the same events.
-- The module intentionally does not directly create inpatient admission/discharge/referral records because those downstream modules should remain the authoritative owners of those workflows. The disposition event is the integration boundary.
+The rest of the Emergency Department workflow remains unchanged: arrival → triage → bay → treatment → results → disposition, with EHR publishing, downstream workflow events, WebSocket board updates, and audit history.
