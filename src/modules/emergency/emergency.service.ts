@@ -517,6 +517,12 @@ export class EmergencyService {
       dispositionId: String(record._id),
       workflow,
       patientId: visit.patientId?.toString(),
+      wardId: input.wardId ? String(input.wardId) : undefined,
+      requirements: {
+        acuityLevel: visit.currentAcuityLevel,
+        ...(visit.resourceNeeds || {}),
+      },
+      decidedById: actorId,
     });
 
     return record;

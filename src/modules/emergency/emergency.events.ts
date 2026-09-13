@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import type { IBedRequirements } from '../bed-ward/bed-ward.types.js';
 
 export interface EmergencyBoardChangedEvent {
   hospitalId: string;
@@ -13,6 +14,9 @@ export interface EmergencyWorkflowEvent {
   dispositionId: string;
   workflow: 'BED_MANAGEMENT' | 'DISCHARGE_PLANNING' | 'REFERRAL';
   patientId?: string;
+  wardId?: string;
+  requirements?: IBedRequirements;
+  decidedById?: string;
 }
 
 export const emergencyEvents = new EventEmitter();

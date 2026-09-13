@@ -9,6 +9,8 @@ import {
   DischargePatientInput,
 } from './admissions.types.js';
 import { publishEhrResource } from '../patient/ehr.publisher.js';
+import { bedWardService } from '../bed-ward/bed-ward.service.js';
+import { BedStatus } from '../bed-ward/bed-ward.types.js';
 
 export class AdmissionsService {
   public async admitPatient(input: CreateAdmissionInput): Promise<IInpatientAdmissionDocument> {
@@ -23,11 +25,47 @@ export class AdmissionsService {
       throw new Error(`Bed ${input.bedNumber} in ward ${input.wardId} is currently occupied.`);
     }
 
-    const admission = await InpatientAdmissionModel.create({
-      ...input,
-      status: AdmissionStatus.ADMITTED,
-      admittedAt: new Date(),
-    });
+    const smartBed = await bedWardService.findBedByWardAndNumber(
+      input.wardId,
+      input.bedNumber,
+      input.hospitalId,
+    );
+
+    if (smartBed) {
+      if (smartBed.status !== BedStatus.AVAILABLE) {
+        throw new Error(`Bed ${input.bedNumber} in ward ${input.wardId} is not available. Current status: ${smartBed.status}.`);
+      }
+      await bedWardService.transitionBed(String(smartBed._id), input.hospitalId, {
+        status: BedStatus.OCCUPIED,
+        actorId: input.admittingDoctorId,
+        patientId: input.patientId,
+        reason: 'Inpatient admission assigned to bed.',
+        expectedVersion: smartBed.version,
+      });
+    }
+
+    let admission;
+    try {
+      admission = await InpatientAdmissionModel.create({
+        ...input,
+        status: AdmissionStatus.ADMITTED,
+        admittedAt: new Date(),
+      });
+    } catch (error) {
+      if (smartBed) {
+        try {
+          await bedWardService.transitionBed(String(smartBed._id), input.hospitalId, {
+            status: BedStatus.CLEANING,
+            actorId: input.admittingDoctorId,
+            patientId: input.patientId,
+            reason: 'Admission creation failed; bed sent to cleaning for reconciliation.',
+          });
+        } catch (cleanupError) {
+          console.error('[Admissions] Bed reconciliation failed after admission creation error:', cleanupError);
+        }
+      }
+      throw error;
+    }
 
     await publishEhrResource({
       hospitalId: input.hospitalId,
@@ -124,6 +162,32 @@ export class AdmissionsService {
       throw new Error(`Destination Bed ${input.toBedNumber} in ward ${input.toWardId} is already occupied.`);
     }
 
+    const destinationSmartBed = await bedWardService.findBedByWardAndNumber(
+      input.toWardId,
+      input.toBedNumber,
+      hospitalId,
+    );
+
+    const sourceSmartBed = await bedWardService.findBedByWardAndNumber(
+      currentAdmission.wardId,
+      currentAdmission.bedNumber,
+      hospitalId,
+    );
+
+    if (destinationSmartBed) {
+      if (destinationSmartBed.status !== BedStatus.AVAILABLE) {
+        throw new Error(`Destination bed ${input.toBedNumber} is not available in the smart bed board.`);
+      }
+
+      await bedWardService.transitionBed(String(destinationSmartBed._id), hospitalId, {
+        status: BedStatus.OCCUPIED,
+        actorId: input.transferredBy,
+        patientId: currentAdmission.patientId.toString(),
+        reason: input.reason || 'Inpatient transfer destination assigned.',
+        expectedVersion: destinationSmartBed.version,
+      });
+    }
+
     const transferEntry = {
       fromWardId: currentAdmission.wardId,
       fromBedNumber: currentAdmission.bedNumber,
@@ -134,7 +198,7 @@ export class AdmissionsService {
       reason: input.reason,
     };
 
-    return InpatientAdmissionModel.findOneAndUpdate(
+    const updated = await InpatientAdmissionModel.findOneAndUpdate(
       { _id: admissionId, hospitalId },
       {
         $set: {
@@ -145,6 +209,22 @@ export class AdmissionsService {
       },
       { new: true }
     ).exec();
+
+    if (updated && sourceSmartBed && sourceSmartBed.status === BedStatus.OCCUPIED) {
+      try {
+        await bedWardService.transitionBed(String(sourceSmartBed._id), hospitalId, {
+          status: BedStatus.CLEANING,
+          actorId: input.transferredBy,
+          patientId: currentAdmission.patientId.toString(),
+          reason: input.reason || 'Patient transferred; source bed requires cleaning.',
+          expectedVersion: sourceSmartBed.version,
+        });
+      } catch (error) {
+        console.error('[Admissions] Source bed cleaning trigger failed after transfer:', error);
+      }
+    }
+
+    return updated;
   }
 
   public async dischargePatient(
@@ -165,6 +245,26 @@ export class AdmissionsService {
     ).exec();
 
     if (updated) {
+      const smartBed = await bedWardService.findBedByWardAndNumber(
+        updated.wardId,
+        updated.bedNumber,
+        hospitalId,
+      );
+
+      if (smartBed && smartBed.status === BedStatus.OCCUPIED) {
+        try {
+          await bedWardService.transitionBed(String(smartBed._id), hospitalId, {
+            status: BedStatus.CLEANING,
+            actorId: updated.admittingDoctorId.toString(),
+            patientId: updated.patientId.toString(),
+            reason: 'Inpatient discharge completed; housekeeping cleaning required.',
+            expectedVersion: smartBed.version,
+          });
+        } catch (error) {
+          console.error('[Admissions] Unable to trigger bed cleaning after discharge:', error);
+        }
+      }
+
       await publishEhrResource({
         hospitalId,
         patientId: updated.patientId.toString(),

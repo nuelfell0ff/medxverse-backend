@@ -3,9 +3,13 @@ import app from './app.js';
 import { connectDB } from './config/db.js';
 import { env } from './config/env.js';
 import { attachEmergencyWebSocket } from './modules/emergency/emergency.socket.js';
+import { attachBedWardWebSocket } from './modules/bed-ward/bed-ward.socket.js';
+import { initializeBedWardIntegrations } from './modules/bed-ward/bed-ward.integration.js';
 
 const server = http.createServer(app);
 attachEmergencyWebSocket(server);
+attachBedWardWebSocket(server);
+initializeBedWardIntegrations();
 
 const startServer = async (): Promise<void> => {
   // Connect to MongoDB
