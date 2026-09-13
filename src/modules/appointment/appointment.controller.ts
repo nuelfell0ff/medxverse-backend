@@ -4,7 +4,12 @@ import { CreateAppointmentDTO, UpdateAppointmentStatusDTO, GetAppointmentsQueryD
 
 interface AuthenticatedRequest extends Request { user?: { id?:string; accountId?:string; hospitalId?:string; _id?:string; }; }
 export class AppointmentController {
-  private static getHospitalId(req:Request):string|null { const u=(req as AuthenticatedRequest).user; return u?.hospitalId||u?.accountId||u?.id||u?._id||null; }
+  private static getHospitalId(req:Request):string|null {
+    const u=(req as AuthenticatedRequest).user;
+    // Auth middleware maps accountId to hospitalId for hospital JWTs.
+    // Prefer the canonical accountId when present and fall back for legacy tokens.
+    return u?.accountId||u?.hospitalId||u?.id||u?._id||null;
+  }
   private static hospital(req:Request,res:Response){const h=this.getHospitalId(req);if(!h)res.status(400).json({success:false,message:'Hospital ID not found in authentication context.'});return h;}
 
   static async create(req:Request,res:Response,next:NextFunction){try{const h=this.hospital(req,res);if(!h)return;res.status(201).json({success:true,data:await AppointmentService.createAppointment(h,req.body as CreateAppointmentDTO)});}catch(e){next(e);}}

@@ -9,6 +9,9 @@ import {
   IProviderSchedule, IAppointment, IAppointmentDocument, IQueueTicket,
 } from './appointment.types.js';
 import { publishAppointmentEvent } from './appointment.events.js';
+// Ensure referenced models are registered before Mongoose populate is used.
+import '../patient/patient.model.js';
+import '../staff/staff.model.js';
 
 const priorityValue: Record<QueuePriority, number> = {
   [QueuePriority.ROUTINE]: 0, [QueuePriority.PRIORITY]: 50, [QueuePriority.URGENT]: 100, [QueuePriority.EMERGENCY]: 200,
@@ -148,8 +151,17 @@ export class AppointmentService {
     if(query.department) filter.department=query.department;
     if(query.date){const s=new Date(`${query.date.slice(0,10)}T00:00:00`),e=new Date(`${query.date.slice(0,10)}T23:59:59.999`);filter.checkedInAt={$gte:s,$lte:e};}
     await this.resequenceQueue(hospitalId,query);
-    const tickets=await QueueTicketModel.find(filter).populate('patientId','firstName lastName mrn phone').populate('providerId','firstName lastName department').sort({position:1}).lean();
-    return {tickets,total:tickets.length};
+    const tickets=await QueueTicketModel.find(filter).sort({position:1}).lean();
+    let hydratedTickets:any[]=tickets as any[];
+    try {
+      hydratedTickets=await QueueTicketModel.populate(hydratedTickets,[
+        {path:'patientId',select:'firstName lastName mrn phone'},
+        {path:'providerId',select:'firstName lastName department'},
+      ]);
+    } catch(populateError) {
+      console.error('[Appointment Queue] populate warning:', populateError);
+    }
+    return {tickets:hydratedTickets,total:hydratedTickets.length};
   }
 
   static async resequenceQueue(hospitalId:string,query:QueueQueryDTO){
@@ -180,7 +192,14 @@ export class AppointmentService {
     const h=oid(hospitalId,'Hospital ID'),filter:any={hospitalId:h,status:{$in:[QueueTicketStatus.WAITING,QueueTicketStatus.CALLED,QueueTicketStatus.IN_SERVICE]}};
     if(query.providerId)filter.providerId=oid(query.providerId,'Provider ID');if(query.department)filter.department=query.department;
     if(query.date){filter.checkedInAt={$gte:new Date(`${query.date.slice(0,10)}T00:00:00`),$lte:new Date(`${query.date.slice(0,10)}T23:59:59.999`)};}
-    const tickets=await QueueTicketModel.find(filter).populate('patientId','firstName lastName mrn phone').sort({position:1}).lean();return {tickets,total:tickets.length};
+    const tickets=await QueueTicketModel.find(filter).sort({position:1}).lean();
+    let hydratedTickets:any[]=tickets as any[];
+    try {
+      hydratedTickets=await QueueTicketModel.populate(hydratedTickets,{path:'patientId',select:'firstName lastName mrn phone'});
+    } catch(populateError) {
+      console.error('[Appointment Queue] populate warning:', populateError);
+    }
+    return {tickets:hydratedTickets,total:hydratedTickets.length};
   }
 
   static async updateQueueTicket(hospitalId:string,ticketId:string,status:QueueTicketStatus,delayMinutes?:number){
@@ -229,10 +248,51 @@ export class AppointmentService {
   static async markReminderSent(hospitalId:string,id:string){const r=await ReminderLogModel.findOneAndUpdate({_id:oid(id,'Reminder ID'),hospitalId:oid(hospitalId,'Hospital ID'),status:ReminderStatus.SCHEDULED},{$set:{status:ReminderStatus.SENT,sentAt:new Date()},$inc:{attempts:1}},{new:true}).lean();if(!r)throw err('Reminder not found or already processed.',404);return r;}
 
   static async getAppointments(hospitalId:string,query:GetAppointmentsQueryDTO){
-    const h=oid(hospitalId,'Hospital ID'),page=Math.max(Number(query.page)||1,1),limit=Math.min(Math.max(Number(query.limit)||10,1),100),skip=(page-1)*limit,filter:any={hospitalId:h};
-    if(query.patientId)filter.patientId=oid(query.patientId,'Patient ID');if(query.doctorId)filter.doctorId=oid(query.doctorId,'Doctor ID');if(query.department)filter.department=query.department;if(query.status)filter.status=query.status;
-    if(query.date){const s=new Date(`${query.date.slice(0,10)}T00:00:00`),e=new Date(`${query.date.slice(0,10)}T23:59:59.999`);filter.appointmentDate={$gte:s,$lte:e};}
-    const [appointments,total]=await Promise.all([AppointmentModel.find(filter).populate('patientId','firstName lastName mrn phone').populate('doctorId','firstName lastName email department role').sort({appointmentDate:1,startTime:1}).skip(skip).limit(limit).lean(),AppointmentModel.countDocuments(filter)]);
+    const h=oid(hospitalId,'Hospital ID');
+    const page=Math.max(Number(query.page)||1,1);
+    const limit=Math.min(Math.max(Number(query.limit)||10,1),100);
+    const skip=(page-1)*limit;
+    const filter:any={hospitalId:h};
+
+    if(query.patientId) filter.patientId=oid(String(query.patientId),'Patient ID');
+    if(query.doctorId) filter.doctorId=oid(String(query.doctorId),'Doctor ID');
+    if(query.department && String(query.department).trim() && String(query.department)!=='undefined') {
+      filter.department=String(query.department);
+    }
+    if(query.status && String(query.status)!=='undefined') filter.status=query.status;
+
+    if(query.date) {
+      const date=String(query.date).slice(0,10);
+      if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) throw err('Invalid appointment date. Use YYYY-MM-DD.');
+      const s=new Date(`${date}T00:00:00.000`);
+      const e=new Date(`${date}T23:59:59.999`);
+      if(Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) throw err('Invalid appointment date.');
+      filter.appointmentDate={$gte:s,$lte:e};
+    }
+
+    // Execute the appointment query independently so one failing count/populate
+    // operation cannot obscure the actual appointment query error.
+    const [rawAppointments,total]=await Promise.all([
+      AppointmentModel.find(filter)
+        .sort({appointmentDate:1,startTime:1})
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      AppointmentModel.countDocuments(filter),
+    ]);
+
+    let appointments:any[]=rawAppointments as any[];
+    try {
+      appointments=await AppointmentModel.populate(appointments,[
+        {path:'patientId',select:'firstName lastName mrn phone'},
+        {path:'doctorId',select:'firstName lastName email department role'},
+      ]);
+    } catch(populateError) {
+      // Patient/staff references should not make the calendar endpoint fail.
+      // Return the underlying appointment rows if a legacy reference cannot populate.
+      console.error('[Appointment] populate warning:', populateError);
+    }
+
     return {appointments,total,page,limit,pages:Math.ceil(total/limit)};
   }
 
