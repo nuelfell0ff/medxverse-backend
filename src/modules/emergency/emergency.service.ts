@@ -111,54 +111,122 @@ export class EmergencyService {
     return visit;
   }
 
-  public async createTriage(visitId: string, hospitalId: string, actorId: string, input: CreateTriageInput) {
-    const visit = await EDVisitModel.findOne({ _id: visitId, hospitalId });
+  public async createTriage(
+    visitId: string,
+    hospitalId: string,
+    actorId: string,
+    input: CreateTriageInput,
+  ) {
+    // Validate identifiers before querying MongoDB so malformed IDs return a
+    // useful 400 instead of an opaque Mongoose CastError/ValidationError.
+    const visitObjectId = toObjectId(visitId);
+    const hospitalObjectId = toObjectId(hospitalId);
+    const actorObjectId = toObjectId(actorId);
+
+    const visit = await EDVisitModel.findOne({
+      _id: visitObjectId,
+      hospitalId: hospitalObjectId,
+    });
+
     if (!visit) throw new Error('ED visit not found.');
-    if (TERMINAL_STATUSES.includes(visit.status)) throw new Error('Cannot triage a closed ED visit.');
-
-    const chiefComplaint = (input.chiefComplaint || visit.chiefComplaint || '').trim();
-    if (!chiefComplaint) throw new Error('Chief complaint is required before triage can be saved.');
-
-    const acuityLevel = Number(input.acuityLevel);
-    if (![1, 2, 3, 4, 5].includes(acuityLevel)) {
-      throw new Error('Acuity level must be between 1 and 5.');
+    if (TERMINAL_STATUSES.includes(visit.status)) {
+      throw new Error('Cannot triage a closed ED visit.');
     }
 
-    if (!Object.values(TriageScale).includes(input.scale)) {
+    const scale = typeof input.scale === 'string' ? input.scale.trim().toUpperCase() : '';
+    if (!Object.values(TriageScale).includes(scale as TriageScale)) {
       throw new Error('Triage scale must be ESI or CTAS.');
     }
 
-    const safeVitals = input.vitals ? Object.fromEntries(
-      Object.entries(input.vitals).filter(([, value]) => value !== undefined && value !== null && Number.isFinite(Number(value)))
-    ) : undefined;
+    const acuityLevel = Number(input.acuityLevel);
+    if (!Number.isInteger(acuityLevel) || acuityLevel < 1 || acuityLevel > 5) {
+      throw new Error('Acuity level must be an integer between 1 and 5.');
+    }
 
-    const triage = await TriageAssessmentModel.create({
-      hospitalId: toObjectId(hospitalId),
-      visitId: visit._id,
+    const chiefComplaint = String(input.chiefComplaint ?? visit.chiefComplaint ?? '').trim();
+    if (!chiefComplaint) {
+      throw new Error('Chief complaint is required before triage can be saved.');
+    }
+
+    // Only persist fields that exist in ResourceNeedsSchema. This prevents
+    // frontend payloads with unknown resource keys from causing inconsistent
+    // Mongo documents.
+    const sourceNeeds = input.resourceNeeds ?? visit.resourceNeeds ?? {};
+    const resourceNeeds = {
+      resuscitation: sourceNeeds.resuscitation === true,
+      cardiacMonitor: sourceNeeds.cardiacMonitor === true,
+      oxygen: sourceNeeds.oxygen === true,
+      isolation: sourceNeeds.isolation === true,
+      negativePressure: sourceNeeds.negativePressure === true,
+      bariatric: sourceNeeds.bariatric === true,
+      pediatric: sourceNeeds.pediatric === true,
+      mentalHealthSafeSpace: sourceNeeds.mentalHealthSafeSpace === true,
+    };
+
+    const safeVitals = input.vitals
+      ? Object.fromEntries(
+          Object.entries(input.vitals)
+            .filter(
+              ([, value]) =>
+                value !== undefined &&
+                value !== null &&
+                value !== '' &&
+                Number.isFinite(Number(value)),
+            )
+            .map(([key, value]) => [key, Number(value)]),
+        )
+      : undefined;
+
+    // Build the document first and validate it explicitly. This gives us the
+    // same Mongoose validation rules as save/create, but lets the controller
+    // expose the exact field-level reason when validation fails.
+    const triageDocument = new TriageAssessmentModel({
+      hospitalId: hospitalObjectId,
+      visitId: visitObjectId,
       patientId: visit.patientId,
-      scale: input.scale,
-      acuityLevel,
+      scale: scale as TriageScale,
+      acuityLevel: acuityLevel as AcuityLevel,
       chiefComplaint,
       vitals: safeVitals,
-      resourceNeeds: input.resourceNeeds || visit.resourceNeeds,
-      assessedById: toObjectId(actorId),
+      resourceNeeds,
+      assessedById: actorObjectId,
       assessedAt: new Date(),
       isReassessment: Boolean(visit.currentTriageAssessmentId),
-      notes: input.notes?.trim() || undefined,
+      notes: input.notes ? String(input.notes).trim() || undefined : undefined,
     });
+
+    const validationError = triageDocument.validateSync();
+    if (validationError) {
+      const messages = Object.values(validationError.errors).map((error) => {
+        const validation = error as { message?: string };
+        return validation.message || 'Invalid triage data.';
+      });
+      throw new Error(`Triage validation failed: ${messages.join('; ')}`);
+    }
+
+    const triage = await triageDocument.save();
 
     visit.currentTriageAssessmentId = triage._id;
     visit.currentAcuityLevel = acuityLevel as AcuityLevel;
-    visit.resourceNeeds = input.resourceNeeds || visit.resourceNeeds;
-    visit.priorityScore = calculatePriorityScore(input.acuityLevel, visit.arrivalAt);
+    visit.resourceNeeds = resourceNeeds;
+    visit.priorityScore = calculatePriorityScore(
+      acuityLevel as AcuityLevel,
+      visit.arrivalAt,
+    );
 
     if (visit.status === EDVisitStatus.ARRIVED) {
-      this.appendStatusTransition(visit, EDVisitStatus.TRIAGED, actorId, 'Initial triage completed.');
+      this.appendStatusTransition(
+        visit,
+        EDVisitStatus.TRIAGED,
+        actorId,
+        'Initial triage completed.',
+      );
     }
 
     await visit.save();
     await this.publishTriageToEhr(visit, triage, actorId);
     this.emitBoardChanged(hospitalId, 'TRIAGE_UPDATED', String(visit._id));
+
     return triage;
   }
 

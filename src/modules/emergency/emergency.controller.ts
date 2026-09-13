@@ -72,16 +72,78 @@ export class EmergencyController {
   public async triage(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const user = this.auth(req);
-      const data = await emergencyService.createTriage(req.params.id as string, user.hospitalId, user._id, {
-        scale: req.body.scale as TriageScale,
-        acuityLevel: Number(req.body.acuityLevel) as AcuityLevel,
-        chiefComplaint: req.body.chiefComplaint,
-        vitals: req.body.vitals,
-        resourceNeeds: req.body.resourceNeeds,
-        notes: req.body.notes,
-      });
+
+      if (!user?._id) {
+        res.status(401).json({ success: false, message: 'Authenticated user ID is missing.' });
+        return;
+      }
+
+      if (!user?.hospitalId) {
+        res.status(400).json({ success: false, message: 'Hospital context is missing.' });
+        return;
+      }
+
+      const body = req.body ?? {};
+      const scale = typeof body.scale === 'string' ? body.scale.trim().toUpperCase() : '';
+      const acuityLevel = Number(body.acuityLevel);
+
+      const errors: string[] = [];
+
+      if (!Object.values(TriageScale).includes(scale as TriageScale)) {
+        errors.push('scale must be ESI or CTAS');
+      }
+
+      if (!Number.isInteger(acuityLevel) || acuityLevel < 1 || acuityLevel > 5) {
+        errors.push('acuityLevel must be an integer between 1 and 5');
+      }
+
+      if (body.chiefComplaint !== undefined && body.chiefComplaint !== null && typeof body.chiefComplaint !== 'string') {
+        errors.push('chiefComplaint must be a string');
+      }
+
+      if (body.vitals !== undefined && (typeof body.vitals !== 'object' || Array.isArray(body.vitals))) {
+        errors.push('vitals must be an object');
+      }
+
+      if (errors.length) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid triage request.',
+          errors,
+        });
+        return;
+      }
+
+      const data = await emergencyService.createTriage(
+        req.params.id as string,
+        user.hospitalId,
+        user._id,
+        {
+          scale: scale as TriageScale,
+          acuityLevel: acuityLevel as AcuityLevel,
+          chiefComplaint: typeof body.chiefComplaint === 'string' ? body.chiefComplaint : undefined,
+          vitals: body.vitals,
+          resourceNeeds: body.resourceNeeds,
+          notes: typeof body.notes === 'string' ? body.notes : undefined,
+        },
+      );
+
       res.status(201).json({ success: true, data });
-    } catch (error) { next(error); }
+    } catch (error) {
+      if (error instanceof Error && (
+        error.message.startsWith('Triage validation failed:') ||
+        error.message.startsWith('Invalid ObjectId:')
+      )) {
+        res.status(400).json({
+          success: false,
+          message: error.message,
+          errors: [error.message],
+        });
+        return;
+      }
+
+      next(error);
+    }
   }
 
   public async getBays(req: Request, res: Response, next: NextFunction): Promise<void> {
