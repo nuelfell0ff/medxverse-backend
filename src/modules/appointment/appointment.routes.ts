@@ -2,14 +2,24 @@ import { Router } from 'express';
 import { AppointmentController } from './appointment.controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
 
-const router = Router();
-
-// Protect all appointment endpoints with auth middleware
+const router=Router();
 router.use(authenticate);
 
-router.post('/', AppointmentController.create);
-router.get('/', AppointmentController.list);
-router.get('/:id', AppointmentController.getById);
-router.patch('/:id/status', AppointmentController.updateStatus);
+router.post('/',AppointmentController.create);
+router.get('/',AppointmentController.list);
+router.get('/queue',AppointmentController.queue);
+router.post('/queue/walk-in',AppointmentController.walkIn);
+router.patch('/queue/:ticketId',AppointmentController.queueTicket);
+router.patch('/queue/provider/:providerId/delay',AppointmentController.providerDelay);
+router.post('/schedules',AppointmentController.createSchedule);
+router.get('/schedules/:providerId',AppointmentController.getSchedule);
+router.get('/reminders/due',AppointmentController.dueReminders);
+router.patch('/reminders/:id/sent',AppointmentController.markReminderSent);
+router.get('/:id/risk',AppointmentController.risk);
+router.post('/:id/check-in',AppointmentController.checkIn);
+router.patch('/:id/reschedule',AppointmentController.reschedule);
+router.patch('/:id/cancel',AppointmentController.cancel);
+router.get('/:id',AppointmentController.getById);
+router.patch('/:id/status',AppointmentController.updateStatus);
 
 export default router;
