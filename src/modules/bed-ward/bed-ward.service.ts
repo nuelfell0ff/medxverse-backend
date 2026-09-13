@@ -69,6 +69,7 @@ export class BedWardService {
       specialty: input.specialty?.trim(),
       notes: input.notes?.trim(),
       active: true,
+      cleaningStatus: 'IDLE',
     });
   }
 
@@ -324,9 +325,7 @@ export class BedWardService {
       );
     }
 
-    const currentStatus = (ward as typeof ward & {
-      cleaningStatus?: 'IDLE' | 'IN_PROGRESS';
-    }).cleaningStatus;
+    const currentStatus = ward.cleaningStatus;
 
     if (currentStatus === 'IN_PROGRESS') {
       return ward;
@@ -344,7 +343,7 @@ export class BedWardService {
           cleaningStartedAt: now,
           cleaningCompletedAt: undefined,
           cleaningStartedById: objectId(actorId),
-          cleaningNotes: notes?.trim() || undefined,
+          notes: notes?.trim() || undefined,
         },
       },
       { new: true },
@@ -353,9 +352,8 @@ export class BedWardService {
     if (!updated) throw new Error('Ward changed concurrently. Refresh and retry.');
 
     const wardBeds = await BedModel.find({
-      hospitalId,
+      hospitalId: objectId(hospitalId),
       wardId: updated._id,
-      isActive: true,
     }).select('_id').exec();
 
     await Promise.all(
@@ -394,9 +392,7 @@ export class BedWardService {
 
     if (!ward) throw new Error('Active ward not found.');
 
-    const currentStatus = (ward as typeof ward & {
-      cleaningStatus?: 'IDLE' | 'IN_PROGRESS';
-    }).cleaningStatus;
+    const currentStatus = ward.cleaningStatus;
 
     if (currentStatus !== 'IN_PROGRESS') {
       throw new Error('Ward is not currently in cleaning state.');
@@ -427,7 +423,7 @@ export class BedWardService {
           cleaningStatus: 'IDLE',
           cleaningCompletedAt: now,
           cleaningCompletedById: objectId(actorId),
-          ...(notes?.trim() ? { cleaningNotes: notes.trim() } : {}),
+          ...(notes?.trim() ? { notes: notes.trim() } : {}),
         },
       },
       { new: true },
@@ -436,9 +432,8 @@ export class BedWardService {
     if (!updated) throw new Error('Ward changed concurrently. Refresh and retry.');
 
     const wardBeds = await BedModel.find({
-      hospitalId,
+      hospitalId: objectId(hospitalId),
       wardId: updated._id,
-      isActive: true,
     }).select('_id').exec();
 
     await Promise.all(
@@ -734,16 +729,7 @@ export class BedWardService {
       BedModel.find({ hospitalId: hospitalObjectId }).lean().exec(),
     ]);
 
-    // The dashboard response may carry ward-level housekeeping metadata (for example
-    // cleaningStatus). Keep that metadata on the local dashboard item without
-    // widening the shared WardDashboardItem contract used elsewhere.
-    type WardDashboardItemWithCleaning = WardDashboardItem & {
-      cleaningStatus?: 'IDLE' | 'IN_PROGRESS';
-      cleaningStartedAt?: Date | string;
-      cleaningCompletedAt?: Date | string;
-    };
-
-    const byWard = new Map<string, WardDashboardItemWithCleaning>();
+    const byWard = new Map<string, WardDashboardItem>();
     for (const ward of wards) {
       byWard.set(String(ward._id), {
         wardId: String(ward._id),
@@ -756,6 +742,9 @@ export class BedWardService {
         cleaning: 0,
         blocked: 0,
         occupancyRate: 0,
+        cleaningStatus: ward.cleaningStatus,
+        cleaningStartedAt: ward.cleaningStartedAt,
+        cleaningCompletedAt: ward.cleaningCompletedAt,
       });
     }
 

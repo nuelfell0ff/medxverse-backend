@@ -25,6 +25,8 @@ All routes require authentication and are mounted under `/api/v1/bed-ward`.
 - `GET /dashboard`
 - `GET /wards`
 - `POST /wards`
+- `POST /wards/:id/cleaning/start`
+- `POST /wards/:id/cleaning/complete`
 - `GET /beds`
 - `POST /beds`
 - `GET /beds/:id`

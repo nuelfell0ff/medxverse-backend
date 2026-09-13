@@ -270,6 +270,9 @@ export interface WardDashboardItem {
   occupancyRate: number;
   projectedOccupied24h?: number;
   projectedAvailable24h?: number;
+  cleaningStatus: WardCleaningStatus;
+  cleaningStartedAt?: Date | string;
+  cleaningCompletedAt?: Date | string;
 }
 
 export interface BedMatchSuggestion {
