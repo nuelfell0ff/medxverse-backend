@@ -32,7 +32,7 @@ export class AppointmentController {
     }
     static async create(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.status(201).json({
@@ -46,7 +46,7 @@ export class AppointmentController {
     }
     static async list(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -60,7 +60,7 @@ export class AppointmentController {
     }
     static async getById(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -74,7 +74,7 @@ export class AppointmentController {
     }
     static async updateStatus(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -88,7 +88,7 @@ export class AppointmentController {
     }
     static async reschedule(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -102,7 +102,7 @@ export class AppointmentController {
     }
     static async cancel(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -116,7 +116,7 @@ export class AppointmentController {
     }
     static async createSchedule(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -130,7 +130,7 @@ export class AppointmentController {
     }
     static async getSchedule(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -144,7 +144,7 @@ export class AppointmentController {
     }
     static async checkIn(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.status(201).json({
@@ -158,7 +158,7 @@ export class AppointmentController {
     }
     static async walkIn(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.status(201).json({
@@ -172,7 +172,7 @@ export class AppointmentController {
     }
     static async queue(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -186,7 +186,7 @@ export class AppointmentController {
     }
     static async queueTicket(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -200,7 +200,7 @@ export class AppointmentController {
     }
     static async providerDelay(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -214,7 +214,7 @@ export class AppointmentController {
     }
     static async risk(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -228,7 +228,7 @@ export class AppointmentController {
     }
     static async dueReminders(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({
@@ -242,7 +242,7 @@ export class AppointmentController {
     }
     static async markReminderSent(req, res, next) {
         try {
-            const h = this.hospital(req, res);
+            const h = AppointmentController.hospital(req, res);
             if (!h)
                 return;
             res.json({

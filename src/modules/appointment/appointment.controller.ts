@@ -69,7 +69,7 @@ export class AppointmentController {
 
   static async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.status(201).json({
@@ -86,7 +86,7 @@ export class AppointmentController {
 
   static async list(req: Request, res: Response, next: NextFunction) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -107,7 +107,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -125,7 +125,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -147,7 +147,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -169,7 +169,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -191,7 +191,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -212,7 +212,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -230,7 +230,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.status(201).json({
@@ -248,7 +248,7 @@ export class AppointmentController {
 
   static async walkIn(req: Request, res: Response, next: NextFunction) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.status(201).json({
@@ -265,7 +265,7 @@ export class AppointmentController {
 
   static async queue(req: Request, res: Response, next: NextFunction) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -286,7 +286,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -309,7 +309,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -332,7 +332,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -350,7 +350,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({
@@ -371,7 +371,7 @@ export class AppointmentController {
     next: NextFunction,
   ) {
     try {
-      const h = this.hospital(req, res);
+      const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
       res.json({

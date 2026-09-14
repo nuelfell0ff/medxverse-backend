@@ -305,7 +305,7 @@ export class AppointmentService {
             filter.status = query.status;
         if (query.date) {
             const date = String(query.date).slice(0, 10);
-            if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date))
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
                 throw err('Invalid appointment date. Use YYYY-MM-DD.');
             const s = new Date(`${date}T00:00:00.000`);
             const e = new Date(`${date}T23:59:59.999`);
