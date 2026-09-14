@@ -15,3 +15,32 @@ export var AppointmentType;
     AppointmentType["ROUTINE_CHECKUP"] = "ROUTINE_CHECKUP";
     AppointmentType["SURGERY_PREP"] = "SURGERY_PREP";
 })(AppointmentType || (AppointmentType = {}));
+export var ReminderChannel;
+(function (ReminderChannel) {
+    ReminderChannel["SMS"] = "SMS";
+    ReminderChannel["PUSH"] = "PUSH";
+    ReminderChannel["EMAIL"] = "EMAIL";
+})(ReminderChannel || (ReminderChannel = {}));
+export var ReminderStatus;
+(function (ReminderStatus) {
+    ReminderStatus["SCHEDULED"] = "SCHEDULED";
+    ReminderStatus["SENT"] = "SENT";
+    ReminderStatus["FAILED"] = "FAILED";
+    ReminderStatus["CANCELLED"] = "CANCELLED";
+})(ReminderStatus || (ReminderStatus = {}));
+export var QueueTicketStatus;
+(function (QueueTicketStatus) {
+    QueueTicketStatus["WAITING"] = "WAITING";
+    QueueTicketStatus["CALLED"] = "CALLED";
+    QueueTicketStatus["IN_SERVICE"] = "IN_SERVICE";
+    QueueTicketStatus["COMPLETED"] = "COMPLETED";
+    QueueTicketStatus["CANCELLED"] = "CANCELLED";
+    QueueTicketStatus["NO_SHOW"] = "NO_SHOW";
+})(QueueTicketStatus || (QueueTicketStatus = {}));
+export var QueuePriority;
+(function (QueuePriority) {
+    QueuePriority["ROUTINE"] = "ROUTINE";
+    QueuePriority["PRIORITY"] = "PRIORITY";
+    QueuePriority["URGENT"] = "URGENT";
+    QueuePriority["EMERGENCY"] = "EMERGENCY";
+})(QueuePriority || (QueuePriority = {}));
