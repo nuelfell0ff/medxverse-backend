@@ -1,629 +1,336 @@
-import { createHash } from 'crypto';
 import { Types } from 'mongoose';
-import { InventoryItemModel, DispenseRecordModel, } from './pharmacy.model.js';
-import { DispenseStatus, PharmacyBillingStatus, } from './pharmacy.types.js';
-import { createCharge, getPricingCatalogue, resolvePrice, } from '../billing/billing.service.js';
-import { BillingSourceModule, ChargeCategory, } from '../billing/billing.types.js';
+import { InventoryItemModel, DispenseRecordModel, PrescriptionModel, FormularyEntryModel, InventoryTransactionModel, } from './pharmacy.model.js';
+import { PrescriptionStatus, ScreeningStatus, DispenseStatus, InventoryTransactionType, FormularyStatus, PharmacyBillingStatus, } from './pharmacy.types.js';
+import { PharmacyScreeningService } from './pharmacy.screening.service.js';
+import { PharmacyInventoryService } from './pharmacy.inventory.service.js';
+import { PharmacyControlledService } from './pharmacy.controlled.service.js';
+import { emitPharmacyEvent, PharmacyEventType } from './pharmacy.events.js';
 import { publishEhrResource } from '../patient/ehr.publisher.js';
-/* =========================================================
-   HELPERS
-========================================================= */
-const createError = (message, statusCode) => {
-    const error = new Error(message);
-    error.statusCode = statusCode;
-    return error;
-};
-/**
- * Generates a predictable Pharmacy billing code for inventory items
- * when an explicit billing code has not been supplied.
- *
- * Example:
- *   Paracetamol 500mg -> PHARMACY_PARACETAMOL_500MG
- */
-const generateBillingCode = (name) => {
-    const normalized = name
-        .trim()
-        .toUpperCase()
-        .replace(/[^A-Z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '');
-    return `PHARMACY_${normalized}`;
-};
-/**
- * Billing's sourceId represents the entire Pharmacy dispense.
- *
- * One dispense can contain several medicines, but it must create one
- * centralized Billing charge. The deterministic source ID makes billing
- * retries idempotent.
- */
-const createBillingSourceId = (dispenseId) => {
-    const hash = createHash('sha256')
-        .update(`${String(dispenseId)}:PHARMACY`)
-        .digest('hex')
-        .slice(0, 24);
-    return new Types.ObjectId(hash);
-};
-/**
- * Pharmacy medication billing is calculated from the inventory price
- * at dispense time. This generic catalogue is used only as the
- * centralized Pharmacy billing service metadata/currency source; its
- * catalogue price is never used as the medication charge price.
- */
-const PHARMACY_SERVICE_CODE = 'PHARMACY_SERVICE';
-const PHARMACY_DEPARTMENT_NAME = 'Pharmacy';
-/* =========================================================
-   SERVICE
-========================================================= */
+const err = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode });
 export class PharmacyService {
-    /* =======================================================
-       INVENTORY
-    ======================================================= */
     static async createInventoryItem(hospitalId, dto) {
-        const reorderLevel = dto.reorderLevel ?? 10;
-        const isLowStock = dto.quantityInStock <= reorderLevel;
-        const billingCode = dto.billingCode?.trim().toUpperCase() ||
-            generateBillingCode(dto.name);
+        if (!Types.ObjectId.isValid(hospitalId))
+            throw err('Invalid hospital ID.');
         const item = await InventoryItemModel.create({
+            ...dto,
             hospitalId: new Types.ObjectId(hospitalId),
-            name: dto.name,
-            genericName: dto.genericName,
-            category: dto.category,
-            batchNumber: dto.batchNumber,
-            unitPrice: dto.unitPrice,
-            billingCode,
-            pricingCatalogueItemId: dto.pricingCatalogueItemId
-                ? new Types.ObjectId(dto.pricingCatalogueItemId)
-                : undefined,
-            quantityInStock: dto.quantityInStock,
-            reorderLevel,
-            unitOfMeasure: dto.unitOfMeasure,
+            pricingCatalogueItemId: dto.pricingCatalogueItemId ? new Types.ObjectId(dto.pricingCatalogueItemId) : undefined,
             expiryDate: new Date(dto.expiryDate),
-            isLowStock,
+            reorderLevel: dto.reorderLevel ?? 10,
+            controlledSubstance: dto.controlledSubstance ?? false,
+            isLowStock: dto.quantityInStock <= (dto.reorderLevel ?? 10),
         });
+        if (item.quantityInStock > 0) {
+            await InventoryTransactionModel.create({
+                hospitalId: new Types.ObjectId(hospitalId),
+                inventoryItemId: item._id,
+                type: InventoryTransactionType.RECEIPT,
+                quantity: item.quantityInStock,
+                quantityBefore: 0,
+                quantityAfter: item.quantityInStock,
+                performedBy: new Types.ObjectId(dto.performedBy || hospitalId),
+                reason: 'Initial pharmacy inventory receipt',
+            });
+        }
+        if (item.isLowStock)
+            emitPharmacyEvent(PharmacyEventType.LOW_STOCK, { hospitalId, inventoryItemId: String(item._id), quantity: item.quantityInStock });
         return item;
     }
     static async getInventory(hospitalId, query) {
-        const page = Number(query.page) || 1;
-        const limit = Number(query.limit) || 10;
-        const skip = (page - 1) * limit;
-        const filter = {
-            hospitalId,
-        };
-        if (query.category) {
-            filter.category =
-                query.category;
-        }
-        if (query.isLowStock === 'true') {
+        const page = Math.max(1, Number(query.page) || 1);
+        const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
+        const filter = { hospitalId: new Types.ObjectId(hospitalId) };
+        if (query.category)
+            filter.category = query.category;
+        if (query.isLowStock === 'true')
             filter.isLowStock = true;
-        }
-        if (query.search) {
-            filter.$or = [
-                {
-                    name: {
-                        $regex: query.search,
-                        $options: 'i',
-                    },
-                },
-                {
-                    genericName: {
-                        $regex: query.search,
-                        $options: 'i',
-                    },
-                },
-                {
-                    batchNumber: {
-                        $regex: query.search,
-                        $options: 'i',
-                    },
-                },
-                {
-                    billingCode: {
-                        $regex: query.search,
-                        $options: 'i',
-                    },
-                },
-            ];
-        }
+        if (query.controlledSubstance === 'true')
+            filter.controlledSubstance = true;
+        if (query.search)
+            filter.$or = ['name', 'genericName', 'batchNumber', 'barcode', 'gtin'].map(field => ({ [field]: { $regex: query.search, $options: 'i' } }));
         const [items, total] = await Promise.all([
-            InventoryItemModel.find(filter)
-                .sort({ name: 1 })
-                .skip(skip)
-                .limit(limit),
+            InventoryItemModel.find(filter).sort({ name: 1 }).skip((page - 1) * limit).limit(limit).lean(),
             InventoryItemModel.countDocuments(filter),
         ]);
-        return {
-            items,
-            total,
-            page,
-            limit,
-            pages: Math.ceil(total / limit),
-        };
+        return { items, total, page, limit, pages: Math.ceil(total / limit) };
     }
-    static async getInventoryItemById(hospitalId, itemId) {
-        const item = await InventoryItemModel.findOne({
-            _id: itemId,
-            hospitalId,
-        });
-        if (!item) {
-            throw createError('Inventory item not found.', 404);
-        }
+    static async getInventoryItemById(hospitalId, id) {
+        const item = await InventoryItemModel.findOne({ _id: id, hospitalId });
+        if (!item)
+            throw err('Inventory item not found.', 404);
         return item;
     }
-    static async updateStock(hospitalId, itemId, dto) {
-        const item = await this.getInventoryItemById(hospitalId, itemId);
-        const newQuantity = item.quantityInStock +
-            dto.quantityChange;
-        if (newQuantity < 0) {
-            throw createError('Stock quantity cannot drop below 0.', 400);
-        }
-        item.quantityInStock =
-            newQuantity;
-        item.isLowStock =
-            newQuantity <=
-                item.reorderLevel;
-        await item.save();
-        return item;
+    static async updateStock(hospitalId, userId, itemId, dto) {
+        const type = dto.transactionType || (dto.quantityChange >= 0 ? InventoryTransactionType.ADJUSTMENT_IN : InventoryTransactionType.ADJUSTMENT_OUT);
+        const updated = await PharmacyInventoryService.adjust(hospitalId, itemId, dto.quantityChange, type, userId, dto.reason);
+        emitPharmacyEvent(PharmacyEventType.STOCK_CHANGED, { hospitalId, inventoryItemId: itemId, quantityInStock: updated.quantityInStock });
+        if (updated.isLowStock)
+            emitPharmacyEvent(PharmacyEventType.LOW_STOCK, { hospitalId, inventoryItemId: itemId, quantity: updated.quantityInStock });
+        return updated;
     }
-    /* =======================================================
-       BILLING PRICING CATALOGUE
-    ======================================================= */
-    static async getPricingCatalogues(hospitalId, query) {
-        return getPricingCatalogue(hospitalId, {
-            search: query.search,
-            code: query.code,
-            planName: query.planName,
-            page: Number(query.page) || 1,
-            limit: Number(query.limit) || 50,
-            category: ChargeCategory.PHARMACY,
-            departmentName: PHARMACY_DEPARTMENT_NAME,
-            activeOnly: true,
+    static async createPrescription(hospitalId, dto) {
+        if (!Types.ObjectId.isValid(dto.patientId) || !Types.ObjectId.isValid(dto.prescriberId))
+            throw err('Invalid patient or prescriber ID.');
+        if (!dto.medications?.length)
+            throw err('At least one prescribed medication is required.');
+        const duplicate = dto.sourceRecordId ? await PrescriptionModel.findOne({
+            hospitalId, source: dto.source, sourceRecordId: dto.sourceRecordId,
+        }) : null;
+        if (duplicate)
+            return duplicate;
+        const prescription = await PrescriptionModel.create({
+            hospitalId: new Types.ObjectId(hospitalId),
+            patientId: new Types.ObjectId(dto.patientId),
+            prescriberId: new Types.ObjectId(dto.prescriberId),
+            source: dto.source,
+            sourceRecordId: dto.sourceRecordId ? new Types.ObjectId(dto.sourceRecordId) : undefined,
+            sourceSystem: dto.sourceSystem,
+            department: dto.department,
+            encounterId: dto.encounterId ? new Types.ObjectId(dto.encounterId) : undefined,
+            medications: dto.medications.map(m => ({
+                ...m,
+                inventoryItemId: m.inventoryItemId ? new Types.ObjectId(m.inventoryItemId) : undefined,
+            })),
+            status: PrescriptionStatus.RECEIVED,
+            screeningStatus: ScreeningStatus.PENDING,
+            requestedAt: new Date(),
+            notes: dto.notes,
+        });
+        emitPharmacyEvent(PharmacyEventType.PRESCRIPTION_RECEIVED, { hospitalId, prescriptionId: String(prescription._id), patientId: dto.patientId });
+        return prescription;
+    }
+    static async screenPrescription(hospitalId, prescriptionId) {
+        const result = await PharmacyScreeningService.screenPrescription(hospitalId, prescriptionId);
+        emitPharmacyEvent(PharmacyEventType.SCREENING_COMPLETED, { hospitalId, prescriptionId, screeningStatus: result.status });
+        return result;
+    }
+    static async approvePrescription(hospitalId, prescriptionId, pharmacistId) {
+        const prescription = await PrescriptionModel.findOne({ _id: prescriptionId, hospitalId });
+        if (!prescription)
+            throw err('Prescription not found.', 404);
+        if (prescription.screeningStatus === ScreeningStatus.BLOCKED)
+            throw err('Prescription is blocked by clinical screening.', 409);
+        prescription.status = PrescriptionStatus.APPROVED;
+        prescription.approvedAt = new Date();
+        prescription.reviewedAt = new Date();
+        await prescription.save();
+        return prescription;
+    }
+    static async getPrescriptions(hospitalId, query) {
+        const page = Math.max(1, Number(query.page) || 1);
+        const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
+        const filter = { hospitalId: new Types.ObjectId(hospitalId) };
+        if (query.patientId)
+            filter.patientId = new Types.ObjectId(query.patientId);
+        if (query.status)
+            filter.status = query.status;
+        const [prescriptions, total] = await Promise.all([
+            PrescriptionModel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+            PrescriptionModel.countDocuments(filter),
+        ]);
+        return { prescriptions, total, page, limit, pages: Math.ceil(total / limit) };
+    }
+    static async getPrescriptionById(hospitalId, id) {
+        const prescription = await PrescriptionModel.findOne({ _id: id, hospitalId })
+            .populate('patientId', 'firstName lastName mrn allergies')
+            .populate('prescriberId', 'firstName lastName email');
+        if (!prescription)
+            throw err('Prescription not found.', 404);
+        return prescription;
+    }
+    static async createFormularyEntry(hospitalId, dto) {
+        return FormularyEntryModel.create({
+            hospitalId: new Types.ObjectId(hospitalId),
+            ...dto,
+            inventoryItemId: dto.inventoryItemId ? new Types.ObjectId(dto.inventoryItemId) : undefined,
+            substituteInventoryItemIds: (dto.substituteInventoryItemIds || []).map(id => new Types.ObjectId(id)),
+            status: dto.status || FormularyStatus.APPROVED,
+            effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date(),
+            effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : undefined,
         });
     }
-    /* =======================================================
-       BILLING CAPTURE
-    ======================================================= */
-    static async captureBilling(hospitalId, dispensedByUserId, record) {
-        const billingErrors = [];
-        /*
-         * One Pharmacy dispense is one billable transaction.
-         *
-         * The individual medicines remain inside record.items with their own
-         * unitPrice, quantity and totalPrice snapshots. Billing receives one
-         * aggregate PHARMACY_SERVICE charge whose amount is the complete
-         * dispense total.
-         *
-         * This prevents a multi-drug dispense from appearing as several
-         * separate charges on the Billing page.
-         */
-        if (record.billingChargeIds?.length > 0) {
-            record.billingChargeId =
-                record.billingChargeIds[0];
-            record.billingErrors = [];
-            record.billingStatus = PharmacyBillingStatus.CAPTURED;
-            record.billingCapturedAt =
-                record.billingCapturedAt ?? new Date();
-            await record.save();
-            return record;
-        }
-        if (!record.items || record.items.length === 0) {
-            record.billingStatus = PharmacyBillingStatus.FAILED;
-            record.billingErrors = ['Cannot bill an empty pharmacy dispense.'];
-            record.billingCapturedAt = undefined;
-            await record.save();
-            return record;
-        }
-        try {
-            const calculatedTotal = record.items.reduce((total, item) => {
-                const unitPrice = Number(item.unitPrice);
-                const quantity = Number(item.quantity);
-                if (!Number.isFinite(unitPrice) ||
-                    unitPrice < 0 ||
-                    !Number.isInteger(quantity) ||
-                    quantity <= 0) {
-                    throw new Error(`Invalid price or quantity for inventory item ${String(item.inventoryItemId)}.`);
-                }
-                const itemTotal = Number(item.totalPrice);
-                const expectedItemTotal = unitPrice * quantity;
-                if (!Number.isFinite(itemTotal) ||
-                    itemTotal < 0 ||
-                    Math.abs(itemTotal - expectedItemTotal) > 0.01) {
-                    throw new Error(`Invalid calculated total for inventory item ${String(item.inventoryItemId)}.`);
-                }
-                return total + expectedItemTotal;
-            }, 0);
-            const dispenseTotal = Number(record.totalAmount);
-            if (!Number.isFinite(dispenseTotal) ||
-                dispenseTotal < 0 ||
-                Math.abs(dispenseTotal - calculatedTotal) > 0.01) {
-                throw new Error('Pharmacy dispense total does not match the sum of its medication prices.');
-            }
-            /*
-             * Keep the Billing description useful without creating one Charge
-             * document per medication.
-             */
-            const descriptionLines = await Promise.all(record.items.map(async (item) => {
-                const inventoryItem = await InventoryItemModel.findOne({
-                    _id: item.inventoryItemId,
-                    hospitalId,
-                }).select('name unitOfMeasure');
-                const name = inventoryItem?.name ||
-                    `Inventory item ${String(item.inventoryItemId)}`;
-                const unit = inventoryItem?.unitOfMeasure ||
-                    'UNIT';
-                return `${name} (${unit}) x ${item.quantity}`;
-            }));
-            /*
-             * createCharge resolves PHARMACY_SERVICE centrally so the hospital's
-             * active Pharmacy catalogue still supplies the billing metadata and
-             * currency. The actual medication amount comes from the inventory
-             * prices stored on this dispense.
-             *
-             * If the aggregate total happens to equal the catalogue price, do not
-             * send an override. Billing will resolve the same amount naturally.
-             */
-            const sourceId = createBillingSourceId(record._id);
-            const catalogue = await resolvePrice({
-                hospitalId,
-                code: PHARMACY_SERVICE_CODE,
-                departmentName: PHARMACY_DEPARTMENT_NAME,
-                category: ChargeCategory.PHARMACY,
-                serviceDate: record.createdAt,
-            });
-            const cataloguePrice = Number(catalogue.price);
-            const chargeInput = {
-                hospitalId,
-                patientId: record.patientId,
-                description: `Pharmacy dispense ${String(record._id)}: ` +
-                    descriptionLines.join('; '),
-                category: ChargeCategory.PHARMACY,
-                sourceModule: BillingSourceModule.PHARMACY,
-                sourceId,
-                serviceCode: PHARMACY_SERVICE_CODE,
-                departmentName: PHARMACY_DEPARTMENT_NAME,
-                quantity: 1,
-                chargedBy: dispensedByUserId,
-                chargeDate: record.createdAt,
-                notes: `Aggregate Pharmacy medication dispense ${String(record._id)}`,
-            };
-            if (!Number.isFinite(cataloguePrice) ||
-                cataloguePrice < 0) {
-                throw new Error('The active Pharmacy pricing catalogue returned an invalid price.');
-            }
-            if (Math.abs(dispenseTotal - cataloguePrice) > 0.01) {
-                chargeInput.overridePrice = dispenseTotal;
-                chargeInput.overrideReason =
-                    'Pharmacy medication billing uses the sum of each dispensed medicine inventory unit price multiplied by quantity.';
-            }
-            const charge = await createCharge(chargeInput);
-            const chargeId = new Types.ObjectId(String(charge._id));
-            const chargeObject = charge;
-            /*
-             * Exactly one charge ID is stored for the complete dispense.
-             */
-            record.billingChargeId = chargeId;
-            record.billingChargeIds = [chargeId];
-            record.billingErrors = [];
-            /*
-             * Preserve the per-item medication pricing snapshots. These are not
-             * individual Billing charges; they are the audit breakdown of the
-             * aggregate Pharmacy charge.
-             */
-            for (const item of record.items) {
-                item.billingChargeId = undefined;
-                item.billingCode = PHARMACY_SERVICE_CODE;
-                item.billingError = undefined;
-                item.billingUnitPrice = item.unitPrice;
-                item.billingCurrency =
-                    chargeObject.currency ?? catalogue.currency ?? 'NGN';
-                item.billingCatalogueVersion =
-                    chargeObject.catalogueVersion ?? catalogue.version;
-                item.pricingCatalogueItemId =
-                    chargeObject.catalogueItemId ??
-                        catalogue.catalogueItemId;
-                item.pricingCataloguePlanName =
-                    chargeObject.cataloguePlanName ??
-                        catalogue.name;
-                item.pricingCataloguePrice =
-                    chargeObject.cataloguePrice ??
-                        catalogue.price;
-                item.pricingCatalogueCurrency =
-                    chargeObject.currency ??
-                        catalogue.currency ??
-                        'NGN';
-                item.pricingCatalogueVersion =
-                    chargeObject.catalogueVersion ??
-                        catalogue.version;
-            }
-            record.billingStatus =
-                PharmacyBillingStatus.CAPTURED;
-            record.billingCapturedAt = new Date();
-            await record.save();
-            return record;
-        }
-        catch (error) {
-            const message = error instanceof Error
-                ? error.message
-                : 'Unable to capture pharmacy billing.';
-            billingErrors.push(message);
-            record.billingChargeIds = [];
-            record.billingErrors = billingErrors;
-            record.billingStatus =
-                PharmacyBillingStatus.FAILED;
-            record.billingCapturedAt = undefined;
-            for (const item of record.items) {
-                item.billingError = message;
-            }
-            await record.save();
-            return record;
-        }
+    static async getFormulary(hospitalId, query) {
+        const page = Math.max(1, Number(query.page) || 1);
+        const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
+        const filter = { hospitalId: new Types.ObjectId(hospitalId) };
+        if (query.department)
+            filter.department = query.department;
+        if (query.status)
+            filter.status = query.status;
+        if (query.search)
+            filter.$or = [{ medicationName: { $regex: query.search, $options: 'i' } }, { genericName: { $regex: query.search, $options: 'i' } }];
+        const [entries, total] = await Promise.all([
+            FormularyEntryModel.find(filter).sort({ medicationName: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+            FormularyEntryModel.countDocuments(filter),
+        ]);
+        return { entries, total, page, limit, pages: Math.ceil(total / limit) };
     }
-    /* =======================================================
-       DISPENSING
-    ======================================================= */
-    static async createDispenseRecord(hospitalId, dispensedByUserId, dto) {
-        const processedItems = [];
-        let totalAmount = 0;
-        const stockDeductions = [];
-        if (!dto.items || dto.items.length === 0) {
-            throw createError('At least one medicine is required.', 400);
-        }
-        if (!Types.ObjectId.isValid(dto.patientId)) {
-            throw createError('Invalid patient ID.', 400);
-        }
-        if (dto.consultationId && !Types.ObjectId.isValid(dto.consultationId)) {
-            throw createError('Invalid consultation ID.', 400);
-        }
-        /*
-         * Pharmacy medication billing is calculated from the actual inventory
-         * unit price. No Pharmacy pricing plan is required from the UI.
-         *
-         * We still resolve PHARMACY_SERVICE automatically so Billing can use
-         * the hospital's centralized Pharmacy currency/service metadata. The
-         * resolved catalogue price itself is never used as the medication
-         * price.
-         */
-        let pharmacyCatalogue;
+    static async createDispenseRecord(hospitalId, pharmacistId, dto) {
+        const session = await (await import('mongoose')).default.startSession();
+        let record;
         try {
-            pharmacyCatalogue = await resolvePrice({
-                hospitalId,
-                code: PHARMACY_SERVICE_CODE,
-                departmentName: PHARMACY_DEPARTMENT_NAME,
-                category: ChargeCategory.PHARMACY,
-                serviceDate: new Date(),
+            await session.withTransaction(async () => {
+                const prescription = await PrescriptionModel.findOne({ _id: dto.prescriptionId, hospitalId }).session(session);
+                if (!prescription)
+                    throw err('Prescription not found.', 404);
+                if (![PrescriptionStatus.APPROVED, PrescriptionStatus.PARTIALLY_DISPENSED].includes(prescription.status))
+                    throw err('Prescription is not approved for dispensing.', 409);
+                if (prescription.screeningStatus === ScreeningStatus.BLOCKED)
+                    throw err('Prescription is blocked by screening.', 409);
+                if (!dto.items?.length)
+                    throw err('At least one medicine is required for dispensing.');
+                const processed = [];
+                let totalAmount = 0;
+                for (const requested of dto.items) {
+                    const medication = prescription.medications[requested.prescriptionMedicationIndex];
+                    if (!medication)
+                        throw err(`Invalid prescription medication index: ${requested.prescriptionMedicationIndex}.`);
+                    if (!Types.ObjectId.isValid(requested.inventoryItemId))
+                        throw err('Invalid inventory item ID.');
+                    if (!requested.barcodeScanned?.trim())
+                        throw err(`A barcode scan is required for ${medication.medicationName}.`);
+                    const inventory = await InventoryItemModel.findOne({
+                        _id: requested.inventoryItemId,
+                        hospitalId,
+                        isActive: true,
+                    }).session(session);
+                    if (!inventory)
+                        throw err('Inventory item not found.', 404);
+                    if (medication.barcode && medication.barcode !== requested.barcodeScanned)
+                        throw err(`Barcode does not match the prescribed medication: ${medication.medicationName}.`, 409);
+                    if (inventory.barcode && inventory.barcode !== requested.barcodeScanned)
+                        throw err(`Scanned barcode does not match inventory item ${inventory.name}.`, 409);
+                    if (inventory.expiryDate <= new Date())
+                        throw err(`Inventory item ${inventory.name} is expired.`, 409);
+                    if (inventory.controlledSubstance && !dto.secondVerifierId)
+                        throw err(`Controlled substance ${inventory.name} requires a second authorized sign-off.`, 403);
+                    if (inventory.controlledSubstance && dto.secondVerifierId === pharmacistId)
+                        throw err('The second controlled-substance verifier must be a different user.', 400);
+                    const before = inventory.quantityInStock;
+                    const updated = await PharmacyInventoryService.atomicDecrement(hospitalId, requested.inventoryItemId, requested.quantity, pharmacistId, `Dispense against prescription ${dto.prescriptionId}`, 'Prescription', dto.prescriptionId, session);
+                    const total = inventory.unitPrice * requested.quantity;
+                    totalAmount += total;
+                    processed.push({
+                        prescriptionMedicationIndex: requested.prescriptionMedicationIndex,
+                        inventoryItemId: new Types.ObjectId(requested.inventoryItemId),
+                        quantity: requested.quantity,
+                        barcodeScanned: requested.barcodeScanned,
+                        barcodeVerified: true,
+                        unitPrice: inventory.unitPrice,
+                        totalPrice: total,
+                        _controlled: inventory.controlledSubstance ? {
+                            before,
+                            after: updated.quantityInStock,
+                            inventoryItemId: requested.inventoryItemId,
+                            quantity: requested.quantity,
+                        } : undefined,
+                    });
+                }
+                record = await DispenseRecordModel.create([{
+                        hospitalId: new Types.ObjectId(hospitalId),
+                        patientId: prescription.patientId,
+                        prescriptionId: prescription._id,
+                        encounterId: prescription.encounterId,
+                        dispensedBy: new Types.ObjectId(pharmacistId),
+                        secondVerifierId: dto.secondVerifierId ? new Types.ObjectId(dto.secondVerifierId) : undefined,
+                        items: processed.map(({ _controlled, ...item }) => item),
+                        totalAmount,
+                        status: DispenseStatus.DISPENSED,
+                        screeningStatus: prescription.screeningStatus,
+                        emarReferenceId: dto.emarReferenceId ? new Types.ObjectId(dto.emarReferenceId) : undefined,
+                        notes: dto.notes,
+                        billingStatus: PharmacyBillingStatus.NOT_ATTEMPTED,
+                        billingErrors: [],
+                    }], { session }).then(rows => rows[0]);
+                for (const item of processed) {
+                    if (item._controlled) {
+                        await PharmacyControlledService.appendDispenseLog({
+                            hospitalId,
+                            prescriptionId: dto.prescriptionId,
+                            dispenseRecordId: String(record._id),
+                            inventoryItemId: item._controlled.inventoryItemId,
+                            patientId: String(prescription.patientId),
+                            quantity: item._controlled.quantity,
+                            quantityBefore: item._controlled.before,
+                            quantityAfter: item._controlled.after,
+                            performedBy: pharmacistId,
+                            secondVerifierId: dto.secondVerifierId,
+                            reason: `Controlled substance dispense ${String(record._id)}`,
+                        });
+                    }
+                }
+                prescription.status = PrescriptionStatus.DISPENSED;
+                await prescription.save({ session });
+                emitPharmacyEvent(PharmacyEventType.DISPENSED, {
+                    hospitalId, dispenseRecordId: String(record._id), patientId: String(record.patientId),
+                });
             });
         }
-        catch (error) {
-            throw createError(error instanceof Error
-                ? error.message
-                : 'No active Pharmacy billing configuration is available.', 400);
+        finally {
+            await session.endSession();
         }
-        for (const reqItem of dto.items) {
-            if (!Types.ObjectId.isValid(reqItem.inventoryItemId)) {
-                throw createError(`Invalid inventory item ID: ${reqItem.inventoryItemId}.`, 400);
-            }
-            const quantity = Number(reqItem.quantity);
-            if (!Number.isInteger(quantity) || quantity <= 0) {
-                throw createError('Each dispense quantity must be a positive whole number.', 400);
-            }
-            const inventoryItem = await InventoryItemModel.findOne({
-                _id: reqItem.inventoryItemId,
-                hospitalId,
-            });
-            if (!inventoryItem) {
-                throw createError(`Item ID ${reqItem.inventoryItemId} not found in inventory.`, 404);
-            }
-            if (inventoryItem.quantityInStock < quantity) {
-                throw createError(`Insufficient stock for '${inventoryItem.name}'. Available: ${inventoryItem.quantityInStock}, Requested: ${quantity}`, 400);
-            }
-            const unitPrice = Number(inventoryItem.unitPrice);
-            if (!Number.isFinite(unitPrice) || unitPrice < 0) {
-                throw createError(`Invalid unit price for '${inventoryItem.name}'.`, 400);
-            }
-            const itemTotal = unitPrice * quantity;
-            totalAmount += itemTotal;
-            processedItems.push({
-                inventoryItemId: inventoryItem._id,
-                quantity,
-                unitPrice,
-                totalPrice: itemTotal,
-                billingCode: PHARMACY_SERVICE_CODE,
-                pricingCatalogueItemId: pharmacyCatalogue.catalogueItemId,
-                pricingCataloguePlanName: pharmacyCatalogue.name,
-                pricingCataloguePrice: pharmacyCatalogue.price,
-                pricingCatalogueCurrency: pharmacyCatalogue.currency,
-                pricingCatalogueVersion: pharmacyCatalogue.version,
-            });
-            /* Deduct only after every validation above succeeds. */
-            inventoryItem.quantityInStock -= quantity;
-            inventoryItem.isLowStock =
-                inventoryItem.quantityInStock <= inventoryItem.reorderLevel;
-            stockDeductions.push({ item: inventoryItem, quantity });
-        }
-        let dispenseRecord;
+        // Downstream integrations happen after the clinical transaction commits.
         try {
-            await Promise.all(stockDeductions.map(({ item }) => item.save()));
-            dispenseRecord = await DispenseRecordModel.create({
-                hospitalId: new Types.ObjectId(hospitalId),
-                patientId: new Types.ObjectId(dto.patientId),
-                consultationId: dto.consultationId
-                    ? new Types.ObjectId(dto.consultationId)
-                    : undefined,
-                dispensedBy: new Types.ObjectId(dispensedByUserId),
-                items: processedItems,
-                totalAmount,
-                status: DispenseStatus.DISPENSED,
-                notes: dto.notes,
-                billingStatus: PharmacyBillingStatus.NOT_ATTEMPTED,
-                billingChargeIds: [],
-                billingErrors: [],
-            });
-        }
-        catch (error) {
-            /*
-             * Do not leave stock reduced if the dispense record could not be
-             * created. Restore exactly what this request deducted.
-             */
-            await Promise.all(stockDeductions.map(async ({ item, quantity }) => {
-                item.quantityInStock += quantity;
-                item.isLowStock = item.quantityInStock <= item.reorderLevel;
-                await item.save();
-            }));
-            throw error;
-        }
-        await publishEhrResource({
-            hospitalId,
-            patientId: dispenseRecord.patientId.toString(),
-            actorId: dispensedByUserId,
-            role: 'PHARMACY',
-            resourceType: 'MedicationStatement',
-            resourceId: dispenseRecord._id.toString(),
-            status: dispenseRecord.status,
-            department: 'Pharmacy',
-            resource: {
+            await publishEhrResource({
+                hospitalId,
+                patientId: String(record.patientId),
+                actorId: pharmacistId,
+                role: 'PHARMACY',
                 resourceType: 'MedicationStatement',
-                id: dispenseRecord._id.toString(),
-                status: dispenseRecord.status,
-                effectiveDateTime: dispenseRecord.createdAt,
-                medication: dispenseRecord.items.map((item) => ({
-                    inventoryItemId: item.inventoryItemId,
-                    quantity: item.quantity,
-                    unitPrice: item.unitPrice,
-                    totalPrice: item.totalPrice,
-                    billingCode: item.billingCode,
-                })),
-                note: dispenseRecord.notes,
-                sourceDispenseId: dispenseRecord._id.toString(),
-                consultationId: dispenseRecord.consultationId?.toString(),
-            },
-            reason: 'Pharmacy dispense published to Unified EHR.',
-        });
-        /*
-         * Billing is isolated from the dispensing workflow. The dispense is
-         * already recorded even if Billing temporarily fails.
-         */
-        try {
-            await this.captureBilling(hospitalId, dispensedByUserId, dispenseRecord);
-        }
-        catch (error) {
-            dispenseRecord.billingStatus = PharmacyBillingStatus.FAILED;
-            dispenseRecord.billingErrors = [
-                error instanceof Error
-                    ? error.message
-                    : 'Unable to capture pharmacy billing.',
-            ];
-            await dispenseRecord.save();
-        }
-        return dispenseRecord.populate([
-            {
-                path: 'patientId',
-                select: 'firstName lastName mrn phone',
-            },
-            {
-                path: 'dispensedBy',
-                select: 'firstName lastName email',
-            },
-            {
-                path: 'items.inventoryItemId',
-                select: 'name genericName unitOfMeasure billingCode',
-            },
-            {
-                path: 'billingChargeIds',
-                select: 'serviceCode description quantity unitPrice currency cataloguePrice catalogueVersion netAmount status',
-            },
-        ]);
-    }
-    /* =======================================================
-       RETRY BILLING
-    ======================================================= */
-    static async retryBilling(hospitalId, dispensedByUserId, dispenseId) {
-        const record = await DispenseRecordModel.findOne({
-            _id: dispenseId,
-            hospitalId,
-        });
-        if (!record) {
-            throw createError('Dispense record not found.', 404);
-        }
-        if (record.billingStatus ===
-            PharmacyBillingStatus.CAPTURED) {
-            return record.populate([
-                {
-                    path: 'patientId',
-                    select: 'firstName lastName mrn phone',
+                resourceId: String(record._id),
+                status: record.status,
+                department: 'Pharmacy',
+                resource: {
+                    resourceType: 'MedicationStatement',
+                    id: String(record._id),
+                    prescriptionId: String(record.prescriptionId),
+                    effectiveDateTime: record.createdAt,
+                    medication: record.items.map((item) => ({
+                        inventoryItemId: String(item.inventoryItemId),
+                        quantity: item.quantity,
+                        unitPrice: item.unitPrice,
+                        totalPrice: item.totalPrice,
+                        barcodeVerified: item.barcodeVerified,
+                    })),
+                    emarReferenceId: record.emarReferenceId ? String(record.emarReferenceId) : undefined,
                 },
-                {
-                    path: 'dispensedBy',
-                    select: 'firstName lastName email',
-                },
-                {
-                    path: 'items.inventoryItemId',
-                    select: 'name genericName unitOfMeasure billingCode',
-                },
-                {
-                    path: 'billingChargeIds',
-                    select: 'serviceCode description quantity unitPrice currency cataloguePrice catalogueVersion netAmount status',
-                },
-            ]);
+                reason: 'Integrated Pharmacy dispense published to Unified EHR.',
+            });
         }
-        await this.captureBilling(hospitalId, dispensedByUserId, record);
+        catch {
+            // The dispense remains authoritative; EHR publication can be retried by an outbox worker.
+        }
         return record.populate([
-            {
-                path: 'patientId',
-                select: 'firstName lastName mrn phone',
-            },
-            {
-                path: 'dispensedBy',
-                select: 'firstName lastName email',
-            },
-            {
-                path: 'items.inventoryItemId',
-                select: 'name genericName unitOfMeasure billingCode',
-            },
-            {
-                path: 'billingChargeIds',
-                select: 'serviceCode description quantity unitPrice currency cataloguePrice catalogueVersion netAmount status',
-            },
+            { path: 'patientId', select: 'firstName lastName mrn phone allergies' },
+            { path: 'prescriptionId' },
+            { path: 'dispensedBy', select: 'firstName lastName email' },
+            { path: 'items.inventoryItemId', select: 'name genericName strength dosageForm unitOfMeasure barcode controlledSubstance' },
         ]);
     }
-    /* =======================================================
-       LIST DISPENSE RECORDS
-    ======================================================= */
     static async getDispenseRecords(hospitalId, query) {
-        const page = Number(query.page) || 1;
-        const limit = Number(query.limit) || 10;
-        const skip = (page - 1) * limit;
-        const filter = {
-            hospitalId,
-        };
-        if (query.patientId) {
-            filter.patientId =
-                new Types.ObjectId(query.patientId);
-        }
-        if (query.status) {
-            filter.status =
-                query.status;
-        }
-        if (query.billingStatus) {
-            filter.billingStatus =
-                query.billingStatus;
-        }
+        const page = Math.max(1, Number(query.page) || 1);
+        const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
+        const filter = { hospitalId: new Types.ObjectId(hospitalId) };
+        if (query.patientId)
+            filter.patientId = new Types.ObjectId(query.patientId);
+        if (query.prescriptionId)
+            filter.prescriptionId = new Types.ObjectId(query.prescriptionId);
+        if (query.status)
+            filter.status = query.status;
+        if (query.billingStatus)
+            filter.billingStatus = query.billingStatus;
         const [records, total] = await Promise.all([
             DispenseRecordModel.find(filter)
-                .populate('patientId', 'firstName lastName mrn phone')
+                .populate('patientId', 'firstName lastName mrn phone allergies')
+                .populate('prescriptionId')
                 .populate('dispensedBy', 'firstName lastName email')
-                .populate('items.inventoryItemId', 'name genericName unitOfMeasure billingCode')
-                .populate('billingChargeIds', 'serviceCode description quantity unitPrice currency cataloguePrice catalogueVersion netAmount status')
-                .sort({
-                createdAt: -1,
-            })
-                .skip(skip)
-                .limit(limit),
+                .populate('items.inventoryItemId', 'name genericName strength dosageForm unitOfMeasure barcode controlledSubstance')
+                .sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
             DispenseRecordModel.countDocuments(filter),
         ]);
-        return {
-            records,
-            total,
-            page,
-            limit,
-            pages: Math.ceil(total / limit),
-        };
+        return { records, total, page, limit, pages: Math.ceil(total / limit) };
+    }
+    static async getInventoryLedger(hospitalId, itemId, page = 1, limit = 50) {
+        return InventoryTransactionModel.find({ hospitalId, inventoryItemId: itemId }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean();
     }
 }

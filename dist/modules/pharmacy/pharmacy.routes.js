@@ -1,31 +1,20 @@
 import { Router } from 'express';
-import { PharmacyController, } from './pharmacy.controller.js';
-import { authenticate, } from '../../middlewares/auth.middleware.js';
+import { PharmacyController } from './pharmacy.controller.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
 const router = Router();
 router.use(authenticate);
-/* =========================================================
-   INVENTORY MANAGEMENT
-========================================================= */
 router.post('/inventory', PharmacyController.createItem);
 router.get('/inventory', PharmacyController.listInventory);
 router.get('/inventory/:id', PharmacyController.getItemById);
 router.patch('/inventory/:id/stock', PharmacyController.adjustStock);
-/* =========================================================
-   BILLING PRICING CATALOGUE
-========================================================= */
-router.get('/pricing-catalogues', PharmacyController.listPricingCatalogues);
-/* =========================================================
-   DISPENSING MANAGEMENT
-========================================================= */
+router.get('/inventory/:id/ledger', PharmacyController.inventoryLedger);
+router.post('/prescriptions', PharmacyController.createPrescription);
+router.get('/prescriptions', PharmacyController.listPrescriptions);
+router.get('/prescriptions/:id', PharmacyController.getPrescriptionById);
+router.post('/prescriptions/:id/screen', PharmacyController.screenPrescription);
+router.post('/prescriptions/:id/approve', PharmacyController.approvePrescription);
 router.post('/dispense', PharmacyController.dispenseDrugs);
 router.get('/dispense', PharmacyController.listDispenseRecords);
-/* =========================================================
-   BILLING
-========================================================= */
-/**
- * Retry a failed or partially captured pharmacy charge.
- *
- * POST /pharmacy/dispense/:id/billing/retry
- */
-router.post('/dispense/:id/billing/retry', PharmacyController.retryBilling);
+router.post('/formulary', PharmacyController.createFormulary);
+router.get('/formulary', PharmacyController.listFormulary);
 export default router;

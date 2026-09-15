@@ -1,349 +1,87 @@
+import { Request, Response, NextFunction } from 'express';
+import { PharmacyService } from './pharmacy.service.js';
 import {
-  Request,
-  Response,
-  NextFunction,
-} from 'express';
-
-import {
-  PharmacyService,
-} from './pharmacy.service.js';
-
-import {
-  CreateInventoryItemDTO,
-  UpdateStockDTO,
-  CreateDispenseRecordDTO,
-  GetInventoryQueryDTO,
-  GetDispenseQueryDTO,
+  CreateInventoryItemDTO, UpdateStockDTO, CreateDispenseRecordDTO,
+  CreatePrescriptionDTO, CreateFormularyEntryDTO,
 } from './pharmacy.types.js';
 
-/* =========================================================
-   AUTH REQUEST
-========================================================= */
-
-interface AuthenticatedRequest<
-  Params = Record<string, string>,
-  ResBody = any,
-  ReqBody = any,
-  ReqQuery = any
-> extends Request<
-    Params,
-    ResBody,
-    ReqBody,
-    ReqQuery
-  > {
-  user?: {
-    id: string;
-    hospitalId?: string;
-  };
+interface AuthenticatedRequest extends Request {
+  account?: { accountId?: string; hospitalId?: string; hospital?: string; id?: string; _id?: string };
+  user?: { accountId?: string; hospitalId?: string; hospital?: string; id?: string; _id?: string };
 }
 
-/* =========================================================
-   CONTROLLER
-========================================================= */
-
 export class PharmacyController {
-  /* =======================================================
-     INVENTORY
-  ======================================================= */
-
-  static async createItem(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq =
-        req as AuthenticatedRequest<
-          {},
-          any,
-          CreateInventoryItemDTO
-        >;
-
-      const user =
-        authReq.user!;
-
-      const hospitalId =
-        user.hospitalId ||
-        user.id;
-
-      const item =
-        await PharmacyService.createInventoryItem(
-          hospitalId,
-          authReq.body
-        );
-
-      res.status(201).json({
-        success: true,
-        data: item,
-      });
-    } catch (error: unknown) {
-      next(error);
-    }
+  private static getHospitalId(req: Request): string | null {
+    const r = req as AuthenticatedRequest;
+    const a = r.account;
+    const u = r.user;
+    const id = a?.accountId ?? a?.hospitalId ?? a?.hospital ?? a?.id ?? a?._id
+      ?? u?.hospitalId ?? u?.hospital ?? u?.accountId ?? u?.id ?? u?._id;
+    return id ? String(id) : null;
   }
 
-  static async listInventory(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq =
-        req as AuthenticatedRequest<
-          {},
-          any,
-          any,
-          GetInventoryQueryDTO
-        >;
-
-      const user =
-        authReq.user!;
-
-      const hospitalId =
-        user.hospitalId ||
-        user.id;
-
-      const result =
-        await PharmacyService.getInventory(
-          hospitalId,
-          authReq.query
-        );
-
-      res.status(200).json({
-        success: true,
-        ...result,
-      });
-    } catch (error: unknown) {
-      next(error);
+  private static hospital(req: Request, res: Response): string | null {
+    const id = PharmacyController.getHospitalId(req);
+    if (!id) {
+      res.status(401).json({ statusCode: 401, success: false, message: 'Authenticated hospital context is missing.', errors: [] });
+      return null;
     }
+    return id;
   }
 
-  static async getItemById(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq =
-        req as unknown as AuthenticatedRequest<{
-          id: string;
-        }>;
-
-      const user =
-        authReq.user!;
-
-      const hospitalId =
-        user.hospitalId ||
-        user.id;
-
-      const itemId =
-        req.params.id;
-
-      const item =
-        await PharmacyService.getInventoryItemById(
-          hospitalId,
-          itemId
-        );
-
-      res.status(200).json({
-        success: true,
-        data: item,
-      });
-    } catch (error: unknown) {
-      next(error);
-    }
+  static async createItem(req: Request, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.status(201).json({ success: true, data: await PharmacyService.createInventoryItem(h, req.body as CreateInventoryItemDTO) }); } catch (e) { next(e); }
   }
 
-  static async adjustStock(
-    req: Request<
-      { id: string },
-      any,
-      UpdateStockDTO
-    >,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq =
-        req as unknown as AuthenticatedRequest<
-          { id: string },
-          any,
-          UpdateStockDTO
-        >;
-
-      const user =
-        authReq.user!;
-
-      const hospitalId =
-        user.hospitalId ||
-        user.id;
-
-      const itemId =
-        req.params.id;
-
-      const updated =
-        await PharmacyService.updateStock(
-          hospitalId,
-          itemId,
-          authReq.body
-        );
-
-      res.status(200).json({
-        success: true,
-        data: updated,
-      });
-    } catch (error: unknown) {
-      next(error);
-    }
+  static async listInventory(req: Request, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.json({ success: true, ...(await PharmacyService.getInventory(h, req.query as any)) }); } catch (e) { next(e); }
   }
 
-  /* =======================================================
-     BILLING PRICING CATALOGUE
-  ======================================================= */
-
-  static async listPricingCatalogues(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq =
-        req as AuthenticatedRequest<{}, any, any, any>;
-
-      const user = authReq.user!;
-      const hospitalId = user.hospitalId || user.id;
-
-      const result =
-        await PharmacyService.getPricingCatalogues(
-          hospitalId,
-          authReq.query as any
-        );
-
-      res.status(200).json({
-        success: true,
-        ...result,
-      });
-    } catch (error: unknown) {
-      next(error);
-    }
+  static async getItemById(req: Request<{id:string}>, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.json({ success: true, data: await PharmacyService.getInventoryItemById(h, req.params.id) }); } catch (e) { next(e); }
   }
 
-  /* =======================================================
-     DISPENSING
-  ======================================================= */
-
-  static async dispenseDrugs(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq =
-        req as AuthenticatedRequest<
-          {},
-          any,
-          CreateDispenseRecordDTO
-        >;
-
-      const user =
-        authReq.user!;
-
-      const hospitalId =
-        user.hospitalId ||
-        user.id;
-
-      const record =
-        await PharmacyService.createDispenseRecord(
-          hospitalId,
-          user.id,
-          authReq.body
-        );
-
-      res.status(201).json({
-        success: true,
-        data: record,
-      });
-    } catch (error: unknown) {
-      next(error);
-    }
+  static async adjustStock(req: Request<{id:string}>, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; const r = req as AuthenticatedRequest; const userId = String(r.user?.id ?? r.user?._id ?? r.account?.accountId ?? ''); if (!userId) throw Object.assign(new Error('Authenticated user context is missing.'), { statusCode: 401 }); res.json({ success: true, data: await PharmacyService.updateStock(h, userId, req.params.id, req.body as UpdateStockDTO) }); } catch (e) { next(e); }
   }
 
-  /* =======================================================
-     RETRY BILLING
-  ======================================================= */
-
-  static async retryBilling(
-    req: Request<{ id: string }>,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq =
-        req as unknown as AuthenticatedRequest<{
-          id: string;
-        }>;
-
-      const user =
-        authReq.user!;
-
-      const hospitalId =
-        user.hospitalId ||
-        user.id;
-
-      const record =
-        await PharmacyService.retryBilling(
-          hospitalId,
-          user.id,
-          req.params.id
-        );
-
-      res.status(200).json({
-        success: true,
-        message:
-          'Pharmacy billing retry completed.',
-        data: record,
-      });
-    } catch (error: unknown) {
-      next(error);
-    }
+  static async createPrescription(req: Request, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.status(201).json({ success: true, data: await PharmacyService.createPrescription(h, req.body as CreatePrescriptionDTO) }); } catch (e) { next(e); }
   }
 
-  /* =======================================================
-     LIST DISPENSE RECORDS
-  ======================================================= */
+  static async listPrescriptions(req: Request, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.json({ success: true, ...(await PharmacyService.getPrescriptions(h, req.query as any)) }); } catch (e) { next(e); }
+  }
 
-  static async listDispenseRecords(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq =
-        req as AuthenticatedRequest<
-          {},
-          any,
-          any,
-          GetDispenseQueryDTO
-        >;
+  static async getPrescriptionById(req: Request<{id:string}>, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.json({ success: true, data: await PharmacyService.getPrescriptionById(h, req.params.id) }); } catch (e) { next(e); }
+  }
 
-      const user =
-        authReq.user!;
+  static async screenPrescription(req: Request<{id:string}>, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.json({ success: true, data: await PharmacyService.screenPrescription(h, req.params.id) }); } catch (e) { next(e); }
+  }
 
-      const hospitalId =
-        user.hospitalId ||
-        user.id;
+  static async approvePrescription(req: Request<{id:string}>, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; const r = req as AuthenticatedRequest; const pharmacistId = String(r.user?.id ?? r.user?._id ?? r.account?.accountId ?? ''); res.json({ success: true, data: await PharmacyService.approvePrescription(h, req.params.id, pharmacistId) }); } catch (e) { next(e); }
+  }
 
-      const result =
-        await PharmacyService.getDispenseRecords(
-          hospitalId,
-          authReq.query
-        );
+  static async dispenseDrugs(req: Request, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; const r = req as AuthenticatedRequest; const pharmacistId = String(r.user?.id ?? r.user?._id ?? r.account?.accountId ?? ''); if (!pharmacistId) throw Object.assign(new Error('Authenticated pharmacist context is missing.'), { statusCode: 401 }); res.status(201).json({ success: true, data: await PharmacyService.createDispenseRecord(h, pharmacistId, req.body as CreateDispenseRecordDTO) }); } catch (e) { next(e); }
+  }
 
-      res.status(200).json({
-        success: true,
-        ...result,
-      });
-    } catch (error: unknown) {
-      next(error);
-    }
+  static async listDispenseRecords(req: Request, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.json({ success: true, ...(await PharmacyService.getDispenseRecords(h, req.query as any)) }); } catch (e) { next(e); }
+  }
+
+  static async createFormulary(req: Request, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.status(201).json({ success: true, data: await PharmacyService.createFormularyEntry(h, req.body as CreateFormularyEntryDTO) }); } catch (e) { next(e); }
+  }
+
+  static async listFormulary(req: Request, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.json({ success: true, ...(await PharmacyService.getFormulary(h, req.query as any)) }); } catch (e) { next(e); }
+  }
+
+  static async inventoryLedger(req: Request<{id:string}>, res: Response, next: NextFunction) {
+    try { const h = PharmacyController.hospital(req, res); if (!h) return; res.json({ success: true, data: await PharmacyService.getInventoryLedger(h, req.params.id, Number(req.query.page) || 1, Number(req.query.limit) || 50) }); } catch (e) { next(e); }
   }
 }
