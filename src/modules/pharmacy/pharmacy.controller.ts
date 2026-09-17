@@ -284,15 +284,25 @@ export class PharmacyController {
       const terms = search.split(/\s+/).filter(Boolean).slice(0, 4);
       const pattern = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
 
+      const hospitalObjectId = new Types.ObjectId(h);
       const accounts = await mongoose.connection
         .collection('accounts')
         .find({
-          hospitalId: new Types.ObjectId(h),
           $or: [
-            { firstName: { $regex: pattern, $options: 'i' } },
-            { lastName: { $regex: pattern, $options: 'i' } },
-            { email: { $regex: pattern, $options: 'i' } },
-            { staffId: { $regex: pattern, $options: 'i' } },
+            { hospitalId: hospitalObjectId },
+            { hospitalId: h },
+          ],
+          $and: [
+            {
+              $or: [
+                { firstName: { $regex: pattern, $options: 'i' } },
+                { lastName: { $regex: pattern, $options: 'i' } },
+                { email: { $regex: pattern, $options: 'i' } },
+                { staffId: { $regex: pattern, $options: 'i' } },
+                { name: { $regex: pattern, $options: 'i' } },
+                { fullName: { $regex: pattern, $options: 'i' } },
+              ],
+            },
           ],
         })
         .project({
@@ -301,6 +311,8 @@ export class PharmacyController {
           lastName: 1,
           email: 1,
           staffId: 1,
+          name: 1,
+          fullName: 1,
         })
         .limit(10)
         .toArray();
@@ -313,6 +325,7 @@ export class PharmacyController {
           lastName: account.lastName || '',
           email: account.email || '',
           staffId: account.staffId || '',
+          name: account.name || account.fullName || '',
         })),
       });
     } catch (e) {
