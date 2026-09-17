@@ -464,6 +464,36 @@ export class PharmacyController {
     }
   }
 
+  static async retryBilling(
+    req: Request<{ id: string }>,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const h = PharmacyController.hospital(req, res);
+      if (!h) return;
+
+      const pharmacistId = PharmacyController.getUserId(req);
+
+      if (!pharmacistId || !Types.ObjectId.isValid(pharmacistId)) {
+        res.status(401).json({
+          success: false,
+          statusCode: 401,
+          message: 'Authenticated pharmacist context is missing.',
+          errors: [],
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: await PharmacyService.retryBilling(h, pharmacistId, req.params.id),
+      });
+    } catch (e) {
+      next(e);
+    }
+  }
+
   static async listDispenseRecords(
     req: Request,
     res: Response,

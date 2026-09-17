@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { createHash } from 'node:crypto';
 import {
   InventoryItemModel, DispenseRecordModel, PrescriptionModel, FormularyEntryModel,
   InventoryTransactionModel,
@@ -15,7 +16,8 @@ import { PharmacyInventoryService } from './pharmacy.inventory.service.js';
 import { PharmacyControlledService } from './pharmacy.controlled.service.js';
 import { emitPharmacyEvent, PharmacyEventType } from './pharmacy.events.js';
 import { publishEhrResource } from '../patient/ehr.publisher.js';
-import { PricingCatalogueModel } from '../billing/billing.model.js';
+import { createCharge, resolvePrice } from '../billing/billing.service.js';
+import { BillingSourceModule, ChargeCategory } from '../billing/billing.types.js';
 
 const err = (message: string, statusCode = 400) => Object.assign(new Error(message), { statusCode });
 
@@ -87,11 +89,14 @@ export class PharmacyService {
     }) : null;
     if (duplicate) return duplicate;
 
+    const prescriptionNumber = `RX-${Date.now()}-${createHash('sha256').update(`${hospitalId}:${Date.now()}:${Math.random()}`).digest('hex').slice(0, 10).toUpperCase()}`;
+
     const prescription = await PrescriptionModel.create({
       hospitalId: new Types.ObjectId(hospitalId),
       patientId: new Types.ObjectId(dto.patientId),
       prescriberId: dto.prescriberId ? new Types.ObjectId(dto.prescriberId) : undefined,
       prescriberName: dto.prescriberName?.trim() || undefined,
+      prescriptionNumber,
       source: dto.source,
       sourceRecordId: dto.sourceRecordId ? new Types.ObjectId(dto.sourceRecordId) : undefined,
       sourceSystem: dto.sourceSystem,
@@ -173,6 +178,120 @@ export class PharmacyService {
       FormularyEntryModel.countDocuments(filter),
     ]);
     return { entries, total, page, limit, pages: Math.ceil(total / limit) };
+  }
+
+  private static async captureBilling(hospitalId: string, dispensedByUserId: string, record: any) {
+    if (record.billingChargeIds?.length) {
+      record.billingChargeId = record.billingChargeIds[0];
+      record.billingStatus = PharmacyBillingStatus.CAPTURED;
+      record.billingErrors = [];
+      record.billingCapturedAt = record.billingCapturedAt ?? new Date();
+      await record.save();
+      return record;
+    }
+
+    if (!record.items?.length) {
+      record.billingStatus = PharmacyBillingStatus.FAILED;
+      record.billingErrors = ['Cannot bill an empty pharmacy dispense.'];
+      await record.save();
+      return record;
+    }
+
+    const calculatedTotal = record.items.reduce((total: number, item: any) => {
+      const unitPrice = Number(item.unitPrice);
+      const quantity = Number(item.quantity);
+      const itemTotal = Number(item.totalPrice);
+      if (!Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isInteger(quantity) || quantity <= 0 || !Number.isFinite(itemTotal) || Math.abs(itemTotal - unitPrice * quantity) > 0.01) {
+        throw err(`Invalid pricing data for inventory item ${String(item.inventoryItemId)}.`);
+      }
+      return total + unitPrice * quantity;
+    }, 0);
+
+    if (Math.abs(Number(record.totalAmount) - calculatedTotal) > 0.01) {
+      throw err('Pharmacy dispense total does not match the medication totals.');
+    }
+
+    const catalogue = await resolvePrice({
+      hospitalId,
+      code: 'PHARMACY_SERVICE',
+      departmentName: 'Pharmacy',
+      category: ChargeCategory.PHARMACY,
+      serviceDate: record.createdAt,
+    });
+
+    const descriptionLines = await Promise.all(record.items.map(async (item: any) => {
+      const inventoryItem = await InventoryItemModel.findOne({ _id: item.inventoryItemId, hospitalId }).select('name unitOfMeasure');
+      return `${inventoryItem?.name || `Inventory item ${String(item.inventoryItemId)}`} (${inventoryItem?.unitOfMeasure || 'UNIT'}) x ${item.quantity}`;
+    }));
+
+    const sourceId = new Types.ObjectId(createHash('sha256').update(`${String(record._id)}:PHARMACY`).digest('hex').slice(0, 24));
+    const cataloguePrice = Number(catalogue.price);
+    const chargeInput: any = {
+      hospitalId,
+      patientId: record.patientId,
+      description: `Pharmacy dispense ${String(record._id)}: ${descriptionLines.join('; ')}`,
+      category: ChargeCategory.PHARMACY,
+      sourceModule: BillingSourceModule.PHARMACY,
+      sourceId,
+      serviceCode: 'PHARMACY_SERVICE',
+      departmentName: 'Pharmacy',
+      quantity: 1,
+      chargedBy: dispensedByUserId,
+      chargeDate: record.createdAt,
+      notes: `Aggregate Pharmacy medication dispense ${String(record._id)}`,
+    };
+
+    if (!Number.isFinite(cataloguePrice) || cataloguePrice < 0) {
+      throw err('The active Pharmacy pricing catalogue returned an invalid price.');
+    }
+
+    if (Math.abs(calculatedTotal - cataloguePrice) > 0.01) {
+      chargeInput.overridePrice = calculatedTotal;
+      chargeInput.overrideReason = 'Pharmacy medication billing uses the sum of each dispensed medicine inventory unit price multiplied by quantity.';
+    }
+
+    const charge = await createCharge(chargeInput);
+    const chargeId = new Types.ObjectId(String(charge._id));
+    const chargeObject = charge as any;
+
+    record.billingChargeId = chargeId;
+    record.billingChargeIds = [chargeId];
+    record.billingErrors = [];
+    record.billingStatus = PharmacyBillingStatus.CAPTURED;
+    record.billingCapturedAt = new Date();
+
+    for (const item of record.items) {
+      item.billingChargeId = undefined;
+      item.billingCode = 'PHARMACY_SERVICE';
+      item.billingError = undefined;
+      item.billingUnitPrice = item.unitPrice;
+      item.billingCurrency = chargeObject.currency ?? catalogue.currency ?? 'NGN';
+      item.billingCatalogueVersion = chargeObject.catalogueVersion ?? catalogue.version;
+      item.pricingCatalogueItemId = chargeObject.catalogueItemId ?? catalogue.catalogueItemId;
+      item.pricingCataloguePlanName = chargeObject.cataloguePlanName ?? catalogue.name;
+      item.pricingCataloguePrice = chargeObject.cataloguePrice ?? catalogue.price;
+      item.pricingCatalogueCurrency = chargeObject.currency ?? catalogue.currency ?? 'NGN';
+      item.pricingCatalogueVersion = chargeObject.catalogueVersion ?? catalogue.version;
+    }
+
+    await record.save();
+    return record;
+  }
+
+  static async retryBilling(hospitalId: string, pharmacistId: string, dispenseId: string) {
+    if (!Types.ObjectId.isValid(dispenseId)) throw err('Invalid dispense record ID.');
+    const record = await DispenseRecordModel.findOne({ _id: dispenseId, hospitalId });
+    if (!record) throw err('Dispense record not found.', 404);
+    if (record.billingStatus === PharmacyBillingStatus.CAPTURED) return record;
+    try {
+      await this.captureBilling(hospitalId, pharmacistId, record);
+    } catch (error: any) {
+      record.billingStatus = PharmacyBillingStatus.FAILED;
+      record.billingErrors = [error?.message || 'Unable to capture pharmacy billing.'];
+      await record.save();
+      throw error;
+    }
+    return record;
   }
 
   static async createDispenseRecord(hospitalId: string, pharmacistId: string, dto: CreateDispenseRecordDTO) {
@@ -270,6 +389,7 @@ export class PharmacyService {
               performedBy: pharmacistId,
               secondVerifierId: dto.secondVerifierId!,
               reason: `Controlled substance dispense ${String(record._id)}`,
+              session,
             });
           }
         }
@@ -283,6 +403,14 @@ export class PharmacyService {
       });
     } finally {
       await session.endSession();
+    }
+
+    try {
+      await this.captureBilling(hospitalId, pharmacistId, record);
+    } catch (error: any) {
+      record.billingStatus = PharmacyBillingStatus.FAILED;
+      record.billingErrors = [error?.message || 'Unable to capture pharmacy billing.'];
+      await record.save();
     }
 
     // Downstream integrations happen after the clinical transaction commits.

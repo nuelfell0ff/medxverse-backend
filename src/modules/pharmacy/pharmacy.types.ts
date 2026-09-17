@@ -182,6 +182,7 @@ export interface IPrescription {
   patientId: Types.ObjectId;
   prescriberId?: Types.ObjectId;
   prescriberName?: string;
+  prescriptionNumber: string;
   source: PrescriptionSource;
   sourceRecordId?: Types.ObjectId;
   sourceSystem?: string;
@@ -266,6 +267,12 @@ export interface IDispenseItem {
   unitPrice: number;
   totalPrice: number;
   billingCode?: string;
+  pricingCatalogueItemId?: Types.ObjectId;
+  pricingCataloguePlanName?: string;
+  pricingCataloguePrice?: number;
+  pricingCatalogueCurrency?: string;
+  pricingCatalogueVersion?: number;
+  billingChargeId?: Types.ObjectId;
   billingUnitPrice?: number;
   billingCurrency?: string;
   billingCatalogueVersion?: number;
@@ -288,7 +295,9 @@ export interface IDispenseRecord {
   notes?: string;
   billingStatus: PharmacyBillingStatus;
   billingChargeId?: Types.ObjectId;
+  billingChargeIds: Types.ObjectId[];
   billingErrors: string[];
+  billingCapturedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

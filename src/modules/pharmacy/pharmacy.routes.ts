@@ -21,6 +21,7 @@ router.post('/prescriptions/:id/approve', PharmacyController.approvePrescription
 
 router.post('/dispense', PharmacyController.dispenseDrugs);
 router.get('/dispense', PharmacyController.listDispenseRecords);
+router.post('/dispense/:id/retry-billing', PharmacyController.retryBilling);
 
 router.post('/formulary', PharmacyController.createFormulary);
 router.get('/formulary', PharmacyController.listFormulary);
