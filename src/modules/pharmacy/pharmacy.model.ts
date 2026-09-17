@@ -1,4 +1,4 @@
-import mongoose, { Schema } from 'mongoose';
+import mongoose, { Schema, Model } from 'mongoose';
 import { randomUUID } from 'node:crypto';
 import {
   DrugCategory, UnitOfMeasure, PrescriptionStatus, PrescriptionSource,
@@ -170,9 +170,9 @@ FormularyEntrySchema.index({ hospitalId: 1, department: 1, medicationName: 1 });
 InventoryTransactionSchema.index({ hospitalId: 1, inventoryItemId: 1, createdAt: -1 });
 ControlledSubstanceLogSchema.index({ hospitalId: 1, createdAt: -1 });
 
-export const InventoryItemModel = mongoose.models.InventoryItem || mongoose.model<IInventoryItemDocument>('InventoryItem', InventoryItemSchema);
-export const PrescriptionModel = mongoose.models.Prescription || mongoose.model<IPrescriptionDocument>('Prescription', PrescriptionSchema);
-export const DispenseRecordModel = mongoose.models.DispenseRecord || mongoose.model<IDispenseRecordDocument>('DispenseRecord', DispenseRecordSchema);
-export const FormularyEntryModel = mongoose.models.FormularyEntry || mongoose.model<IFormularyEntryDocument>('FormularyEntry', FormularyEntrySchema);
-export const InventoryTransactionModel = mongoose.models.InventoryTransaction || mongoose.model<IInventoryTransactionDocument>('InventoryTransaction', InventoryTransactionSchema);
-export const ControlledSubstanceLogModel = mongoose.models.ControlledSubstanceLog || mongoose.model<IControlledSubstanceLogDocument>('ControlledSubstanceLog', ControlledSubstanceLogSchema);
+export const InventoryItemModel: Model<IInventoryItemDocument> = (mongoose.models.InventoryItem as Model<IInventoryItemDocument>) || mongoose.model<IInventoryItemDocument>('InventoryItem', InventoryItemSchema);
+export const PrescriptionModel: Model<IPrescriptionDocument> = (mongoose.models.Prescription as Model<IPrescriptionDocument>) || mongoose.model<IPrescriptionDocument>('Prescription', PrescriptionSchema);
+export const DispenseRecordModel: Model<IDispenseRecordDocument> = (mongoose.models.DispenseRecord as Model<IDispenseRecordDocument>) || mongoose.model<IDispenseRecordDocument>('DispenseRecord', DispenseRecordSchema);
+export const FormularyEntryModel: Model<IFormularyEntryDocument> = (mongoose.models.FormularyEntry as Model<IFormularyEntryDocument>) || mongoose.model<IFormularyEntryDocument>('FormularyEntry', FormularyEntrySchema);
+export const InventoryTransactionModel: Model<IInventoryTransactionDocument> = (mongoose.models.InventoryTransaction as Model<IInventoryTransactionDocument>) || mongoose.model<IInventoryTransactionDocument>('InventoryTransaction', InventoryTransactionSchema);
+export const ControlledSubstanceLogModel: Model<IControlledSubstanceLogDocument> = (mongoose.models.ControlledSubstanceLog as Model<IControlledSubstanceLogDocument>) || mongoose.model<IControlledSubstanceLogDocument>('ControlledSubstanceLog', ControlledSubstanceLogSchema);
