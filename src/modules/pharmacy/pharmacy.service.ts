@@ -77,7 +77,9 @@ export class PharmacyService {
   }
 
   static async createPrescription(hospitalId: string, dto: CreatePrescriptionDTO) {
-    if (!Types.ObjectId.isValid(dto.patientId) || !Types.ObjectId.isValid(dto.prescriberId)) throw err('Invalid patient or prescriber ID.');
+    if (!Types.ObjectId.isValid(dto.patientId)) throw err('Invalid patient ID.');
+    if (dto.prescriberId && !Types.ObjectId.isValid(dto.prescriberId)) throw err('Invalid prescriber ID.');
+    if (!dto.prescriberId && !dto.prescriberName?.trim()) throw err('A registered prescriber or prescriber name is required.');
     if (!dto.medications?.length) throw err('At least one prescribed medication is required.');
 
     const duplicate = dto.sourceRecordId ? await PrescriptionModel.findOne({
@@ -88,7 +90,8 @@ export class PharmacyService {
     const prescription = await PrescriptionModel.create({
       hospitalId: new Types.ObjectId(hospitalId),
       patientId: new Types.ObjectId(dto.patientId),
-      prescriberId: new Types.ObjectId(dto.prescriberId),
+      prescriberId: dto.prescriberId ? new Types.ObjectId(dto.prescriberId) : undefined,
+      prescriberName: dto.prescriberName?.trim() || undefined,
       source: dto.source,
       sourceRecordId: dto.sourceRecordId ? new Types.ObjectId(dto.sourceRecordId) : undefined,
       sourceSystem: dto.sourceSystem,

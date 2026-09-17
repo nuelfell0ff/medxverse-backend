@@ -180,7 +180,8 @@ export interface IPrescriptionMedication {
 export interface IPrescription {
   hospitalId: Types.ObjectId;
   patientId: Types.ObjectId;
-  prescriberId: Types.ObjectId;
+  prescriberId?: Types.ObjectId;
+  prescriberName?: string;
   source: PrescriptionSource;
   sourceRecordId?: Types.ObjectId;
   sourceSystem?: string;
@@ -202,7 +203,8 @@ export interface IPrescriptionDocument extends IPrescription, Document { _id: Ty
 
 export interface CreatePrescriptionDTO {
   patientId: string;
-  prescriberId: string;
+  prescriberId?: string;
+  prescriberName?: string;
   source: PrescriptionSource;
   sourceRecordId?: string;
   sourceSystem?: string;

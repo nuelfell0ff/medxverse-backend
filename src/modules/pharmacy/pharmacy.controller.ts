@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { PharmacyService } from './pharmacy.service.js';
 import {
   CreateInventoryItemDTO,
@@ -219,12 +219,101 @@ export class PharmacyController {
       const h = PharmacyController.hospital(req, res);
       if (!h) return;
 
+      const body = req.body ?? {};
+      const prescriberId =
+        typeof body.prescriberId === 'string' && body.prescriberId.trim()
+          ? body.prescriberId.trim()
+          : undefined;
+      const prescriberName =
+        typeof body.prescriberName === 'string' && body.prescriberName.trim()
+          ? body.prescriberName.trim()
+          : undefined;
+
+      if (!prescriberId && !prescriberName) {
+        res.status(400).json({
+          success: false,
+          statusCode: 400,
+          message: 'A registered prescriber or prescriber name is required.',
+          errors: [],
+        });
+        return;
+      }
+
+      if (prescriberId && !Types.ObjectId.isValid(prescriberId)) {
+        res.status(400).json({
+          success: false,
+          statusCode: 400,
+          message: 'Invalid prescriber ID.',
+          errors: [],
+        });
+        return;
+      }
+
+      const dto: CreatePrescriptionDTO = {
+        ...(body as CreatePrescriptionDTO),
+        prescriberId,
+        prescriberName,
+      };
+
       res.status(201).json({
         success: true,
-        data: await PharmacyService.createPrescription(
-          h,
-          req.body as CreatePrescriptionDTO,
-        ),
+        data: await PharmacyService.createPrescription(h, dto),
+      });
+    } catch (e) {
+      next(e);
+    }
+  }
+
+  static async listPrescribers(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const h = PharmacyController.hospital(req, res);
+      if (!h) return;
+
+      const search =
+        typeof req.query.search === 'string' ? req.query.search.trim() : '';
+
+      if (search.length < 2) {
+        res.json({ success: true, data: [] });
+        return;
+      }
+
+      const terms = search.split(/\s+/).filter(Boolean).slice(0, 4);
+      const pattern = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+
+      const accounts = await mongoose.connection
+        .collection('accounts')
+        .find({
+          hospitalId: new Types.ObjectId(h),
+          $or: [
+            { firstName: { $regex: pattern, $options: 'i' } },
+            { lastName: { $regex: pattern, $options: 'i' } },
+            { email: { $regex: pattern, $options: 'i' } },
+            { staffId: { $regex: pattern, $options: 'i' } },
+          ],
+        })
+        .project({
+          _id: 1,
+          firstName: 1,
+          lastName: 1,
+          email: 1,
+          staffId: 1,
+        })
+        .limit(10)
+        .toArray();
+
+      res.json({
+        success: true,
+        data: accounts.map((account) => ({
+          _id: String(account._id),
+          firstName: account.firstName || '',
+          lastName: account.lastName || '',
+          email: account.email || '',
+          staffId: account.staffId || '',
+        })),
       });
     } catch (e) {
       next(e);

@@ -3,6 +3,7 @@ import { PharmacyController } from './pharmacy.controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
+
 router.use(authenticate);
 
 router.post('/inventory', PharmacyController.createItem);
@@ -11,6 +12,7 @@ router.get('/inventory/:id', PharmacyController.getItemById);
 router.patch('/inventory/:id/stock', PharmacyController.adjustStock);
 router.get('/inventory/:id/ledger', PharmacyController.inventoryLedger);
 
+router.get('/prescribers', PharmacyController.listPrescribers);
 router.post('/prescriptions', PharmacyController.createPrescription);
 router.get('/prescriptions', PharmacyController.listPrescriptions);
 router.get('/prescriptions/:id', PharmacyController.getPrescriptionById);

@@ -56,7 +56,8 @@ const PrescriptionMedicationSchema = new Schema({
 const PrescriptionSchema = new Schema<IPrescriptionDocument>({
   hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
   patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-  prescriberId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
+  prescriberId: { type: Schema.Types.ObjectId, ref: 'Account', index: true },
+  prescriberName: { type: String, trim: true, index: true },
   source: { type: String, enum: Object.values(PrescriptionSource), required: true },
   sourceRecordId: { type: Schema.Types.ObjectId, index: true },
   sourceSystem: { type: String, trim: true },
