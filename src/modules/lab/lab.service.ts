@@ -1,4 +1,4 @@
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 
 import {
   LabOrderModel,
@@ -393,8 +393,23 @@ export class LabService {
       throw error;
     }
 
-    const doctorId =
-      dto.doctorId || requestingUserId;
+    const rawDto = dto as CreateLabOrderDTO & {
+      requestingDoctorId?: string;
+      orderingDoctorId?: string;
+      prescriberId?: string;
+      doctor?: string | { _id?: string; id?: string };
+    };
+
+    const selectedDoctorId =
+      rawDto.doctorId ||
+      rawDto.requestingDoctorId ||
+      rawDto.orderingDoctorId ||
+      rawDto.prescriberId ||
+      (typeof rawDto.doctor === 'string'
+        ? rawDto.doctor
+        : rawDto.doctor?._id || rawDto.doctor?.id);
+
+    const doctorId = selectedDoctorId || requestingUserId;
 
     if (
       !Types.ObjectId.isValid(
@@ -403,6 +418,23 @@ export class LabService {
     ) {
       const error = new Error(
         'Invalid doctor ID.'
+      ) as Error & {
+        statusCode?: number;
+      };
+
+      error.statusCode = 400;
+
+      throw error;
+    }
+
+    const doctorAccount = await mongoose.model('Account').findOne({
+      _id: new Types.ObjectId(doctorId),
+      hospitalId: new Types.ObjectId(hospitalId),
+    }).select('_id');
+
+    if (!doctorAccount) {
+      const error = new Error(
+        'The selected requesting doctor was not found in this hospital staff directory.'
       ) as Error & {
         statusCode?: number;
       };
