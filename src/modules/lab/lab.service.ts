@@ -1,4 +1,5 @@
-import mongoose, { Types } from 'mongoose';
+import { Types } from 'mongoose';
+import { Staff } from '../staff/staff.model.js';
 
 import {
   LabOrderModel,
@@ -42,6 +43,7 @@ import { publishEhrResource } from '../patient/ehr.publisher.js';
 ========================================================= */
 
 const ACCOUNT_SELECT = 'name email phone accountType';
+const STAFF_SELECT = 'firstName middleName lastName title role jobTitle professionalTitle contact';
 
 /* =========================================================
    BILLING HELPERS
@@ -154,19 +156,19 @@ export class LabService {
       },
       {
         path: 'doctorId',
-        select: ACCOUNT_SELECT,
+        select: STAFF_SELECT,
       },
       {
         path: 'phlebotomistId',
-        select: ACCOUNT_SELECT,
+        select: STAFF_SELECT,
       },
       {
         path: 'labTechnicianId',
-        select: ACCOUNT_SELECT,
+        select: STAFF_SELECT,
       },
       {
         path: 'verifierId',
-        select: ACCOUNT_SELECT,
+        select: STAFF_SELECT,
       },
     ]);
 
@@ -393,54 +395,24 @@ export class LabService {
       throw error;
     }
 
-    const rawDto = dto as CreateLabOrderDTO & {
-      requestingDoctorId?: string;
-      orderingDoctorId?: string;
-      prescriberId?: string;
-      doctor?: string | { _id?: string; id?: string };
-    };
-
-    const selectedDoctorId =
-      rawDto.doctorId ||
-      rawDto.requestingDoctorId ||
-      rawDto.orderingDoctorId ||
-      rawDto.prescriberId ||
-      (typeof rawDto.doctor === 'string'
-        ? rawDto.doctor
-        : rawDto.doctor?._id || rawDto.doctor?.id);
-
-    const doctorId = selectedDoctorId || requestingUserId;
-
-    if (
-      !Types.ObjectId.isValid(
-        doctorId
-      )
-    ) {
-      const error = new Error(
-        'Invalid doctor ID.'
-      ) as Error & {
-        statusCode?: number;
-      };
-
+    if (!dto.doctorId || !Types.ObjectId.isValid(dto.doctorId)) {
+      const error = new Error('A valid requesting doctor must be selected.') as Error & { statusCode?: number };
       error.statusCode = 400;
-
       throw error;
     }
 
-    const doctorAccount = await mongoose.model('Account').findOne({
+    const doctorId = dto.doctorId;
+    const requestingDoctor = await Staff.findOne({
       _id: new Types.ObjectId(doctorId),
       hospitalId: new Types.ObjectId(hospitalId),
-    }).select('_id');
+      role: 'DOCTOR',
+      status: 'ACTIVE',
+      isActive: true,
+    }).select('_id hospitalId firstName middleName lastName title role jobTitle professionalTitle contact').lean();
 
-    if (!doctorAccount) {
-      const error = new Error(
-        'The selected requesting doctor was not found in this hospital staff directory.'
-      ) as Error & {
-        statusCode?: number;
-      };
-
+    if (!requestingDoctor) {
+      const error = new Error('The selected requesting doctor was not found in this hospital staff directory.') as Error & { statusCode?: number };
       error.statusCode = 400;
-
       throw error;
     }
 
@@ -678,9 +650,7 @@ export class LabService {
               ),
 
             doctorId:
-              new Types.ObjectId(
-                doctorId
-              ),
+              new Types.ObjectId(doctorId),
 
             consultationId:
               dto.consultationId &&
@@ -927,7 +897,7 @@ export class LabService {
           )
           .populate(
             'doctorId',
-            ACCOUNT_SELECT
+            STAFF_SELECT
           )
           .populate(
             'phlebotomistId',

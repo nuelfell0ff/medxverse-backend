@@ -323,10 +323,6 @@ export interface CreateLabOrderDTO {
   patientId: string;
 
   doctorId?: string;
-  requestingDoctorId?: string;
-  orderingDoctorId?: string;
-  prescriberId?: string;
-  doctor?: string | { _id?: string; id?: string };
   consultationId?: string;
 
   testCatalogId?: string;

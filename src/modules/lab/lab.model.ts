@@ -408,7 +408,7 @@ const LabOrderSchema = new Schema<ILabOrderDocument>(
 
     doctorId: {
       type: Schema.Types.ObjectId,
-      ref: 'Account',
+      ref: 'Staff',
       required: true,
       index: true,
     },
