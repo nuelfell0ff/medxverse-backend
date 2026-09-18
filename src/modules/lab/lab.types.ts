@@ -399,3 +399,36 @@ export interface GetLabOrdersQueryDTO {
   page?: string;
   limit?: string;
 }
+
+export enum SpecimenStatus {
+  COLLECTED = 'COLLECTED',
+  IN_TRANSIT = 'IN_TRANSIT',
+  RECEIVED = 'RECEIVED',
+  PROCESSED = 'PROCESSED',
+  REJECTED = 'REJECTED',
+}
+
+export enum CriticalAlertStatus {
+  OPEN = 'OPEN',
+  ACKNOWLEDGED = 'ACKNOWLEDGED',
+  RESOLVED = 'RESOLVED',
+}
+
+export enum AnalyzerProtocol {
+  HL7 = 'HL7',
+  ASTM = 'ASTM',
+}
+
+export interface ISpecimen { hospitalId: Types.ObjectId; orderId: Types.ObjectId; patientId: Types.ObjectId; barcode: string; specimenType: string; status: SpecimenStatus; collectedAt?: Date; collectedBy?: Types.ObjectId; inTransitAt?: Date; receivedAt?: Date; receivedBy?: Types.ObjectId; processedAt?: Date; processedBy?: Types.ObjectId; rejectionReason?: string; chainOfCustody: IChainOfCustody[]; createdAt: Date; updatedAt: Date; }
+export interface ISpecimenDocument extends ISpecimen, Document { _id: Types.ObjectId; }
+export interface ITestResult { hospitalId: Types.ObjectId; orderId: Types.ObjectId; specimenId: Types.ObjectId; patientId: Types.ObjectId; parameterName: string; value: string; numericValue?: number; unit?: string; referenceRange?: string; lowerReference?: number; upperReference?: number; criticalLow?: number; criticalHigh?: number; flag: ResultFlag; previousValue?: string; deltaPercentage?: number; entryMethod: EntryMethod; analyzerName?: string; analyzerResultId?: string; verifiedBy?: Types.ObjectId; verifiedAt?: Date; authorizedBy?: Types.ObjectId; authorizedAt?: Date; releasedAt?: Date; createdAt: Date; updatedAt: Date; }
+export interface ITestResultDocument extends ITestResult, Document { _id: Types.ObjectId; }
+export interface IReferenceRange { hospitalId: Types.ObjectId; testName?: string; parameterName: string; unit?: string; minimumAge?: number; maximumAge?: number; sex?: 'MALE' | 'FEMALE' | 'ANY'; lowerValue?: number; upperValue?: number; criticalLow?: number; criticalHigh?: number; displayRange: string; isActive: boolean; createdAt: Date; updatedAt: Date; }
+export interface IReferenceRangeDocument extends IReferenceRange, Document { _id: Types.ObjectId; }
+export interface ICriticalAlert { hospitalId: Types.ObjectId; orderId: Types.ObjectId; testResultId?: Types.ObjectId; patientId: Types.ObjectId; clinicianId: Types.ObjectId; parameterName: string; value: string; direction: 'CRITICAL_LOW' | 'CRITICAL_HIGH'; message: string; status: CriticalAlertStatus; notifiedAt: Date; acknowledgedAt?: Date; acknowledgedBy?: Types.ObjectId; resolvedAt?: Date; resolvedBy?: Types.ObjectId; createdAt: Date; updatedAt: Date; }
+export interface ICriticalAlertDocument extends ICriticalAlert, Document { _id: Types.ObjectId; }
+export interface IAnalyzerInterface { hospitalId: Types.ObjectId; name: string; protocol: AnalyzerProtocol; host?: string; port?: number; isActive: boolean; lastSeenAt?: Date; lastMessageAt?: Date; createdAt: Date; updatedAt: Date; }
+export interface IAnalyzerInterfaceDocument extends IAnalyzerInterface, Document { _id: Types.ObjectId; }
+export interface TransitionSpecimenDTO { barcode: string; status?: SpecimenStatus; location?: string; notes?: string; }
+export interface AnalyzerResultDTO { analyzerName: string; analyzerResultId?: string; accessionNumber: string; results: ILabResultField[]; protocol?: AnalyzerProtocol; }
+export interface CreateReferenceRangeDTO { testName?: string; parameterName: string; unit?: string; minimumAge?: number; maximumAge?: number; sex?: 'MALE' | 'FEMALE' | 'ANY'; lowerValue?: number; upperValue?: number; criticalLow?: number; criticalHigh?: number; displayRange: string; }

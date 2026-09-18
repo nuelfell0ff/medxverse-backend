@@ -14,6 +14,7 @@ import {
   AmendResultsDTO,
   RepeatTestDTO,
   AccessionSpecimenDTO,
+  TransitionSpecimenDTO, SpecimenStatus, CreateReferenceRangeDTO, CriticalAlertStatus, AnalyzerResultDTO,
 } from './lab.types.js';
 
 import { AuthRequest } from '../../middlewares/auth.middleware.js';
@@ -501,4 +502,115 @@ export class LabController {
       next(error);
     }
   }
+  static async specimen(
+    req: Request<{ id: string }>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { hospitalId } = LabController.getAuthContext(req);
+      const data = await LabService.getSpecimen(hospitalId, req.params.id);
+      res.status(200).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  static async transitionSpecimen(
+    req: Request<{ id: string }, unknown, TransitionSpecimenDTO>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { userId, hospitalId } = LabController.getAuthContext(req);
+      const target = String(req.body.status || req.query.status || '').toUpperCase() as SpecimenStatus;
+      const data = await LabService.transitionSpecimen(hospitalId, req.params.id, userId, target, req.body);
+      res.status(200).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  static async processSpecimen(
+    req: Request<{ id: string }, unknown, TransitionSpecimenDTO>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { userId, hospitalId } = LabController.getAuthContext(req);
+      const data = await LabService.processSpecimen(hospitalId, req.params.id, userId, req.body);
+      res.status(200).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  static async createReferenceRange(
+    req: Request<any, any, CreateReferenceRangeDTO>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { hospitalId } = LabController.getAuthContext(req);
+      const data = await LabService.createReferenceRange(hospitalId, req.body);
+      res.status(201).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  static async listReferenceRanges(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { hospitalId } = LabController.getAuthContext(req);
+      const data = await LabService.listReferenceRanges(hospitalId, typeof req.query.parameterName === 'string' ? req.query.parameterName : undefined);
+      res.status(200).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  static async listCriticalAlerts(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { hospitalId } = LabController.getAuthContext(req);
+      const status = typeof req.query.status === 'string' ? req.query.status as CriticalAlertStatus : undefined;
+      const data = await LabService.listCriticalAlerts(hospitalId, status);
+      res.status(200).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  static async acknowledgeCriticalAlert(
+    req: Request<{ id: string }>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { hospitalId, userId } = LabController.getAuthContext(req);
+      const data = await LabService.acknowledgeCriticalAlert(hospitalId, req.params.id, userId);
+      res.status(200).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  static async ingestAnalyzerResult(
+    req: Request<any, any, AnalyzerResultDTO>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { hospitalId, userId } = LabController.getAuthContext(req);
+      const data = await LabService.ingestAnalyzerResult(hospitalId, userId, req.body);
+      res.status(200).json({ success: true, data });
+    } catch (error) { next(error); }
+  }
+
+  static async buildAnalyzerOrderMessage(
+    req: Request<{ id: string }>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { hospitalId } = LabController.getAuthContext(req);
+      const protocol = (String(req.body?.protocol || req.query.protocol || 'HL7').toUpperCase() as 'HL7' | 'ASTM');
+      const data = await LabService.buildAnalyzerOrderMessage(hospitalId, req.params.id, protocol);
+      res.status(200).json({ success: true, data, protocol });
+    } catch (error) { next(error); }
+  }
+
 }
