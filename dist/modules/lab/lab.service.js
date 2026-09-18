@@ -1,6 +1,7 @@
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { LabOrderModel, } from './lab.model.js';
-import { LabOrderStatus, LabPriority, ResultFlag, EntryMethod, SampleRoutingStatus, AuthorizationLevel, SpecimenQuality, LabBillingStatus, } from './lab.types.js';
+import { SpecimenModel, TestResultModel, ReferenceRangeModel, CriticalAlertModel } from './lab.extended.model.js';
+import { LabOrderStatus, LabPriority, ResultFlag, EntryMethod, SampleRoutingStatus, AuthorizationLevel, SpecimenQuality, LabBillingStatus, SpecimenStatus, CriticalAlertStatus, } from './lab.types.js';
 import { createCharge, } from '../billing/billing.service.js';
 import { BillingSourceModule, ChargeCategory, } from '../billing/billing.types.js';
 import { PricingCatalogueModel } from '../billing/billing.model.js';
@@ -242,9 +243,26 @@ export class LabService {
             error.statusCode = 400;
             throw error;
         }
-        const doctorId = dto.doctorId || requestingUserId;
+        const rawDto = dto;
+        const selectedDoctorId = rawDto.doctorId ||
+            rawDto.requestingDoctorId ||
+            rawDto.orderingDoctorId ||
+            rawDto.prescriberId ||
+            (typeof rawDto.doctor === 'string'
+                ? rawDto.doctor
+                : rawDto.doctor?._id || rawDto.doctor?.id);
+        const doctorId = selectedDoctorId || requestingUserId;
         if (!Types.ObjectId.isValid(doctorId)) {
             const error = new Error('Invalid doctor ID.');
+            error.statusCode = 400;
+            throw error;
+        }
+        const doctorAccount = await mongoose.model('Account').findOne({
+            _id: new Types.ObjectId(doctorId),
+            hospitalId: new Types.ObjectId(hospitalId),
+        }).select('_id');
+        if (!doctorAccount) {
+            const error = new Error('The selected requesting doctor was not found in this hospital staff directory.');
             error.statusCode = 400;
             throw error;
         }
@@ -571,6 +589,19 @@ export class LabService {
             notes: 'Specimen collected and linked to accession number.',
         });
         await order.save();
+        await SpecimenModel.findOneAndUpdate({ hospitalId: order.hospitalId, orderId: order._id }, {
+            $setOnInsert: {
+                hospitalId: order.hospitalId,
+                orderId: order._id,
+                patientId: order.patientId,
+                barcode: order.accessionNumber,
+                specimenType: order.sampleType,
+                status: SpecimenStatus.COLLECTED,
+                collectedAt: now,
+                collectedBy: new Types.ObjectId(phlebotomistId),
+                chainOfCustody: [{ timestamp: now, action: SpecimenStatus.COLLECTED, performedBy: new Types.ObjectId(phlebotomistId) }],
+            },
+        }, { upsert: true, new: true });
         return this.populateOrder(order);
     }
     /* =========================================================
@@ -711,6 +742,30 @@ export class LabService {
                     EntryMethod.MANUAL,
             };
         });
+        const specimen = await SpecimenModel.findOne({ hospitalId: new Types.ObjectId(hospitalId), orderId: order._id });
+        if (!specimen) {
+            await SpecimenModel.create({ hospitalId: new Types.ObjectId(hospitalId), orderId: order._id, patientId: order.patientId, barcode: order.accessionNumber, specimenType: order.sampleType, status: SpecimenStatus.PROCESSED, processedAt: new Date(), processedBy: new Types.ObjectId(technicianId), chainOfCustody: [{ timestamp: new Date(), action: 'PROCESSED', performedBy: new Types.ObjectId(technicianId), notes: 'Specimen processing recorded with result entry.' }] });
+        }
+        for (const result of evaluatedResults) {
+            const numericValue = Number(result.value);
+            const range = await ReferenceRangeModel.findOne({ hospitalId: new Types.ObjectId(hospitalId), parameterName: { $regex: `^${result.parameterName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, isActive: true, $or: [{ testName: order.testName }, { testName: { $exists: false } }, { testName: null }] }).sort({ testName: -1 }).lean();
+            if (range) {
+                result.referenceRange = range.displayRange;
+                const prior = await TestResultModel.findOne({ hospitalId: new Types.ObjectId(hospitalId), patientId: order.patientId, parameterName: { $regex: `^${result.parameterName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } }).sort({ createdAt: -1 }).lean();
+                if (prior?.numericValue !== undefined && Number.isFinite(numericValue) && prior.numericValue !== 0)
+                    result.deltaPercentage = Math.abs((numericValue - prior.numericValue) / prior.numericValue) * 100;
+                if (range.lowerValue !== undefined && numericValue < range.lowerValue)
+                    result.flag = ResultFlag.ABNORMAL;
+                if (range.upperValue !== undefined && numericValue > range.upperValue)
+                    result.flag = ResultFlag.ABNORMAL;
+                if (range.criticalLow !== undefined && numericValue <= range.criticalLow)
+                    result.flag = ResultFlag.CRITICAL;
+                if (range.criticalHigh !== undefined && numericValue >= range.criticalHigh)
+                    result.flag = ResultFlag.CRITICAL;
+                if (result.deltaPercentage !== undefined && result.deltaPercentage >= 50 && result.flag !== ResultFlag.CRITICAL)
+                    result.flag = ResultFlag.DELTA_CHECK_WARNING;
+            }
+        }
         const hasCritical = evaluatedResults.some((result) => result.flag ===
             ResultFlag.CRITICAL);
         const hasAbnormal = evaluatedResults.some((result) => result.flag ===
@@ -746,6 +801,21 @@ export class LabService {
             notes: 'Laboratory results entered into the LIS.',
         });
         await order.save();
+        const persistedSpecimen = await SpecimenModel.findOne({ hospitalId: new Types.ObjectId(hospitalId), orderId: order._id });
+        const specimenId = persistedSpecimen?._id || (await SpecimenModel.findOne({ orderId: order._id }))?._id;
+        for (const result of evaluatedResults) {
+            if (!specimenId)
+                continue;
+            const numericValue = Number(result.value);
+            const previous = await TestResultModel.findOne({ hospitalId: new Types.ObjectId(hospitalId), patientId: order.patientId, parameterName: result.parameterName }).sort({ createdAt: -1 }).lean();
+            const stored = await TestResultModel.create({ hospitalId: new Types.ObjectId(hospitalId), orderId: order._id, specimenId, patientId: order.patientId, parameterName: result.parameterName, value: result.value, numericValue: Number.isFinite(numericValue) ? numericValue : undefined, unit: result.unit, referenceRange: result.referenceRange, flag: result.flag, previousValue: previous?.value, deltaPercentage: result.deltaPercentage, entryMethod: result.entryMethod, analyzerName: result.analyzerName, analyzerResultId: result.analyzerResultId });
+            if (result.flag === ResultFlag.CRITICAL) {
+                const range = await ReferenceRangeModel.findOne({ hospitalId: new Types.ObjectId(hospitalId), parameterName: { $regex: `^${result.parameterName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, isActive: true, $or: [{ testName: order.testName }, { testName: { $exists: false } }, { testName: null }] }).sort({ testName: -1 }).lean();
+                const direction = range?.criticalLow !== undefined && Number.isFinite(numericValue) && numericValue <= range.criticalLow ? 'CRITICAL_LOW' : 'CRITICAL_HIGH';
+                const alert = await CriticalAlertModel.create({ hospitalId: new Types.ObjectId(hospitalId), orderId: order._id, testResultId: stored._id, patientId: order.patientId, clinicianId: order.doctorId, parameterName: result.parameterName, value: result.value, direction, message: `Critical laboratory result for ${result.parameterName}: ${result.value}${result.unit ? ` ${result.unit}` : ''}. Immediate clinical review is required.`, status: CriticalAlertStatus.OPEN, notifiedAt: new Date() });
+                await publishEhrResource({ hospitalId, patientId: order.patientId.toString(), actorId: technicianId, role: 'LAB_TECHNICIAN', resourceType: 'Observation', resourceId: alert._id.toString(), status: CriticalAlertStatus.OPEN, department: 'Laboratory', resource: { id: alert._id.toString(), status: 'preparation', subject: { reference: `Patient/${order.patientId.toString()}` }, about: [{ reference: `LabOrder/${order._id.toString()}` }], payload: [{ contentString: alert.message }], critical: true }, reason: 'Critical laboratory value alert published for ordering clinician.' });
+            }
+        }
         await publishEhrResource({
             hospitalId,
             patientId: order.patientId.toString(),
@@ -920,6 +990,105 @@ export class LabService {
             reason: `Laboratory result amended: ${dto.reason}`,
         });
         return this.populateOrder(order);
+    }
+    static async getSpecimen(hospitalId, orderId) {
+        return SpecimenModel.findOne({ hospitalId: new Types.ObjectId(hospitalId), orderId: new Types.ObjectId(orderId) }).populate('collectedBy receivedBy processedBy', ACCOUNT_SELECT);
+    }
+    static async transitionSpecimen(hospitalId, orderId, userId, target, dto) {
+        const order = await this.getOrderById(hospitalId, orderId);
+        if (!Object.values(SpecimenStatus).includes(target))
+            throw Object.assign(new Error('Invalid specimen status.'), { statusCode: 400 });
+        if (!dto.barcode?.trim())
+            throw Object.assign(new Error('Specimen barcode is required.'), { statusCode: 400 });
+        let specimen = await SpecimenModel.findOne({ hospitalId: new Types.ObjectId(hospitalId), orderId: order._id });
+        if (!specimen) {
+            specimen = await SpecimenModel.create({ hospitalId: new Types.ObjectId(hospitalId), orderId: order._id, patientId: order.patientId, barcode: dto.barcode.trim(), specimenType: order.sampleType, status: SpecimenStatus.COLLECTED, collectedAt: new Date(), collectedBy: new Types.ObjectId(userId), chainOfCustody: [{ timestamp: new Date(), action: 'COLLECTED', performedBy: new Types.ObjectId(userId), location: dto.location, notes: dto.notes }] });
+        }
+        const transitions = {
+            [SpecimenStatus.COLLECTED]: [],
+            [SpecimenStatus.IN_TRANSIT]: [SpecimenStatus.COLLECTED],
+            [SpecimenStatus.RECEIVED]: [SpecimenStatus.IN_TRANSIT, SpecimenStatus.COLLECTED],
+            [SpecimenStatus.PROCESSED]: [SpecimenStatus.RECEIVED],
+            [SpecimenStatus.REJECTED]: [SpecimenStatus.COLLECTED, SpecimenStatus.IN_TRANSIT, SpecimenStatus.RECEIVED],
+        };
+        if (!transitions[target])
+            throw Object.assign(new Error('Invalid specimen status.'), { statusCode: 400 });
+        if (target !== specimen.status && !transitions[target].includes(specimen.status))
+            throw Object.assign(new Error(`Invalid specimen transition from ${specimen.status} to ${target}.`), { statusCode: 409 });
+        if (target === specimen.status && target !== SpecimenStatus.COLLECTED)
+            throw Object.assign(new Error(`Specimen is already ${target}.`), { statusCode: 409 });
+        const now = new Date();
+        specimen.status = target;
+        if (target === SpecimenStatus.IN_TRANSIT)
+            specimen.inTransitAt = now;
+        if (target === SpecimenStatus.RECEIVED) {
+            specimen.receivedAt = now;
+            specimen.receivedBy = new Types.ObjectId(userId);
+        }
+        if (target === SpecimenStatus.PROCESSED) {
+            specimen.processedAt = now;
+            specimen.processedBy = new Types.ObjectId(userId);
+        }
+        if (target === SpecimenStatus.REJECTED)
+            specimen.rejectionReason = dto.notes || 'Specimen rejected.';
+        specimen.chainOfCustody.push({ timestamp: now, action: target, performedBy: new Types.ObjectId(userId), location: dto.location, notes: dto.notes });
+        await specimen.save();
+        if (target === SpecimenStatus.IN_TRANSIT)
+            order.status = LabOrderStatus.SAMPLE_COLLECTED;
+        if (target === SpecimenStatus.RECEIVED) {
+            order.status = LabOrderStatus.SPECIMEN_RECEIVED;
+            order.specimenReceivedAt = now;
+        }
+        if (target === SpecimenStatus.PROCESSED)
+            order.status = LabOrderStatus.IN_PROGRESS;
+        if (target === SpecimenStatus.REJECTED)
+            order.status = LabOrderStatus.SAMPLE_REJECTED;
+        if (target === SpecimenStatus.COLLECTED) {
+            order.status = LabOrderStatus.SAMPLE_COLLECTED;
+            order.sampleCollectedAt = now;
+            order.phlebotomistId = new Types.ObjectId(userId);
+        }
+        order.chainOfCustody.push({ timestamp: now, action: `SPECIMEN_${target}`, performedBy: new Types.ObjectId(userId), location: dto.location, notes: dto.notes });
+        await order.save();
+        return this.getSpecimen(hospitalId, orderId);
+    }
+    static async processSpecimen(hospitalId, orderId, userId, dto) {
+        return this.transitionSpecimen(hospitalId, orderId, userId, SpecimenStatus.PROCESSED, dto);
+    }
+    static async createReferenceRange(hospitalId, dto) {
+        if (!dto.parameterName?.trim() || !dto.displayRange?.trim())
+            throw Object.assign(new Error('Parameter name and display range are required.'), { statusCode: 400 });
+        return ReferenceRangeModel.create({ hospitalId: new Types.ObjectId(hospitalId), ...dto, parameterName: dto.parameterName.trim(), displayRange: dto.displayRange.trim(), isActive: true });
+    }
+    static async listReferenceRanges(hospitalId, parameterName) {
+        const filter = { hospitalId: new Types.ObjectId(hospitalId), isActive: true };
+        if (parameterName?.trim())
+            filter.parameterName = { $regex: `^${parameterName.trim()}$`, $options: 'i' };
+        return ReferenceRangeModel.find(filter).sort({ parameterName: 1, minimumAge: 1 });
+    }
+    static async listCriticalAlerts(hospitalId, status) {
+        const filter = { hospitalId: new Types.ObjectId(hospitalId) };
+        if (status)
+            filter.status = status;
+        return CriticalAlertModel.find(filter).populate('patientId clinicianId orderId').sort({ createdAt: -1 }).limit(200);
+    }
+    static async acknowledgeCriticalAlert(hospitalId, alertId, userId) {
+        const alert = await CriticalAlertModel.findOne({ _id: alertId, hospitalId });
+        if (!alert)
+            throw Object.assign(new Error('Critical alert not found.'), { statusCode: 404 });
+        alert.status = CriticalAlertStatus.ACKNOWLEDGED;
+        alert.acknowledgedAt = new Date();
+        alert.acknowledgedBy = new Types.ObjectId(userId);
+        await alert.save();
+        return alert;
+    }
+    static async ingestAnalyzerResult(hospitalId, userId, dto) {
+        const { LabAnalyzerService } = await import('./lab.analyzer.service.js');
+        return LabAnalyzerService.ingest(hospitalId, userId, dto.protocol || 'HL7', dto);
+    }
+    static async buildAnalyzerOrderMessage(hospitalId, orderId, protocol) {
+        const { LabAnalyzerService } = await import('./lab.analyzer.service.js');
+        return LabAnalyzerService.buildOrderMessage(hospitalId, orderId, protocol);
     }
     /* =========================================================
        REPEAT TEST

@@ -83,3 +83,22 @@ export var AuthorizationLevel;
     AuthorizationLevel["PATHOLOGIST"] = "PATHOLOGIST";
     AuthorizationLevel["LAB_DIRECTOR"] = "LAB_DIRECTOR";
 })(AuthorizationLevel || (AuthorizationLevel = {}));
+export var SpecimenStatus;
+(function (SpecimenStatus) {
+    SpecimenStatus["COLLECTED"] = "COLLECTED";
+    SpecimenStatus["IN_TRANSIT"] = "IN_TRANSIT";
+    SpecimenStatus["RECEIVED"] = "RECEIVED";
+    SpecimenStatus["PROCESSED"] = "PROCESSED";
+    SpecimenStatus["REJECTED"] = "REJECTED";
+})(SpecimenStatus || (SpecimenStatus = {}));
+export var CriticalAlertStatus;
+(function (CriticalAlertStatus) {
+    CriticalAlertStatus["OPEN"] = "OPEN";
+    CriticalAlertStatus["ACKNOWLEDGED"] = "ACKNOWLEDGED";
+    CriticalAlertStatus["RESOLVED"] = "RESOLVED";
+})(CriticalAlertStatus || (CriticalAlertStatus = {}));
+export var AnalyzerProtocol;
+(function (AnalyzerProtocol) {
+    AnalyzerProtocol["HL7"] = "HL7";
+    AnalyzerProtocol["ASTM"] = "ASTM";
+})(AnalyzerProtocol || (AnalyzerProtocol = {}));

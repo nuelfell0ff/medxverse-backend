@@ -1,4 +1,5 @@
 import mongoose, { Schema } from 'mongoose';
+import { randomUUID } from 'node:crypto';
 import { DrugCategory, UnitOfMeasure, PrescriptionStatus, PrescriptionSource, ScreeningStatus, FormularyStatus, DispenseStatus, PharmacyBillingStatus, InventoryTransactionType, ControlledSubstanceAction, } from './pharmacy.types.js';
 const InventoryItemSchema = new Schema({
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
@@ -46,7 +47,9 @@ const PrescriptionMedicationSchema = new Schema({
 const PrescriptionSchema = new Schema({
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-    prescriberId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
+    prescriberId: { type: Schema.Types.ObjectId, ref: 'Account', index: true },
+    prescriberName: { type: String, trim: true, index: true },
+    prescriptionNumber: { type: String, required: true, unique: true, index: true, default: () => `RX-${Date.now()}-${randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}` },
     source: { type: String, enum: Object.values(PrescriptionSource), required: true },
     sourceRecordId: { type: Schema.Types.ObjectId, index: true },
     sourceSystem: { type: String, trim: true },
@@ -71,6 +74,12 @@ const DispenseItemSchema = new Schema({
     unitPrice: { type: Number, required: true, min: 0 },
     totalPrice: { type: Number, required: true, min: 0 },
     billingCode: String,
+    pricingCatalogueItemId: { type: Schema.Types.ObjectId, ref: 'PricingCatalogue' },
+    pricingCataloguePlanName: String,
+    pricingCataloguePrice: { type: Number, min: 0 },
+    pricingCatalogueCurrency: String,
+    pricingCatalogueVersion: { type: Number, min: 1 },
+    billingChargeId: { type: Schema.Types.ObjectId, ref: 'BillingCharge' },
     billingUnitPrice: { type: Number, min: 0 },
     billingCurrency: String,
     billingCatalogueVersion: { type: Number, min: 1 },
@@ -92,7 +101,9 @@ const DispenseRecordSchema = new Schema({
     notes: String,
     billingStatus: { type: String, enum: Object.values(PharmacyBillingStatus), default: PharmacyBillingStatus.NOT_ATTEMPTED, index: true },
     billingChargeId: { type: Schema.Types.ObjectId, ref: 'BillingCharge' },
+    billingChargeIds: { type: [{ type: Schema.Types.ObjectId, ref: 'BillingCharge' }], default: [] },
     billingErrors: { type: [String], default: [] },
+    billingCapturedAt: Date,
 }, { timestamps: true });
 const FormularyEntrySchema = new Schema({
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },

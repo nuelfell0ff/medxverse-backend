@@ -1,27 +1,52 @@
+import mongoose, { Types } from 'mongoose';
 import { PharmacyService } from './pharmacy.service.js';
 export class PharmacyController {
     static getHospitalId(req) {
         const r = req;
         const a = r.account;
         const u = r.user;
-        const id = a?.accountId ?? a?.hospitalId ?? a?.hospital ?? a?.id ?? a?._id
-            ?? u?.hospitalId ?? u?.hospital ?? u?.accountId ?? u?.id ?? u?._id;
+        const id = a?.hospitalId ??
+            a?.hospital ??
+            u?.hospitalId ??
+            u?.hospital ??
+            a?.accountId ??
+            u?.accountId ??
+            a?.id ??
+            a?._id ??
+            u?.id ??
+            u?._id;
         return id ? String(id) : null;
     }
     static hospital(req, res) {
         const id = PharmacyController.getHospitalId(req);
-        if (!id) {
-            res.status(401).json({ statusCode: 401, success: false, message: 'Authenticated hospital context is missing.', errors: [] });
+        if (!id || !Types.ObjectId.isValid(id)) {
+            res.status(401).json({
+                statusCode: 401,
+                success: false,
+                message: 'Authenticated hospital context is missing.',
+                errors: [],
+            });
             return null;
         }
         return id;
+    }
+    static getUserId(req) {
+        const r = req;
+        const id = r.user?.id ??
+            r.user?._id ??
+            r.account?.id ??
+            r.account?._id;
+        return id ? String(id) : null;
     }
     static async createItem(req, res, next) {
         try {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.status(201).json({ success: true, data: await PharmacyService.createInventoryItem(h, req.body) });
+            res.status(201).json({
+                success: true,
+                data: await PharmacyService.createInventoryItem(h, req.body),
+            });
         }
         catch (e) {
             next(e);
@@ -32,7 +57,10 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.json({ success: true, ...(await PharmacyService.getInventory(h, req.query)) });
+            res.json({
+                success: true,
+                ...(await PharmacyService.getInventory(h, req.query)),
+            });
         }
         catch (e) {
             next(e);
@@ -43,7 +71,10 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.json({ success: true, data: await PharmacyService.getInventoryItemById(h, req.params.id) });
+            res.json({
+                success: true,
+                data: await PharmacyService.getInventoryItemById(h, req.params.id),
+            });
         }
         catch (e) {
             next(e);
@@ -54,11 +85,51 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            const r = req;
-            const userId = String(r.user?.id ?? r.user?._id ?? r.account?.accountId ?? '');
-            if (!userId)
-                throw Object.assign(new Error('Authenticated user context is missing.'), { statusCode: 401 });
-            res.json({ success: true, data: await PharmacyService.updateStock(h, userId, req.params.id, req.body) });
+            if (!Types.ObjectId.isValid(req.params.id)) {
+                res.status(400).json({
+                    success: false,
+                    statusCode: 400,
+                    message: 'Invalid inventory item ID.',
+                    errors: [],
+                });
+                return;
+            }
+            const userId = PharmacyController.getUserId(req);
+            if (!userId || !Types.ObjectId.isValid(userId)) {
+                res.status(401).json({
+                    success: false,
+                    statusCode: 401,
+                    message: 'Authenticated user context is missing.',
+                    errors: [],
+                });
+                return;
+            }
+            const body = req.body ?? {};
+            const rawQuantityChange = body.quantityChange ??
+                body.quantity ??
+                body.adjustment ??
+                body.change;
+            const quantityChange = Number(rawQuantityChange);
+            if (!Number.isInteger(quantityChange) || quantityChange === 0) {
+                res.status(400).json({
+                    success: false,
+                    statusCode: 400,
+                    message: 'Stock adjustment must be a non-zero whole number.',
+                    errors: [],
+                });
+                return;
+            }
+            const reason = typeof body.reason === 'string' && body.reason.trim()
+                ? body.reason.trim()
+                : 'Manual pharmacy stock adjustment';
+            const dto = {
+                quantityChange,
+                reason,
+            };
+            res.json({
+                success: true,
+                data: await PharmacyService.updateStock(h, userId, req.params.id, dto),
+            });
         }
         catch (e) {
             next(e);
@@ -69,7 +140,100 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.status(201).json({ success: true, data: await PharmacyService.createPrescription(h, req.body) });
+            const body = req.body ?? {};
+            const prescriberId = typeof body.prescriberId === 'string' && body.prescriberId.trim()
+                ? body.prescriberId.trim()
+                : undefined;
+            const prescriberName = typeof body.prescriberName === 'string' && body.prescriberName.trim()
+                ? body.prescriberName.trim()
+                : undefined;
+            if (!prescriberId && !prescriberName) {
+                res.status(400).json({
+                    success: false,
+                    statusCode: 400,
+                    message: 'A registered prescriber or prescriber name is required.',
+                    errors: [],
+                });
+                return;
+            }
+            if (prescriberId && !Types.ObjectId.isValid(prescriberId)) {
+                res.status(400).json({
+                    success: false,
+                    statusCode: 400,
+                    message: 'Invalid prescriber ID.',
+                    errors: [],
+                });
+                return;
+            }
+            const dto = {
+                ...body,
+                prescriberId,
+                prescriberName,
+            };
+            res.status(201).json({
+                success: true,
+                data: await PharmacyService.createPrescription(h, dto),
+            });
+        }
+        catch (e) {
+            next(e);
+        }
+    }
+    static async listPrescribers(req, res, next) {
+        try {
+            const h = PharmacyController.hospital(req, res);
+            if (!h)
+                return;
+            const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+            if (search.length < 2) {
+                res.json({ success: true, data: [] });
+                return;
+            }
+            const terms = search.split(/\s+/).filter(Boolean).slice(0, 4);
+            const pattern = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+            const hospitalObjectId = new Types.ObjectId(h);
+            const accounts = await mongoose.connection
+                .collection('accounts')
+                .find({
+                $or: [
+                    { hospitalId: hospitalObjectId },
+                    { hospitalId: h },
+                ],
+                $and: [
+                    {
+                        $or: [
+                            { firstName: { $regex: pattern, $options: 'i' } },
+                            { lastName: { $regex: pattern, $options: 'i' } },
+                            { email: { $regex: pattern, $options: 'i' } },
+                            { staffId: { $regex: pattern, $options: 'i' } },
+                            { name: { $regex: pattern, $options: 'i' } },
+                            { fullName: { $regex: pattern, $options: 'i' } },
+                        ],
+                    },
+                ],
+            })
+                .project({
+                _id: 1,
+                firstName: 1,
+                lastName: 1,
+                email: 1,
+                staffId: 1,
+                name: 1,
+                fullName: 1,
+            })
+                .limit(10)
+                .toArray();
+            res.json({
+                success: true,
+                data: accounts.map((account) => ({
+                    _id: String(account._id),
+                    firstName: account.firstName || '',
+                    lastName: account.lastName || '',
+                    email: account.email || '',
+                    staffId: account.staffId || '',
+                    name: account.name || account.fullName || '',
+                })),
+            });
         }
         catch (e) {
             next(e);
@@ -80,7 +244,10 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.json({ success: true, ...(await PharmacyService.getPrescriptions(h, req.query)) });
+            res.json({
+                success: true,
+                ...(await PharmacyService.getPrescriptions(h, req.query)),
+            });
         }
         catch (e) {
             next(e);
@@ -91,7 +258,10 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.json({ success: true, data: await PharmacyService.getPrescriptionById(h, req.params.id) });
+            res.json({
+                success: true,
+                data: await PharmacyService.getPrescriptionById(h, req.params.id),
+            });
         }
         catch (e) {
             next(e);
@@ -102,7 +272,10 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.json({ success: true, data: await PharmacyService.screenPrescription(h, req.params.id) });
+            res.json({
+                success: true,
+                data: await PharmacyService.screenPrescription(h, req.params.id),
+            });
         }
         catch (e) {
             next(e);
@@ -113,9 +286,20 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            const r = req;
-            const pharmacistId = String(r.user?.id ?? r.user?._id ?? r.account?.accountId ?? '');
-            res.json({ success: true, data: await PharmacyService.approvePrescription(h, req.params.id, pharmacistId) });
+            const pharmacistId = PharmacyController.getUserId(req);
+            if (!pharmacistId || !Types.ObjectId.isValid(pharmacistId)) {
+                res.status(401).json({
+                    success: false,
+                    statusCode: 401,
+                    message: 'Authenticated pharmacist context is missing.',
+                    errors: [],
+                });
+                return;
+            }
+            res.json({
+                success: true,
+                data: await PharmacyService.approvePrescription(h, req.params.id, pharmacistId),
+            });
         }
         catch (e) {
             next(e);
@@ -126,11 +310,44 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            const r = req;
-            const pharmacistId = String(r.user?.id ?? r.user?._id ?? r.account?.accountId ?? '');
-            if (!pharmacistId)
-                throw Object.assign(new Error('Authenticated pharmacist context is missing.'), { statusCode: 401 });
-            res.status(201).json({ success: true, data: await PharmacyService.createDispenseRecord(h, pharmacistId, req.body) });
+            const pharmacistId = PharmacyController.getUserId(req);
+            if (!pharmacistId || !Types.ObjectId.isValid(pharmacistId)) {
+                res.status(401).json({
+                    success: false,
+                    statusCode: 401,
+                    message: 'Authenticated pharmacist context is missing.',
+                    errors: [],
+                });
+                return;
+            }
+            res.status(201).json({
+                success: true,
+                data: await PharmacyService.createDispenseRecord(h, pharmacistId, req.body),
+            });
+        }
+        catch (e) {
+            next(e);
+        }
+    }
+    static async retryBilling(req, res, next) {
+        try {
+            const h = PharmacyController.hospital(req, res);
+            if (!h)
+                return;
+            const pharmacistId = PharmacyController.getUserId(req);
+            if (!pharmacistId || !Types.ObjectId.isValid(pharmacistId)) {
+                res.status(401).json({
+                    success: false,
+                    statusCode: 401,
+                    message: 'Authenticated pharmacist context is missing.',
+                    errors: [],
+                });
+                return;
+            }
+            res.json({
+                success: true,
+                data: await PharmacyService.retryBilling(h, pharmacistId, req.params.id),
+            });
         }
         catch (e) {
             next(e);
@@ -141,7 +358,10 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.json({ success: true, ...(await PharmacyService.getDispenseRecords(h, req.query)) });
+            res.json({
+                success: true,
+                ...(await PharmacyService.getDispenseRecords(h, req.query)),
+            });
         }
         catch (e) {
             next(e);
@@ -152,7 +372,10 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.status(201).json({ success: true, data: await PharmacyService.createFormularyEntry(h, req.body) });
+            res.status(201).json({
+                success: true,
+                data: await PharmacyService.createFormularyEntry(h, req.body),
+            });
         }
         catch (e) {
             next(e);
@@ -163,7 +386,10 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.json({ success: true, ...(await PharmacyService.getFormulary(h, req.query)) });
+            res.json({
+                success: true,
+                ...(await PharmacyService.getFormulary(h, req.query)),
+            });
         }
         catch (e) {
             next(e);
@@ -174,7 +400,10 @@ export class PharmacyController {
             const h = PharmacyController.hospital(req, res);
             if (!h)
                 return;
-            res.json({ success: true, data: await PharmacyService.getInventoryLedger(h, req.params.id, Number(req.query.page) || 1, Number(req.query.limit) || 50) });
+            res.json({
+                success: true,
+                data: await PharmacyService.getInventoryLedger(h, req.params.id, Number(req.query.page) || 1, Number(req.query.limit) || 50),
+            });
         }
         catch (e) {
             next(e);

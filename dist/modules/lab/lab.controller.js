@@ -245,4 +245,97 @@ export class LabController {
             next(error);
         }
     }
+    static async specimen(req, res, next) {
+        try {
+            const { hospitalId } = LabController.getAuthContext(req);
+            const data = await LabService.getSpecimen(hospitalId, req.params.id);
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    static async transitionSpecimen(req, res, next) {
+        try {
+            const { userId, hospitalId } = LabController.getAuthContext(req);
+            const target = String(req.body.status || req.query.status || '').toUpperCase();
+            const data = await LabService.transitionSpecimen(hospitalId, req.params.id, userId, target, req.body);
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    static async processSpecimen(req, res, next) {
+        try {
+            const { userId, hospitalId } = LabController.getAuthContext(req);
+            const data = await LabService.processSpecimen(hospitalId, req.params.id, userId, req.body);
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    static async createReferenceRange(req, res, next) {
+        try {
+            const { hospitalId } = LabController.getAuthContext(req);
+            const data = await LabService.createReferenceRange(hospitalId, req.body);
+            res.status(201).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    static async listReferenceRanges(req, res, next) {
+        try {
+            const { hospitalId } = LabController.getAuthContext(req);
+            const data = await LabService.listReferenceRanges(hospitalId, typeof req.query.parameterName === 'string' ? req.query.parameterName : undefined);
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    static async listCriticalAlerts(req, res, next) {
+        try {
+            const { hospitalId } = LabController.getAuthContext(req);
+            const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+            const data = await LabService.listCriticalAlerts(hospitalId, status);
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    static async acknowledgeCriticalAlert(req, res, next) {
+        try {
+            const { hospitalId, userId } = LabController.getAuthContext(req);
+            const data = await LabService.acknowledgeCriticalAlert(hospitalId, req.params.id, userId);
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    static async ingestAnalyzerResult(req, res, next) {
+        try {
+            const { hospitalId, userId } = LabController.getAuthContext(req);
+            const data = await LabService.ingestAnalyzerResult(hospitalId, userId, req.body);
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    static async buildAnalyzerOrderMessage(req, res, next) {
+        try {
+            const { hospitalId } = LabController.getAuthContext(req);
+            const protocol = String(req.body?.protocol || req.query.protocol || 'HL7').toUpperCase();
+            const data = await LabService.buildAnalyzerOrderMessage(hospitalId, req.params.id, protocol);
+            res.status(200).json({ success: true, data, protocol });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
 }

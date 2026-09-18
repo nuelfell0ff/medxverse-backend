@@ -22,6 +22,15 @@ router.patch('/:id/collect-sample', LabController.collectSample);
 router.patch('/:id/accession', LabController.accessionSpecimen);
 router.patch('/:id/reject-sample', LabController.rejectSample);
 router.patch('/:id/recollect', LabController.recollectSample);
+router.get('/:id/specimen', LabController.specimen);
+router.patch('/:id/specimen', LabController.transitionSpecimen);
+router.patch('/:id/specimen/process', LabController.processSpecimen);
+router.get('/reference-ranges', LabController.listReferenceRanges);
+router.post('/reference-ranges', LabController.createReferenceRange);
+router.get('/critical-alerts', LabController.listCriticalAlerts);
+router.patch('/critical-alerts/:id/acknowledge', LabController.acknowledgeCriticalAlert);
+router.post('/analyzer/results', LabController.ingestAnalyzerResult);
+router.post('/:id/analyzer/order-message', LabController.buildAnalyzerOrderMessage);
 /* =========================================================
    BILLING
 ========================================================= */
