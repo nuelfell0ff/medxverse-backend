@@ -81,26 +81,30 @@ by the application's scheduler at the desired cadence.
 
 Assuming the application mounts this router at `/icu`:
 
-- `POST /icu`
-- `GET /icu`
-- `GET /icu/:id`
-- `GET /icu/dashboard/:id`
-- `PATCH /icu/:id/vitals`
-- `PATCH /icu/:id/ventilator`
-- `PATCH /icu/:id/status`
-- `POST /icu/:id/device-readings`
-- `GET /icu/:id/device-readings`
-- `GET /icu/:id/trends?parameter=heartRateBpm`
-- `GET /icu/:id/flowsheet`
-- `POST /icu/:id/flowsheet`
-- `PATCH /icu/:id/flowsheet/:entryId/confirm`
-- `POST /icu/:id/scores/recalculate`
-- `POST /icu/:id/scores/recalculate-from-data`
-- `GET /icu/:id/scores`
-- `POST /icu/:id/family-communications`
-- `GET /icu/:id/family-communications`
+Canonical admission-oriented routes used by the frontend:
 
-All routes use the existing `authenticate` middleware.
+- `POST /icu/admissions`
+- `GET /icu/admissions`
+- `GET /icu/admissions/:id`
+- `GET /icu/admissions/:id/dashboard`
+- `PATCH /icu/admissions/:id/vitals`
+- `PATCH /icu/admissions/:id/ventilator`
+- `PATCH /icu/admissions/:id/status`
+- `POST /icu/admissions/:id/device-readings`
+- `GET /icu/admissions/:id/device-readings`
+- `GET /icu/admissions/:id/trends?parameter=heartRateBpm`
+- `GET /icu/admissions/:id/flowsheet`
+- `POST /icu/admissions/:id/flowsheet`
+- `PATCH /icu/admissions/:id/flowsheet/:entryId/confirm`
+- `POST /icu/admissions/:id/scores/recalculate`
+- `POST /icu/admissions/:id/scores/recalculate-from-data`
+- `GET /icu/admissions/:id/scores`
+- `POST /icu/admissions/:id/family-communications`
+- `GET /icu/admissions/:id/family-communications`
+
+The original root-based routes (`/icu`, `/icu/:id`, etc.) are also retained as
+backwards-compatible aliases. All routes use the existing `authenticate`
+middleware.
 
 ## Surgery integration
 
