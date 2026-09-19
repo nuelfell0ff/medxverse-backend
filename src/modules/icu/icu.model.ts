@@ -51,11 +51,9 @@ const ICUAdmissionSchema = new Schema<IICUAdmissionDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-    wardId: { type: Schema.Types.ObjectId, ref: 'Ward', required: true, index: true },
     bedNumber: { type: String, required: true, trim: true, index: true },
     careLevel: { type: String, enum: Object.values(CareLevel), default: CareLevel.LEVEL_2_ICU, required: true, index: true },
     primaryDiagnosis: { type: String, required: true, trim: true },
-    admissionReason: { type: String, required: true, trim: true },
     attendingPhysicianId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     admittedById: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     vitals: { type: ICUVitalsSchema },
@@ -72,7 +70,6 @@ const ICUAdmissionSchema = new Schema<IICUAdmissionDocument>(
 );
 
 ICUAdmissionSchema.index({ hospitalId: 1, status: 1, bedNumber: 1 });
-ICUAdmissionSchema.index({ hospitalId: 1, wardId: 1, status: 1 });
 ICUAdmissionSchema.index(
   { hospitalId: 1, bedNumber: 1 },
   {
@@ -105,7 +102,7 @@ const DeviceMeasurementSchema = new Schema(
 const DeviceReadingSchema = new Schema<IDeviceReadingDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
-    admissionId: { type: Schema.Types.ObjectId, ref: 'MedXVerseICUAdmission', required: true },
+    admissionId: { type: Schema.Types.ObjectId, ref: 'ICUAdmission', required: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true },
     deviceId: { type: String, required: true, trim: true },
     deviceType: { type: String, enum: Object.values(ICUDeviceType), required: true },
@@ -135,7 +132,7 @@ DeviceReadingSchema.index({ 'metadata.hospitalId': 1, deviceId: 1, recordedAt: -
 const FlowsheetEntrySchema = new Schema<IFlowsheetEntryDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
-    admissionId: { type: Schema.Types.ObjectId, ref: 'MedXVerseICUAdmission', required: true, index: true },
+    admissionId: { type: Schema.Types.ObjectId, ref: 'ICUAdmission', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
     recordedAt: { type: Date, required: true, index: true },
     category: { type: String, required: true, trim: true, index: true },
@@ -171,7 +168,7 @@ const ICUScoreComponentSchema = new Schema(
 const ICUScoreSchema = new Schema<IICUScoreDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
-    admissionId: { type: Schema.Types.ObjectId, ref: 'MedXVerseICUAdmission', required: true, index: true },
+    admissionId: { type: Schema.Types.ObjectId, ref: 'ICUAdmission', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
     scoreType: { type: String, enum: Object.values(ICUScoreType), required: true },
     score: { type: Number, required: true, min: 0 },
@@ -191,7 +188,7 @@ ICUScoreSchema.index({ hospitalId: 1, admissionId: 1, scoreType: 1, calculatedAt
 const FamilyCommunicationLogSchema = new Schema<IFamilyCommunicationLogDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
-    admissionId: { type: Schema.Types.ObjectId, ref: 'MedXVerseICUAdmission', required: true, index: true },
+    admissionId: { type: Schema.Types.ObjectId, ref: 'ICUAdmission', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
     communicatedAt: { type: Date, default: Date.now, required: true, index: true },
     communicatedById: { type: Schema.Types.ObjectId, ref: 'User', required: true },
@@ -210,8 +207,7 @@ const FamilyCommunicationLogSchema = new Schema<IFamilyCommunicationLogDocument>
 FamilyCommunicationLogSchema.index({ hospitalId: 1, admissionId: 1, communicatedAt: -1 });
 
 export const ICUAdmissionModel =
-  mongoose.models.MedXVerseICUAdmission ||
-  model<IICUAdmissionDocument>('MedXVerseICUAdmission', ICUAdmissionSchema, 'icuadmissions');
+  mongoose.models.ICUAdmission || model<IICUAdmissionDocument>('ICUAdmission', ICUAdmissionSchema);
 export const DeviceReadingModel =
   mongoose.models.DeviceReading || model<IDeviceReadingDocument>('DeviceReading', DeviceReadingSchema);
 export const FlowsheetEntryModel =

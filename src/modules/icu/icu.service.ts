@@ -153,9 +153,6 @@ export class ICUService {
     const [admissions, total] = await Promise.all([
       ICUAdmissionModel.find(filter)
         .populate('patientId', 'firstName lastName mrn dateOfBirth gender bloodGroup phone')
-        .populate('wardId', 'code name department floor building specialty')
-        .populate('attendingPhysicianId', 'firstName lastName role')
-        .populate('admittedById', 'firstName lastName role')
         .populate('transferredToWardId', 'name wardNumber')
         .sort({ admittedAt: -1 })
         .skip(skip)
