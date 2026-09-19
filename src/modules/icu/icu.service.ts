@@ -59,7 +59,7 @@ export class ICUService {
 
   private async getAdmissionOrThrow(admissionId: string, hospitalId: string) {
     this.validateObjectId(admissionId, 'ICU admission ID');
-    const admission = await ICUAdmissionModel.findOne({ _id: admissionId, hospitalId });
+    const admission = await ICUAdmissionModel.findOne({ _id: admissionId, $or: [{ hospitalId: new Types.ObjectId(hospitalId) }, { hospitalId }] });
     if (!admission) throw new Error('ICU admission not found.');
     return admission;
   }
@@ -136,7 +136,14 @@ export class ICUService {
     const limit = Math.min(100, Math.max(1, query.limit || 20));
     const skip = (page - 1) * limit;
 
-    const filter: Record<string, unknown> = { hospitalId: new Types.ObjectId(hospitalId) };
+    // Always scope admissions to the authenticated hospital.  Use both the
+    // ObjectId and string representation because older ICU records may have
+    // been persisted with a string hospitalId before the ICU schema was
+    // normalized to ObjectId.
+    const hospitalObjectId = new Types.ObjectId(hospitalId);
+    const filter: Record<string, unknown> = {
+      $or: [{ hospitalId: hospitalObjectId }, { hospitalId }],
+    };
     if (query.status) filter.status = query.status;
     if (query.careLevel) filter.careLevel = query.careLevel;
     if (query.patientId) filter.patientId = this.validateObjectId(query.patientId, 'patient ID');
@@ -164,7 +171,7 @@ export class ICUService {
     this.validateObjectId(admissionId, 'ICU admission ID');
     this.validateObjectId(hospitalId, 'hospital ID');
 
-    return ICUAdmissionModel.findOne({ _id: admissionId, hospitalId })
+    return ICUAdmissionModel.findOne({ _id: admissionId, $or: [{ hospitalId: new Types.ObjectId(hospitalId) }, { hospitalId }] })
       .populate('patientId', 'firstName lastName mrn dateOfBirth gender bloodGroup phone')
       .populate('wardId', 'code name department floor building specialty')
       .populate('attendingPhysicianId', 'firstName lastName role')
