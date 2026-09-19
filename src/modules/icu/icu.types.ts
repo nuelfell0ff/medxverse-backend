@@ -90,9 +90,11 @@ export interface IICUVitals {
 export interface IICUAdmission {
   hospitalId: Types.ObjectId;
   patientId: Types.ObjectId;
+  wardId: Types.ObjectId;
   bedNumber: string;
   careLevel: CareLevel;
   primaryDiagnosis: string;
+  admissionReason: string;
   attendingPhysicianId?: Types.ObjectId;
   admittedById: Types.ObjectId;
   vitals?: IICUVitals;
@@ -114,9 +116,11 @@ export interface IICUAdmissionDocument extends IICUAdmission {
 
 export interface CreateICUAdmissionInput {
   patientId: string;
+  wardId: string;
   bedNumber: string;
   careLevel: CareLevel;
   primaryDiagnosis: string;
+  admissionReason: string;
   attendingPhysicianId?: string;
   admittedById: string;
   vitals?: IICUVitals;
@@ -146,6 +150,7 @@ export interface GetICUAdmissionsQuery {
   status?: ICUCaseStatus;
   careLevel?: CareLevel;
   patientId?: string;
+  wardId?: string;
   bedNumber?: string;
 }
 

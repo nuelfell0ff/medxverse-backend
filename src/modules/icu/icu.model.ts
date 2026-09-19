@@ -51,9 +51,11 @@ const ICUAdmissionSchema = new Schema<IICUAdmissionDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
+    wardId: { type: Schema.Types.ObjectId, ref: 'Ward', required: true, index: true },
     bedNumber: { type: String, required: true, trim: true, index: true },
     careLevel: { type: String, enum: Object.values(CareLevel), default: CareLevel.LEVEL_2_ICU, required: true, index: true },
     primaryDiagnosis: { type: String, required: true, trim: true },
+    admissionReason: { type: String, required: true, trim: true },
     attendingPhysicianId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     admittedById: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     vitals: { type: ICUVitalsSchema },
@@ -70,6 +72,7 @@ const ICUAdmissionSchema = new Schema<IICUAdmissionDocument>(
 );
 
 ICUAdmissionSchema.index({ hospitalId: 1, status: 1, bedNumber: 1 });
+ICUAdmissionSchema.index({ hospitalId: 1, wardId: 1, status: 1 });
 ICUAdmissionSchema.index(
   { hospitalId: 1, bedNumber: 1 },
   {

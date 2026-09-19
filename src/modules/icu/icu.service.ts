@@ -25,6 +25,7 @@ import {
 import { icuDeviceGatewayService } from './icu.device-gateway.service.js';
 import { icuScoringService } from './icu.scoring.service.js';
 import { publishEhrResource } from '../patient/ehr.publisher.js';
+import { WardModel } from '../bed-ward/bed-ward.model.js';
 
 export class ICUService {
   private validateObjectId(id: string | undefined | null, field: string): string {
@@ -68,8 +69,17 @@ export class ICUService {
     this.validateObjectId(input.patientId, 'patient ID');
     await this.assertPatientBelongsToHospital(hospitalId, input.patientId);
 
+    if (!input.wardId?.trim() || !Types.ObjectId.isValid(input.wardId)) throw new Error('Valid ICU ward ID is required.');
     if (!input.bedNumber?.trim()) throw new Error('ICU bed number is required.');
+    if (!input.admissionReason?.trim()) throw new Error('Admission reason is required.');
     if (!input.primaryDiagnosis?.trim()) throw new Error('Primary diagnosis is required.');
+
+    const ward = await WardModel.findOne({
+      _id: new Types.ObjectId(input.wardId),
+      hospitalId: new Types.ObjectId(hospitalId),
+      active: true,
+    }).select('_id').lean();
+    if (!ward) throw new Error('ICU ward not found or is inactive.');
 
     if (input.attendingPhysicianId) this.validateObjectId(input.attendingPhysicianId, 'attending physician ID');
     if (input.sourceSurgeryCaseId) this.validateObjectId(input.sourceSurgeryCaseId, 'source surgery case ID');
@@ -78,9 +88,11 @@ export class ICUService {
     const admission = await ICUAdmissionModel.create({
       hospitalId: new Types.ObjectId(hospitalId),
       patientId: new Types.ObjectId(input.patientId),
+      wardId: new Types.ObjectId(input.wardId),
       bedNumber: input.bedNumber.trim(),
       careLevel: input.careLevel,
       primaryDiagnosis: input.primaryDiagnosis.trim(),
+      admissionReason: input.admissionReason.trim(),
       attendingPhysicianId: input.attendingPhysicianId ? new Types.ObjectId(input.attendingPhysicianId) : undefined,
       admittedById: new Types.ObjectId(input.admittedById),
       vitals: input.vitals,
@@ -102,6 +114,8 @@ export class ICUService {
         id: admission._id.toString(),
         patientId: input.patientId,
         bedNumber: admission.bedNumber,
+        wardId: input.wardId,
+        admissionReason: admission.admissionReason,
         careLevel: admission.careLevel,
         primaryDiagnosis: admission.primaryDiagnosis,
         admittedAt: admission.admittedAt,
@@ -126,11 +140,13 @@ export class ICUService {
     if (query.status) filter.status = query.status;
     if (query.careLevel) filter.careLevel = query.careLevel;
     if (query.patientId) filter.patientId = this.validateObjectId(query.patientId, 'patient ID');
+    if (query.wardId) filter.wardId = this.validateObjectId(query.wardId, 'ward ID');
     if (query.bedNumber) filter.bedNumber = { $regex: query.bedNumber, $options: 'i' };
 
     const [admissions, total] = await Promise.all([
       ICUAdmissionModel.find(filter)
         .populate('patientId', 'firstName lastName mrn dateOfBirth gender bloodGroup phone')
+        .populate('wardId', 'code name department floor building specialty')
         .populate('attendingPhysicianId', 'firstName lastName role')
         .populate('admittedById', 'firstName lastName role')
         .populate('transferredToWardId', 'name wardNumber')
@@ -150,6 +166,7 @@ export class ICUService {
 
     return ICUAdmissionModel.findOne({ _id: admissionId, hospitalId })
       .populate('patientId', 'firstName lastName mrn dateOfBirth gender bloodGroup phone')
+      .populate('wardId', 'code name department floor building specialty')
       .populate('attendingPhysicianId', 'firstName lastName role')
       .populate('admittedById', 'firstName lastName role')
       .populate('transferredToWardId', 'name wardNumber')

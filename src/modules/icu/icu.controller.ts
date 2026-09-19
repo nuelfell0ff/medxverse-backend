@@ -26,9 +26,11 @@ export class ICUController {
       const user = auth(req);
       const admission = await icuService.createAdmission(user.hospitalId, {
         patientId: req.body.patientId,
+        wardId: req.body.wardId,
         bedNumber: req.body.bedNumber,
         careLevel: req.body.careLevel as CareLevel,
         primaryDiagnosis: req.body.primaryDiagnosis,
+        admissionReason: req.body.admissionReason,
         attendingPhysicianId: req.body.attendingPhysicianId,
         admittedById: user._id,
         vitals: req.body.vitals,
