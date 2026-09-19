@@ -304,7 +304,7 @@ const LabOrderSchema = new Schema({
     },
     doctorId: {
         type: Schema.Types.ObjectId,
-        ref: 'Account',
+        ref: 'Staff',
         required: true,
         index: true,
     },

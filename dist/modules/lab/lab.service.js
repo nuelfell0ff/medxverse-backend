@@ -1,4 +1,5 @@
-import mongoose, { Types } from 'mongoose';
+import { Types } from 'mongoose';
+import { Staff } from '../staff/staff.model.js';
 import { LabOrderModel, } from './lab.model.js';
 import { SpecimenModel, TestResultModel, ReferenceRangeModel, CriticalAlertModel } from './lab.extended.model.js';
 import { LabOrderStatus, LabPriority, ResultFlag, EntryMethod, SampleRoutingStatus, AuthorizationLevel, SpecimenQuality, LabBillingStatus, SpecimenStatus, CriticalAlertStatus, } from './lab.types.js';
@@ -10,6 +11,7 @@ import { publishEhrResource } from '../patient/ehr.publisher.js';
    HELPERS
 ========================================================= */
 const ACCOUNT_SELECT = 'name email phone accountType';
+const STAFF_SELECT = 'firstName middleName lastName title role jobTitle professionalTitle contact';
 /* =========================================================
    BILLING HELPERS
 ========================================================= */
@@ -75,19 +77,19 @@ export class LabService {
             },
             {
                 path: 'doctorId',
-                select: ACCOUNT_SELECT,
+                select: STAFF_SELECT,
             },
             {
                 path: 'phlebotomistId',
-                select: ACCOUNT_SELECT,
+                select: STAFF_SELECT,
             },
             {
                 path: 'labTechnicianId',
-                select: ACCOUNT_SELECT,
+                select: STAFF_SELECT,
             },
             {
                 path: 'verifierId',
-                select: ACCOUNT_SELECT,
+                select: STAFF_SELECT,
             },
         ]);
         return order;
@@ -243,25 +245,20 @@ export class LabService {
             error.statusCode = 400;
             throw error;
         }
-        const rawDto = dto;
-        const selectedDoctorId = rawDto.doctorId ||
-            rawDto.requestingDoctorId ||
-            rawDto.orderingDoctorId ||
-            rawDto.prescriberId ||
-            (typeof rawDto.doctor === 'string'
-                ? rawDto.doctor
-                : rawDto.doctor?._id || rawDto.doctor?.id);
-        const doctorId = selectedDoctorId || requestingUserId;
-        if (!Types.ObjectId.isValid(doctorId)) {
-            const error = new Error('Invalid doctor ID.');
+        if (!dto.doctorId || !Types.ObjectId.isValid(dto.doctorId)) {
+            const error = new Error('A valid requesting doctor must be selected.');
             error.statusCode = 400;
             throw error;
         }
-        const doctorAccount = await mongoose.model('Account').findOne({
+        const doctorId = dto.doctorId;
+        const requestingDoctor = await Staff.findOne({
             _id: new Types.ObjectId(doctorId),
             hospitalId: new Types.ObjectId(hospitalId),
-        }).select('_id');
-        if (!doctorAccount) {
+            role: 'DOCTOR',
+            status: 'ACTIVE',
+            isActive: true,
+        }).select('_id hospitalId firstName middleName lastName title role jobTitle professionalTitle contact').lean();
+        if (!requestingDoctor) {
             const error = new Error('The selected requesting doctor was not found in this hospital staff directory.');
             error.statusCode = 400;
             throw error;
@@ -521,7 +518,7 @@ export class LabService {
         const [orders, total] = await Promise.all([
             LabOrderModel.find(filter)
                 .populate('patientId', 'firstName lastName mrn dateOfBirth gender')
-                .populate('doctorId', ACCOUNT_SELECT)
+                .populate('doctorId', STAFF_SELECT)
                 .populate('phlebotomistId', ACCOUNT_SELECT)
                 .populate('labTechnicianId', ACCOUNT_SELECT)
                 .populate('verifierId', ACCOUNT_SELECT)
