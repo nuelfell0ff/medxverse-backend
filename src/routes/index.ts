@@ -29,6 +29,7 @@ import inventoryRoutes from '../modules/inventory/inventory.routes.js';
 import administrationRoutes from '../modules/administration/administration.routes.js';
 import telemedicineRoutes from '../modules/telemedicine/telemedicine.routes.js';
 import settingsRoutes from '../modules/settings/settings.routes.js';
+import icuRoutes from '../modules/icu/icu.routes.js';
 
 // hms portal
 import hmsDashboardRoutes from '../modules/hms-dashboard/hms-dashboard.routes.js';
@@ -73,6 +74,7 @@ v1Router.use('/inventory', inventoryRoutes);
 v1Router.use('/administration', administrationRoutes);
 v1Router.use('/telemedicine', telemedicineRoutes);
 v1Router.use('/settings', settingsRoutes);
+v1Router.use('/icu', icuRoutes);
 
 // hms portal
 v1Router.use('/hms-dashboard', hmsDashboardRoutes);
