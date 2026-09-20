@@ -15,6 +15,8 @@ import {
   ICUScoreType,
   ICUScoreStatus,
 } from './icu.types.js';
+import '../bed-ward/bed-ward.model.js';
+import '../staff/staff.model.js';
 
 const VentilatorSettingsSchema = new Schema(
   {
@@ -103,15 +105,21 @@ const ICUAdmissionSchema = new Schema<IICUAdmissionDocument>(
       trim: true,
     },
 
+    admissionReason: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
     attendingPhysicianId: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Staff',
       index: true,
     },
 
     admittedById: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
       required: true,
     },
 
@@ -417,12 +425,12 @@ const FlowsheetEntrySchema = new Schema<IFlowsheetEntryDocument>(
 
     enteredById: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
 
     reviewedById: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
 
     reviewedAt: Date,
@@ -592,7 +600,7 @@ const FamilyCommunicationLogSchema =
 
       communicatedById: {
         type: Schema.Types.ObjectId,
-        ref: 'User',
+        ref: 'Account',
         required: true,
       },
 

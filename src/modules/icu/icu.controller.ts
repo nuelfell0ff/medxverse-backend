@@ -59,6 +59,7 @@ export class ICUController {
         status: req.query.status as ICUCaseStatus | undefined,
         careLevel: req.query.careLevel as CareLevel | undefined,
         patientId: req.query.patientId as string | undefined,
+        wardId: req.query.wardId as string | undefined,
         bedNumber: req.query.bedNumber as string | undefined,
       });
 

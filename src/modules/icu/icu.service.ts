@@ -153,8 +153,10 @@ export class ICUService {
     const [admissions, total] = await Promise.all([
       ICUAdmissionModel.find(filter)
         .populate('patientId', 'firstName lastName mrn dateOfBirth gender bloodGroup phone')
-        .populate('transferredToWardId', 'name wardNumber')
-        .sort({ admittedAt: -1 })
+        .populate('wardId', 'code name department floor building specialty')
+        .populate('transferredToWardId', 'code name department floor building specialty')
+        .populate('attendingPhysicianId', 'staffId firstName middleName lastName role professionalTitle jobTitle')
+                .sort({ admittedAt: -1 })
         .skip(skip)
         .limit(limit)
         .exec(),
@@ -171,9 +173,8 @@ export class ICUService {
     return ICUAdmissionModel.findOne({ _id: admissionId, $or: [{ hospitalId: new Types.ObjectId(hospitalId) }, { hospitalId }] })
       .populate('patientId', 'firstName lastName mrn dateOfBirth gender bloodGroup phone')
       .populate('wardId', 'code name department floor building specialty')
-      .populate('attendingPhysicianId', 'firstName lastName role')
-      .populate('admittedById', 'firstName lastName role')
-      .populate('transferredToWardId', 'name wardNumber')
+      .populate('attendingPhysicianId', 'staffId firstName middleName lastName role professionalTitle jobTitle')
+            .populate('transferredToWardId', 'code name department floor building specialty')
       .exec();
   }
 
@@ -383,9 +384,7 @@ export class ICUService {
     return FlowsheetEntryModel.find(filter)
       .sort({ recordedAt: -1 })
       .limit(Math.min(5000, Math.max(1, options.limit || 1000)))
-      .populate('enteredById', 'firstName lastName role')
-      .populate('reviewedById', 'firstName lastName role')
-      .lean();
+                  .lean();
   }
 
   public async confirmFlowsheetEntry(
@@ -495,8 +494,7 @@ export class ICUService {
       admissionId: admission._id,
     })
       .sort({ communicatedAt: -1 })
-      .populate('communicatedById', 'firstName lastName role')
-      .lean();
+            .lean();
   }
 
     public async getDashboard(
@@ -535,9 +533,7 @@ export class ICUService {
       })
         .sort({ recordedAt: -1 })
         .limit(250)
-        .populate('enteredById', 'firstName lastName role')
-        .populate('reviewedById', 'firstName lastName role')
-        .exec(),
+                        .exec(),
 
       ICUScoreModel.find({
         hospitalId: hospitalObjectId,
@@ -552,8 +548,7 @@ export class ICUService {
         admissionId: admissionObjectId,
       })
         .sort({ communicatedAt: -1 })
-        .populate('communicatedById', 'firstName lastName role')
-        .exec(),
+                .exec(),
     ]);
 
     return {
