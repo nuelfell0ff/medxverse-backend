@@ -327,7 +327,7 @@ export class ICUController {
     try {
       const user = auth(req);
       const log = await icuService.addFamilyCommunication(user.hospitalId, user._id, {
-        admissionId: req.params.id,
+        admissionId: req.params.id || req.body.admissionId,
         contactName: req.body.contactName,
         relationship: req.body.relationship,
         contactMethod: req.body.contactMethod,

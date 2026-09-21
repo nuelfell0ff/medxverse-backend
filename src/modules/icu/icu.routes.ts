@@ -81,11 +81,23 @@ router.post('/admissions/:id/scores/recalculate-from-data', (req, res, next) =>
   icuController.recalculateScoresFromData(req, res, next),
 );
 
+// Compatibility route used by the current frontend.
+// Frontend calls: POST /api/v1/icu/scores/recalculate-underlying/:admissionId
+router.post('/scores/recalculate-underlying/:id', (req, res, next) =>
+  icuController.recalculateScoresFromData(req, res, next),
+);
+
 router.get('/admissions/:id/scores', (req, res, next) =>
   icuController.getScores(req, res, next),
 );
 
 router.post('/admissions/:id/family-communications', (req, res, next) =>
+  icuController.addFamilyCommunication(req, res, next),
+);
+
+// Compatibility route used by the current frontend. The admission ID may be
+// supplied in the request body because this endpoint has no ID path segment.
+router.post('/family-communications', (req, res, next) =>
   icuController.addFamilyCommunication(req, res, next),
 );
 
