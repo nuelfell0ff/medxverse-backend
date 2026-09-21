@@ -12,7 +12,6 @@ import {
   FlowEntrySource,
   GetICUAdmissionsQuery,
   IICUAdmissionDocument,
-  IICUVitals,
   ICUDashboardData,
   ICUCaseStatus,
   IDeviceMeasurement,
@@ -27,88 +26,6 @@ import { icuDeviceGatewayService } from './icu.device-gateway.service.js';
 import { icuScoringService } from './icu.scoring.service.js';
 import { publishEhrResource } from '../patient/ehr.publisher.js';
 import { WardModel } from '../bed-ward/bed-ward.model.js';
-
-
-/**
- * Normalize vital-sign payloads from older/front-end field names to the
- * canonical ICU schema names. This prevents values from being written only
- * to the flowsheet while Mongoose silently drops unknown admission fields.
- */
-function normalizeICUVitals(input: Record<string, unknown> = {}): IICUVitals {
-  const output: IICUVitals = {};
-
-  const pickNumber = (...keys: string[]) => {
-    for (const key of keys) {
-      const value = input[key];
-      if (value === undefined || value === null || value === '') continue;
-      if (typeof value === 'number' && Number.isFinite(value)) return value;
-      const parsed = Number(value);
-      if (Number.isFinite(parsed)) return parsed;
-    }
-    return undefined;
-  };
-
-  output.heartRateBpm = pickNumber('heartRateBpm', 'heartRate', 'heartrate', 'hr');
-  output.systolicBpMmHg = pickNumber(
-    'systolicBpMmHg',
-    'systolicBP',
-    'systolicBp',
-    'bloodPressure',
-    'bloodpressure',
-    'bp',
-  );
-  output.diastolicBpMmHg = pickNumber(
-    'diastolicBpMmHg',
-    'diastolicBP',
-    'diastolicBp',
-  );
-  output.meanArterialPressureMmHg = pickNumber(
-    'meanArterialPressureMmHg',
-    'meanArterialPressure',
-    'map',
-  );
-  output.respiratoryRateBpm = pickNumber(
-    'respiratoryRateBpm',
-    'respiratoryRate',
-    'respiratoryrate',
-    'rr',
-  );
-  output.oxygenSaturationPct = pickNumber(
-    'oxygenSaturationPct',
-    'oxygenSaturation',
-    'spo2',
-    'SpO2',
-    'o2Saturation',
-  );
-  output.temperatureCelsius = pickNumber(
-    'temperatureCelsius',
-    'temperature',
-    'temp',
-  );
-  output.centralVenousPressureMmHg = pickNumber(
-    'centralVenousPressureMmHg',
-    'centralVenousPressure',
-    'cvp',
-  );
-  output.intracranialPressureMmHg = pickNumber(
-    'intracranialPressureMmHg',
-    'intracranialPressure',
-    'icp',
-  );
-  output.glasgowComaScale = pickNumber(
-    'glasgowComaScale',
-    'gcs',
-    'GCS',
-  );
-
-  // Remove undefined values so a partial update does not overwrite
-  // previously recorded vital signs.
-  for (const key of Object.keys(output) as Array<keyof IICUVitals>) {
-    if (output[key] === undefined) delete output[key];
-  }
-
-  return output;
-}
 
 export class ICUService {
   private validateObjectId(id: string | undefined | null, field: string): string {
@@ -270,28 +187,74 @@ export class ICUService {
     await this.assertHospitalMember(hospitalId, actorId);
     const admission = await this.getAdmissionOrThrow(admissionId, hospitalId);
 
-    // Accept both the current canonical field names and legacy frontend
-    // names, then persist only fields that exist on ICUAdmission.vitals.
-    const vitals = normalizeICUVitals((input.vitals || {}) as Record<string, unknown>);
+    /*
+     * Normalize the payload before persisting it.
+     *
+     * Older versions of the ICU page used display-oriented keys such as
+     * `heartRate`, `spo2`, `temperature`, `respiratoryRate` and `gcs`.
+     * Those keys are not part of ICUVitalsSchema, so Mongoose silently
+     * stripped them from `admission.vitals` while the same raw keys were
+     * still being written to the flowsheet. That produced the exact symptom
+     * where Flowsheet showed values but Overview showed `—`.
+     *
+     * Accept both the canonical API keys and the legacy UI keys so existing
+     * clients cannot create another split-brain record.
+     */
+    const rawVitals = (input?.vitals ?? {}) as Record<string, unknown>;
+    const firstNumber = (...values: unknown[]): number | undefined => {
+      for (const value of values) {
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'string' && value.trim() !== '') {
+          const parsed = Number(value);
+          if (Number.isFinite(parsed)) return parsed;
+        }
+      }
+      return undefined;
+    };
 
-    if (!Object.keys(vitals).length) {
-      throw new Error('At least one valid vital sign is required.');
+    const normalizedVitals: Record<string, number> = {};
+
+    const mappings: Record<string, string[]> = {
+      heartRateBpm: ['heartRateBpm', 'heartRate', 'heartrate'],
+      systolicBpMmHg: ['systolicBpMmHg', 'systolicBp', 'bloodPressure', 'bloodpressure'],
+      diastolicBpMmHg: ['diastolicBpMmHg', 'diastolicBp'],
+      meanArterialPressureMmHg: ['meanArterialPressureMmHg', 'map', 'meanArterialPressure'],
+      respiratoryRateBpm: ['respiratoryRateBpm', 'respiratoryRate', 'respiratoryrate'],
+      oxygenSaturationPct: ['oxygenSaturationPct', 'spo2', 'SpO2', 'oxygenSaturation'],
+      temperatureCelsius: ['temperatureCelsius', 'temperature', 'temp'],
+      centralVenousPressureMmHg: ['centralVenousPressureMmHg', 'cvp'],
+      intracranialPressureMmHg: ['intracranialPressureMmHg', 'icp'],
+      glasgowComaScale: ['glasgowComaScale', 'gcs'],
+    };
+
+    for (const [canonicalKey, aliases] of Object.entries(mappings)) {
+      const value = firstNumber(...aliases.map((key) => rawVitals[key]));
+      if (value !== undefined) normalizedVitals[canonicalKey] = value;
     }
 
     const updated = await ICUAdmissionModel.findOneAndUpdate(
-      {
-        _id: admission._id,
-        hospitalId,
-        status: { $in: [ICUCaseStatus.ADMITTED, ICUCaseStatus.STABILIZED] },
-      },
-      { $set: { vitals } },
-      { new: true, runValidators: true },
+      { _id: admission._id, hospitalId, status: { $in: [ICUCaseStatus.ADMITTED, ICUCaseStatus.STABILIZED] } },
+      { $set: { vitals: { ...(admission.vitals ?? {}), ...normalizedVitals } } },
+      { new: true },
     ).exec();
 
     if (updated) {
-      const entries = Object.entries(vitals).filter(([, value]) => value !== undefined);
+      const entries = Object.entries(normalizedVitals).filter(([, value]) => value !== undefined);
 
       if (entries.length) {
+        const parameterLabels: Record<string, string> = {
+          heartRateBpm: 'Heart rate',
+          systolicBpMmHg: 'Systolic BP',
+          diastolicBpMmHg: 'Diastolic BP',
+          meanArterialPressureMmHg: 'MAP',
+          respiratoryRateBpm: 'Respiratory rate',
+          oxygenSaturationPct: 'SpO2',
+          temperatureCelsius: 'Temperature',
+          centralVenousPressureMmHg: 'CVP',
+          intracranialPressureMmHg: 'ICP',
+          glasgowComaScale: 'GCS',
+        };
+
         await FlowsheetEntryModel.insertMany(
           entries.map(([parameter, value]) => ({
             hospitalId: new Types.ObjectId(hospitalId),
@@ -299,7 +262,7 @@ export class ICUService {
             patientId: admission.patientId,
             recordedAt: new Date(),
             category: 'VITALS',
-            parameter,
+            parameter: parameterLabels[parameter] ?? parameter,
             value,
             source: FlowEntrySource.MANUAL,
             enteredById: new Types.ObjectId(actorId),
@@ -647,6 +610,74 @@ export class ICUService {
         .sort({ communicatedAt: -1 })
                 .exec(),
     ]);
+
+    /*
+     * Keep the dashboard resilient to older ICU records created before
+     * vitals were persisted on ICUAdmission. Those records may have their
+     * latest values only in FlowsheetEntry.
+     *
+     * The admission snapshot remains the authoritative source for new
+     * records, while this fallback makes historical records immediately
+     * visible in Overview without requiring clinicians to re-enter vitals.
+     */
+    const vitals = {
+      ...(admission.vitals ?? {}),
+    } as Record<string, number | undefined>;
+
+    const canonicalFromParameter: Record<string, keyof typeof vitals> = {
+      'Heart rate': 'heartRateBpm',
+      Heartrate: 'heartRateBpm',
+      heartRateBpm: 'heartRateBpm',
+      'Systolic BP': 'systolicBpMmHg',
+      Bloodpressure: 'systolicBpMmHg',
+      bloodPressure: 'systolicBpMmHg',
+      systolicBpMmHg: 'systolicBpMmHg',
+      'Diastolic BP': 'diastolicBpMmHg',
+      diastolicBpMmHg: 'diastolicBpMmHg',
+      MAP: 'meanArterialPressureMmHg',
+      meanArterialPressureMmHg: 'meanArterialPressureMmHg',
+      'Respiratory rate': 'respiratoryRateBpm',
+      Respiratoryrate: 'respiratoryRateBpm',
+      respiratoryRate: 'respiratoryRateBpm',
+      respiratoryRateBpm: 'respiratoryRateBpm',
+      SpO2: 'oxygenSaturationPct',
+      Spo2: 'oxygenSaturationPct',
+      spo2: 'oxygenSaturationPct',
+      oxygenSaturationPct: 'oxygenSaturationPct',
+      Temperature: 'temperatureCelsius',
+      temperature: 'temperatureCelsius',
+      temperatureCelsius: 'temperatureCelsius',
+      CVP: 'centralVenousPressureMmHg',
+      ICP: 'intracranialPressureMmHg',
+      GCS: 'glasgowComaScale',
+      Gcs: 'glasgowComaScale',
+      gcs: 'glasgowComaScale',
+      glasgowComaScale: 'glasgowComaScale',
+    };
+
+    // recentFlowsheet is newest-first, so the first matching entry is the
+    // latest recorded value for that parameter.
+    for (const entry of recentFlowsheet) {
+      const key = canonicalFromParameter[String(entry.parameter ?? '').trim()];
+      if (!key || vitals[key] !== undefined) continue;
+
+      const value =
+        typeof entry.value === 'number'
+          ? entry.value
+          : typeof entry.value === 'string' && entry.value.trim() !== ''
+            ? Number(entry.value)
+            : undefined;
+
+      if (value !== undefined && Number.isFinite(value)) {
+        vitals[key] = value;
+      }
+    }
+
+    // Mutating the hydrated document here changes only the response object;
+    // it does not write fallback values back to MongoDB.
+    if (Object.keys(vitals).length) {
+      Object.assign(admission, { vitals });
+    }
 
     return {
       admission,
