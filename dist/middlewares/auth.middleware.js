@@ -2,34 +2,117 @@ import jwt from 'jsonwebtoken';
 export const authenticateAccount = (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        res.status(401).json({ success: false, message: 'Access denied. No token provided.' });
+        res.status(401).json({
+            success: false,
+            message: 'Access denied. No token provided.',
+        });
         return;
     }
-    const token = authHeader.split(' ')[1];
+    const token = authHeader.slice(7).trim();
+    if (!token) {
+        res.status(401).json({
+            success: false,
+            message: 'Access denied. No token provided.',
+        });
+        return;
+    }
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_key');
-        req.account = decoded;
-        // Resolve hospitalId and _id regardless of JWT payload property naming
-        const resolvedHospitalId = decoded.hospitalId || decoded.accountId || decoded.hospital || decoded._id || decoded.id;
-        const resolvedUserId = decoded._id || decoded.id || decoded.accountId;
-        // Attach normalized req.user so downstream controllers find hospitalId and _id
+        const accountType = decoded.accountType === 'HMO' || decoded.accountType === 'HOSPITAL'
+            ? decoded.accountType
+            : undefined;
+        /*
+         * Resolve the authenticated account/user ID.
+         *
+         * accountId is the preferred tenant/account identifier.
+         * _id/id are supported for compatibility with older JWTs.
+         */
+        const accountId = decoded.accountId ??
+            decoded._id ??
+            decoded.id;
+        const userId = decoded._id ??
+            decoded.id ??
+            decoded.accountId;
+        if (!accountId) {
+            res.status(401).json({
+                success: false,
+                message: 'Invalid authentication token: account ID is missing.',
+            });
+            return;
+        }
+        if (!userId) {
+            res.status(401).json({
+                success: false,
+                message: 'Invalid authentication token: user ID is missing.',
+            });
+            return;
+        }
+        /*
+         * Resolve tenant IDs independently.
+         *
+         * For HMO accounts:
+         *   req.user.hmoId MUST be populated.
+         *
+         * For hospital accounts:
+         *   req.user.hospitalId MUST be populated.
+         */
+        const resolvedHmoId = decoded.hmoId ??
+            decoded.hmo ??
+            (accountType === 'HMO' ? accountId : undefined);
+        const resolvedHospitalId = decoded.hospitalId ??
+            decoded.hospital ??
+            (accountType === 'HOSPITAL' ? accountId : undefined);
+        /*
+         * Preserve the decoded JWT as req.account.
+         */
+        req.account = {
+            ...decoded,
+            accountId,
+            accountType: accountType,
+            name: String(decoded.name ?? ''),
+            email: String(decoded.email ?? ''),
+            role: decoded.role ? String(decoded.role) : undefined,
+        };
+        /*
+         * Normalize req.user for every downstream module.
+         *
+         * This is the important part for the HMO modules:
+         *
+         * req.user.hmoId
+         */
         req.user = {
             ...decoded,
-            _id: resolvedUserId,
-            hospitalId: decoded.accountType === 'HOSPITAL' ? resolvedHospitalId : undefined,
-            hmoId: decoded.accountType === 'HMO' ? resolvedHospitalId : undefined,
-            hospital: resolvedHospitalId,
+            _id: userId,
+            accountId,
+            accountType,
+            hospitalId: resolvedHospitalId,
+            hmoId: resolvedHmoId,
+            name: decoded.name ? String(decoded.name) : undefined,
+            email: decoded.email ? String(decoded.email) : undefined,
+            role: decoded.role ? String(decoded.role) : undefined,
         };
         next();
     }
     catch (error) {
-        res.status(401).json({ success: false, message: 'Invalid or expired token.' });
+        res.status(401).json({
+            success: false,
+            message: 'Invalid or expired token.',
+        });
     }
 };
-// Restrict access based on AccountType or User Role
+/**
+ * Restrict access based on AccountType or User Role.
+ *
+ * Example:
+ *   restrictTo('HMO')
+ *   restrictTo('HOSPITAL')
+ *   restrictTo('ADMIN')
+ */
 export const restrictTo = (...allowedRoles) => {
     return (req, res, next) => {
-        const role = req.user?.role || req.account?.accountType;
+        const role = req.user?.role ??
+            req.user?.accountType ??
+            req.account?.accountType;
         if (!role || !allowedRoles.includes(role)) {
             res.status(403).json({
                 success: false,
@@ -40,7 +123,9 @@ export const restrictTo = (...allowedRoles) => {
         next();
     };
 };
-// Compatibility aliases for legacy/route imports
+/**
+ * Compatibility aliases for existing routes.
+ */
 export const protect = authenticateAccount;
 export const authenticate = authenticateAccount;
 export const authorize = restrictTo;

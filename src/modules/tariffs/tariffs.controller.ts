@@ -1,73 +1,66 @@
 import { Request, Response } from 'express';
+
 import { tariffsService } from './tariffs.service.js';
 
 const payload = (body: any) => body?.data ?? body;
 
-interface AuthenticatedUser {
-  id?: string;
-  _id?: string;
-  accountId?: string;
-  hmoId?: string;
-  organizationId?: string;
-  hmo?: {
-    _id?: string;
-    id?: string;
-    hmoId?: string;
-  };
-  account?: {
-    _id?: string;
-    id?: string;
-    hmoId?: string;
-  };
-}
-
 interface AuthenticatedRequest extends Request {
-  user?: AuthenticatedUser;
-  account?: {
+  user?: {
     _id?: string;
-    id?: string;
-    hmoId?: string;
     accountId?: string;
+    hmoId?: string;
+    accountType?: 'HOSPITAL' | 'HMO';
+    role?: string;
+    [key: string]: unknown;
   };
-  hmoId?: string;
+
+  account?: {
+    accountId?: string;
+    accountType?: 'HOSPITAL' | 'HMO';
+    [key: string]: unknown;
+  };
 }
 
 /**
- * Resolve the HMO tenant from the authenticated request.
+ * Resolve the authenticated HMO tenant.
  *
- * The existing authentication layer may expose the tenant as hmoId,
- * accountId, or (for HMO accounts where the account itself is the
- * tenant) the authenticated user's id/_id.
- *
- * We only read trusted authentication context here; no client-supplied
- * query/body hmoId is accepted for tenant isolation.
+ * IMPORTANT:
+ * hmoId comes exclusively from authentication context.
+ * The client is never allowed to provide the tenant ID.
  */
 const hmoIdFromRequest = (req: Request): string => {
   const authReq = req as AuthenticatedRequest;
-  const user = authReq.user;
-  const account = authReq.account;
 
-  const value =
-    user?.hmoId ??
-    user?.account?.hmoId ??
-    user?.hmo?._id ??
-    user?.hmo?.id ??
-    user?.hmo?.hmoId ??
-    user?.organizationId ??
-    account?.hmoId ??
-    account?.accountId ??
-    authReq.hmoId ??
-    user?.accountId ??
-    account?._id ??
-    account?.id ??
-    user?.id ??
-    user?._id;
-
-  if (!value) {
-    throw new Error('HMO context is required');
+  /*
+   * The authentication middleware should normalize HMO accounts
+   * to req.user.hmoId.
+   */
+  if (authReq.user?.accountType === 'HMO' && authReq.user.hmoId) {
+    return String(authReq.user.hmoId);
   }
 
-  return String(value);
+  /*
+   * Compatibility fallback for older JWT/account structures.
+   */
+  if (
+    authReq.account?.accountType === 'HMO' &&
+    authReq.account.accountId
+  ) {
+    return String(authReq.account.accountId);
+  }
+
+  if (authReq.user?.hmoId) {
+    return String(authReq.user.hmoId);
+  }
+
+  if (
+    authReq.user?.accountType === 'HMO' &&
+    authReq.user.accountId
+  ) {
+    return String(authReq.user.accountId);
+  }
+
+  throw new Error('HMO context is required');
 };
 
 export class TariffsController {
@@ -137,10 +130,12 @@ export class TariffsController {
   }
 
   public async setStatus(req: Request, res: Response) {
+    const body = payload(req.body);
+
     const tariff = await tariffsService.setStatus(
       req.params.id,
       hmoIdFromRequest(req),
-      payload(req.body)?.status
+      body?.status
     );
 
     if (!tariff) {

@@ -1,37 +1,36 @@
 import { tariffsService } from './tariffs.service.js';
 const payload = (body) => body?.data ?? body;
 /**
- * Resolve the HMO tenant from the authenticated request.
+ * Resolve the authenticated HMO tenant.
  *
- * The existing authentication layer may expose the tenant as hmoId,
- * accountId, or (for HMO accounts where the account itself is the
- * tenant) the authenticated user's id/_id.
- *
- * We only read trusted authentication context here; no client-supplied
- * query/body hmoId is accepted for tenant isolation.
+ * IMPORTANT:
+ * hmoId comes exclusively from authentication context.
+ * The client is never allowed to provide the tenant ID.
  */
 const hmoIdFromRequest = (req) => {
     const authReq = req;
-    const user = authReq.user;
-    const account = authReq.account;
-    const value = user?.hmoId ??
-        user?.account?.hmoId ??
-        user?.hmo?._id ??
-        user?.hmo?.id ??
-        user?.hmo?.hmoId ??
-        user?.organizationId ??
-        account?.hmoId ??
-        account?.accountId ??
-        authReq.hmoId ??
-        user?.accountId ??
-        account?._id ??
-        account?.id ??
-        user?.id ??
-        user?._id;
-    if (!value) {
-        throw new Error('HMO context is required');
+    /*
+     * The authentication middleware should normalize HMO accounts
+     * to req.user.hmoId.
+     */
+    if (authReq.user?.accountType === 'HMO' && authReq.user.hmoId) {
+        return String(authReq.user.hmoId);
     }
-    return String(value);
+    /*
+     * Compatibility fallback for older JWT/account structures.
+     */
+    if (authReq.account?.accountType === 'HMO' &&
+        authReq.account.accountId) {
+        return String(authReq.account.accountId);
+    }
+    if (authReq.user?.hmoId) {
+        return String(authReq.user.hmoId);
+    }
+    if (authReq.user?.accountType === 'HMO' &&
+        authReq.user.accountId) {
+        return String(authReq.user.accountId);
+    }
+    throw new Error('HMO context is required');
 };
 export class TariffsController {
     async create(req, res) {
@@ -80,7 +79,8 @@ export class TariffsController {
         });
     }
     async setStatus(req, res) {
-        const tariff = await tariffsService.setStatus(req.params.id, hmoIdFromRequest(req), payload(req.body)?.status);
+        const body = payload(req.body);
+        const tariff = await tariffsService.setStatus(req.params.id, hmoIdFromRequest(req), body?.status);
         if (!tariff) {
             return res.status(404).json({
                 success: false,
