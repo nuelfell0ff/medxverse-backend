@@ -26,7 +26,6 @@ import notificationsRoutes from '../modules/notifications/notifications.routes.j
 import inventoryRoutes from '../modules/inventory/inventory.routes.js';
 import administrationRoutes from '../modules/administration/administration.routes.js';
 import telemedicineRoutes from '../modules/telemedicine/telemedicine.routes.js';
-import settingsRoutes from '../modules/settings/settings.routes.js';
 import icuRoutes from '../modules/icu/icu.routes.js';
 
 // hmo portal
@@ -40,6 +39,7 @@ import benefitsRoutes from '../modules/benefits/benefits.routes.js';
 import tariffsRoutes from '../modules/tariffs/tariffs.routes.js';
 import hmsReportsRoutes from '../modules/hms-reports/reports.routes.js';
 import hmsNotificationsRoutes from '../modules/hms-notifications/notifications.routes.js';
+import settingsRoutes from '../modules/settings/settings.routes.js';
 
 const v1Router = Router();
 
@@ -71,7 +71,6 @@ v1Router.use('/notifications', notificationsRoutes);
 v1Router.use('/inventory', inventoryRoutes);
 v1Router.use('/administration', administrationRoutes);
 v1Router.use('/telemedicine', telemedicineRoutes);
-v1Router.use('/settings', settingsRoutes);
 v1Router.use('/icu', icuRoutes);
 
 // hmo portal
@@ -85,5 +84,6 @@ v1Router.use('/benefits', benefitsRoutes);
 v1Router.use('/tariffs', tariffsRoutes);
 v1Router.use('/hms-reports', hmsReportsRoutes);
 v1Router.use('/hms-notifications', hmsNotificationsRoutes);
+v1Router.use('/settings', settingsRoutes);
 
 export default v1Router;

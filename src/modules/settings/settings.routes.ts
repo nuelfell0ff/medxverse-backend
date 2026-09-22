@@ -1,29 +1,57 @@
 import { Router } from 'express';
-import { settingsController } from './settings.controller.js';
-import { authenticate } from '../../middlewares/auth.middleware.js';
+
+import {
+  authenticateAccount,
+  restrictTo,
+} from '../../middlewares/auth.middleware.js';
+
+import {
+  hmoSettingsController,
+} from './settings.controller.js';
 
 const router = Router();
 
-router.use(authenticate);
+router.use(authenticateAccount);
 
-// Settings Profile & Branding
-router.post('/config', (req, res, next) => settingsController.upsertSettings(req, res, next));
-router.get('/config', (req, res, next) => settingsController.getSettings(req, res, next));
+// Read settings.
+// Any authenticated HMO account can view them.
+router.get(
+  '/',
+  restrictTo(
+    'HMO_ADMIN',
+    'HMO_CLAIMS_OFFICER',
+    'HMO_MEDICAL_OFFICER',
+    'HMO_OFFICER'
+  ),
+  (req, res, next) => {
+    hmoSettingsController
+      .get(req, res)
+      .catch(next);
+  }
+);
 
-// Clinical Templates
-router.post('/templates', (req, res, next) =>
-  settingsController.createClinicalTemplate(req, res, next)
-);
-router.get('/templates', (req, res, next) =>
-  settingsController.getClinicalTemplates(req, res, next)
+// Update settings.
+// Organization-wide configuration is admin-only.
+router.patch(
+  '/',
+  restrictTo('HMO_ADMIN'),
+  (req, res, next) => {
+    hmoSettingsController
+      .update(req, res)
+      .catch(next);
+  }
 );
 
-// Integrations
-router.post('/integrations', (req, res, next) =>
-  settingsController.createIntegration(req, res, next)
-);
-router.get('/integrations', (req, res, next) =>
-  settingsController.getIntegrations(req, res, next)
+// Reset settings.
+// Destructive configuration operation — admin-only.
+router.post(
+  '/reset',
+  restrictTo('HMO_ADMIN'),
+  (req, res, next) => {
+    hmoSettingsController
+      .reset(req, res)
+      .catch(next);
+  }
 );
 
 export default router;

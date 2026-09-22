@@ -1,92 +1,311 @@
-import { Schema, model } from 'mongoose';
 import {
-  IHospitalSettingsDocument,
-  IClinicalTemplateDocument,
-  ISystemIntegrationDocument,
-  ThemeMode,
-  IntegrationType,
-  IntegrationStatus,
+  Schema,
+  model,
+  HydratedDocument,
+  Model,
+} from 'mongoose';
+
+import {
+  ISettingsDocument,
+  IHMOAddressSettings,
+  IHMOBrandingSettings,
+  IHMOClaimsSettings,
+  IHMONotificationSettings,
+  IHMOPreAuthorizationSettings,
+  IHMOSecuritySettings,
 } from './settings.types.js';
 
-const HospitalSettingsSchema = new Schema<IHospitalSettingsDocument>(
+const brandingSchema = new Schema<IHMOBrandingSettings>(
   {
-    hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, unique: true, index: true },
-    profile: {
-      name: { type: String, required: true, trim: true },
-      tagline: { type: String, trim: true },
-      taxId: { type: String, trim: true },
-      registrationNumber: { type: String, trim: true },
-      email: { type: String, required: true, trim: true, lowercase: true },
-      phone: { type: String, required: true, trim: true },
-      website: { type: String, trim: true },
-      address: {
-        street: { type: String, required: true, trim: true },
-        city: { type: String, required: true, trim: true },
-        state: { type: String, required: true, trim: true },
-        country: { type: String, required: true, trim: true },
-        postalCode: { type: String, trim: true },
+    organizationName: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 150,
+    },
+
+    shortName: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+    },
+
+    logoUrl: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+    },
+
+    primaryColor: {
+      type: String,
+      trim: true,
+      maxlength: 20,
+    },
+
+    secondaryColor: {
+      type: String,
+      trim: true,
+      maxlength: 20,
+    },
+
+    supportEmail: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 254,
+    },
+
+    supportPhone: {
+      type: String,
+      trim: true,
+      maxlength: 40,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const addressSchema = new Schema<IHMOAddressSettings>(
+  {
+    addressLine1: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+    },
+
+    addressLine2: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+    },
+
+    city: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+    },
+
+    state: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+    },
+
+    country: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 100,
+    },
+
+    postalCode: {
+      type: String,
+      trim: true,
+      maxlength: 30,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const claimsSchema = new Schema<IHMOClaimsSettings>(
+  {
+    autoAcknowledgeClaims: {
+      type: Boolean,
+      default: false,
+    },
+
+    requireDiagnosisCode: {
+      type: Boolean,
+      default: true,
+    },
+
+    requireProviderReference: {
+      type: Boolean,
+      default: true,
+    },
+
+    allowPartialApproval: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const preAuthorizationSchema =
+  new Schema<IHMOPreAuthorizationSettings>(
+    {
+      enabled: {
+        type: Boolean,
+        default: true,
+      },
+
+      defaultValidityDays: {
+        type: Number,
+        min: 1,
+        max: 365,
+        default: 30,
+      },
+
+      requireClinicalNotes: {
+        type: Boolean,
+        default: true,
+      },
+
+      autoExpire: {
+        type: Boolean,
+        default: true,
       },
     },
-    branding: {
-      logoUrl: { type: String, trim: true },
-      faviconUrl: { type: String, trim: true },
-      primaryColor: { type: String, default: '#1e40af' },
-      secondaryColor: { type: String, default: '#0891b2' },
-      accentColor: { type: String, default: '#f59e0b' },
+    {
+      _id: false,
+    }
+  );
+
+const notificationSchema =
+  new Schema<IHMONotificationSettings>(
+    {
+      emailNotifications: {
+        type: Boolean,
+        default: true,
+      },
+
+      claimNotifications: {
+        type: Boolean,
+        default: true,
+      },
+
+      preAuthorizationNotifications: {
+        type: Boolean,
+        default: true,
+      },
+
+      systemNotifications: {
+        type: Boolean,
+        default: true,
+      },
     },
-    defaultLanguage: { type: String, default: 'en' },
-    timeZone: { type: String, default: 'UTC' },
-    currency: { type: String, default: 'USD' },
-    theme: { type: String, enum: Object.values(ThemeMode), default: ThemeMode.LIGHT },
-    updatedById: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  },
-  { timestamps: true }
-);
+    {
+      _id: false,
+    }
+  );
 
-export const HospitalSettingsModel = model<IHospitalSettingsDocument>(
-  'HospitalSettings',
-  HospitalSettingsSchema
-);
-
-const ClinicalTemplateSchema = new Schema<IClinicalTemplateDocument>(
+const securitySchema = new Schema<IHMOSecuritySettings>(
   {
-    hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
-    title: { type: String, required: true, trim: true },
-    category: { type: String, required: true, index: true, trim: true },
-    departmentId: { type: Schema.Types.ObjectId, ref: 'Department', index: true },
-    content: { type: String, required: true },
-    createdById: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    isActive: { type: Boolean, default: true, index: true },
+    sessionTimeoutMinutes: {
+      type: Number,
+      min: 5,
+      max: 1440,
+      default: 60,
+    },
+
+    maxLoginAttempts: {
+      type: Number,
+      min: 3,
+      max: 20,
+      default: 5,
+    },
+
+    requireStrongPasswords: {
+      type: Boolean,
+      default: true,
+    },
   },
-  { timestamps: true }
-);
-
-export const ClinicalTemplateModel = model<IClinicalTemplateDocument>(
-  'ClinicalTemplate',
-  ClinicalTemplateSchema
-);
-
-const SystemIntegrationSchema = new Schema<ISystemIntegrationDocument>(
   {
-    hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
-    name: { type: String, required: true, trim: true },
-    type: { type: String, enum: Object.values(IntegrationType), required: true, index: true },
-    status: {
-      type: String,
-      enum: Object.values(IntegrationStatus),
-      default: IntegrationStatus.INACTIVE,
+    _id: false,
+  }
+);
+
+const settingsSchema = new Schema<
+  ISettingsDocument,
+  Model<ISettingsDocument>
+>(
+  {
+    hmoId: {
+      type: Schema.Types.ObjectId,
+      required: true,
+      unique: true,
       index: true,
+      ref: 'HMO',
     },
-    apiKey: { type: String, select: false },
-    apiSecret: { type: String, select: false },
-    baseUrl: { type: String, trim: true },
-    configOptions: { type: Schema.Types.Mixed },
-    lastSyncedAt: { type: Date },
+
+    branding: {
+      type: brandingSchema,
+      required: true,
+    },
+
+    address: {
+      type: addressSchema,
+      required: true,
+    },
+
+    currency: {
+      type: String,
+      required: true,
+      trim: true,
+      uppercase: true,
+      minlength: 3,
+      maxlength: 3,
+      default: 'NGN',
+    },
+
+    timezone: {
+      type: String,
+      required: true,
+      trim: true,
+      default: 'Africa/Lagos',
+      maxlength: 100,
+    },
+
+    dateFormat: {
+      type: String,
+      required: true,
+      trim: true,
+      default: 'DD/MM/YYYY',
+      maxlength: 30,
+    },
+
+    claims: {
+      type: claimsSchema,
+      required: true,
+    },
+
+    preAuthorization: {
+      type: preAuthorizationSchema,
+      required: true,
+    },
+
+    notifications: {
+      type: notificationSchema,
+      required: true,
+    },
+
+    security: {
+      type: securitySchema,
+      required: true,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    strict: true,
+  }
 );
 
-export const SystemIntegrationModel = model<ISystemIntegrationDocument>(
-  'SystemIntegration',
-  SystemIntegrationSchema
+settingsSchema.index(
+  { hmoId: 1 },
+  { unique: true }
 );
+
+export type HMOSettingsHydratedDocument =
+  HydratedDocument<ISettingsDocument>;
+
+export const HMOSettingsModel =
+  model<ISettingsDocument>(
+    'HMOSettings',
+    settingsSchema
+  );

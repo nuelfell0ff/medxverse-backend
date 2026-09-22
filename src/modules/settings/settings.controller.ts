@@ -1,123 +1,140 @@
-import { Request, Response, NextFunction } from 'express';
-import { settingsService } from './settings.service.js';
-import { IntegrationType, ThemeMode } from './settings.types.js';
+import { Request, Response } from 'express';
 
-export interface AuthenticatedRequest extends Request {
-  user: {
-    _id: string;
-    hospitalId: string;
+import { hmoSettingsService } from './settings.service.js';
+import { UpdateHMOSettingsInput } from './settings.types.js';
+
+interface AuthenticatedRequest
+  extends Request {
+  user?: {
+    hmoId?: string;
+    accountId?: string;
+    accountType?: string;
+    [key: string]: unknown;
+  };
+
+  account?: {
+    accountId?: string;
+    hmoId?: string;
+    accountType?: string;
     [key: string]: unknown;
   };
 }
 
-export class SettingsController {
-  public async upsertSettings(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const updatedById = authReq.user._id;
+const getHmoId = (
+  req: Request
+): string => {
+  const authReq =
+    req as AuthenticatedRequest;
 
-      const { profile, branding, defaultLanguage, timeZone, currency, theme } = req.body;
+  const hmoId =
+    authReq.user?.hmoId ??
+    authReq.account?.hmoId ??
+    (
+      authReq.user?.accountType === 'HMO'
+        ? authReq.user?.accountId
+        : undefined
+    ) ??
+    (
+      authReq.account?.accountType === 'HMO'
+        ? authReq.account?.accountId
+        : undefined
+    );
 
-      const settings = await settingsService.upsertSettings({
-        hospitalId,
-        profile,
-        branding,
-        defaultLanguage,
-        timeZone,
-        currency,
-        theme: theme as ThemeMode,
-        updatedById,
+  if (!hmoId) {
+    throw new Error(
+      'HMO context is required'
+    );
+  }
+
+  return String(hmoId);
+};
+
+const bodyData = (
+  body: unknown
+): unknown => {
+  if (
+    body &&
+    typeof body === 'object' &&
+    'data' in body
+  ) {
+    return (
+      body as {
+        data?: unknown;
+      }
+    ).data;
+  }
+
+  return body;
+};
+
+export class HMOSettingsController {
+  public async get(
+    req: Request,
+    res: Response
+  ) {
+    const settings =
+      await hmoSettingsService.getSettings(
+        getHmoId(req)
+      );
+
+    return res.json({
+      success: true,
+      data: settings,
+    });
+  }
+
+  public async update(
+    req: Request,
+    res: Response
+  ) {
+    const input =
+      bodyData(req.body) as
+        | UpdateHMOSettingsInput
+        | undefined;
+
+    if (
+      !input ||
+      typeof input !== 'object' ||
+      Array.isArray(input)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'A valid settings object is required',
       });
-
-      res.status(200).json({ success: true, data: settings });
-    } catch (error) {
-      next(error);
     }
+
+    const settings =
+      await hmoSettingsService.updateSettings(
+        getHmoId(req),
+        input
+      );
+
+    return res.json({
+      success: true,
+      data: settings,
+      message:
+        'HMO settings updated successfully',
+    });
   }
 
-  public async getSettings(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
+  public async reset(
+    req: Request,
+    res: Response
+  ) {
+    const settings =
+      await hmoSettingsService.resetSettings(
+        getHmoId(req)
+      );
 
-      const settings = await settingsService.getSettings(hospitalId);
-      res.status(200).json({ success: true, data: settings });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async createClinicalTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const createdById = authReq.user._id;
-
-      const { title, category, departmentId, content } = req.body;
-
-      const template = await settingsService.createClinicalTemplate({
-        hospitalId,
-        title,
-        category,
-        departmentId,
-        content,
-        createdById,
-      });
-
-      res.status(201).json({ success: true, data: template });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async getClinicalTemplates(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-      const category = req.query.category as string | undefined;
-
-      const templates = await settingsService.getClinicalTemplates(hospitalId, category);
-      res.status(200).json({ success: true, data: templates });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async createIntegration(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-
-      const { name, type, apiKey, apiSecret, baseUrl, configOptions } = req.body;
-
-      const integration = await settingsService.createIntegration({
-        hospitalId,
-        name,
-        type: type as IntegrationType,
-        apiKey,
-        apiSecret,
-        baseUrl,
-        configOptions,
-      });
-
-      res.status(201).json({ success: true, data: integration });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async getIntegrations(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-
-      const integrations = await settingsService.getIntegrations(hospitalId);
-      res.status(200).json({ success: true, data: integrations });
-    } catch (error) {
-      next(error);
-    }
+    return res.json({
+      success: true,
+      data: settings,
+      message:
+        'HMO settings reset successfully',
+    });
   }
 }
 
-export const settingsController = new SettingsController();
+export const hmoSettingsController =
+  new HMOSettingsController();
