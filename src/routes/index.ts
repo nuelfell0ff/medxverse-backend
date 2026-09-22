@@ -3,7 +3,7 @@ import authRoutes from '../modules/auth/auth.routes.js';
 
 
 
-// hospital HIS
+// hospital hms
 import dashboardRoutes from '../modules/dashboard/dashboard.routes.js';
 import patientRoutes from '../modules/patient/patient.routes.js';
 import appointmentRoutes from '../modules/appointment/appointment.routes.js';
@@ -31,16 +31,16 @@ import telemedicineRoutes from '../modules/telemedicine/telemedicine.routes.js';
 import settingsRoutes from '../modules/settings/settings.routes.js';
 import icuRoutes from '../modules/icu/icu.routes.js';
 
-// hms portal
+// hmo portal
 import hmsDashboardRoutes from '../modules/hms-dashboard/hms-dashboard.routes.js';
 import preAuthorizationRoutes from '../modules/pre-authorizations/pre-authorizations.routes.js';
 import membersRoutes from '../modules/members/members.routes.js';
+import enrolleesRoutes from '../modules/enrollees/enrollees.routes.js';
 import claimsRoutes from '../modules/claims/claims.routes.js';
 import providerRoutes from '../modules/provider/provider.routes.js';
 import benefitsRoutes from '../modules/benefits/benefits.routes.js';
 import hmsReportsRoutes from '../modules/hms-reports/reports.routes.js';
 import hmsNotificationsRoutes from '../modules/hms-notifications/notifications.routes.js';
-import hmoPortalRoutes from '../modules/hmo/hmo-portal.routes.js';
 
 
 const v1Router = Router();
@@ -49,7 +49,7 @@ const v1Router = Router();
 v1Router.use('/auth', authRoutes);
 
 
-// hospital HIS 
+// hospital hms 
 v1Router.use('/dashboard', dashboardRoutes);
 v1Router.use('/patients', patientRoutes);
 v1Router.use('/appointments', appointmentRoutes);
@@ -77,18 +77,16 @@ v1Router.use('/telemedicine', telemedicineRoutes);
 v1Router.use('/settings', settingsRoutes);
 v1Router.use('/icu', icuRoutes);
 
-// hms portal
+// hmo portal
 v1Router.use('/hms-dashboard', hmsDashboardRoutes);
 v1Router.use('/pre-authorizations', preAuthorizationRoutes);
 v1Router.use('/members', membersRoutes);
+v1Router.use('/enrollees', enrolleesRoutes);
 v1Router.use('/claims', claimsRoutes);
 v1Router.use('/providers', providerRoutes);
 v1Router.use('/benefits', benefitsRoutes);
 v1Router.use('/hms-reports', hmsReportsRoutes);
 v1Router.use('/hms-notifications', hmsNotificationsRoutes);
-
-// Unified HMO portal API
-v1Router.use('/hmo', hmoPortalRoutes);
 
 
 export default v1Router;
