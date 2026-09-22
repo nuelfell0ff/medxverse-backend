@@ -19,37 +19,37 @@ router.get('/:id/ehr', PatientController.getEHR);
 router.get('/:id', PatientController.getById);
 
 router.patch('/:id', authorize(
-  'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'
+  'HOSPITAL', 'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'
 ), PatientController.update);
 
 router.post('/:id/vitals', authorize(
-  'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE'
+  'HOSPITAL','HOSPITAL_ADMIN', 'DOCTOR', 'NURSE'
 ), PatientController.recordVitals);
 
 /*
  * Master Patient Index / duplicate management
  */
 router.post('/mpi/duplicates', authorize(
-  'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'
+  'HOSPITAL', 'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'
 ), PatientController.duplicates);
 
 router.post('/:id/merge', authorize(
-  'HOSPITAL_ADMIN'
+  'HOSPITAL', 'HOSPITAL_ADMIN'
 ), PatientController.merge);
 
 /*
  * Unified EHR resources
  */
 router.post('/ehr/encounters', authorize(
-  'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'
+  'HOSPITAL', 'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'
 ), PatientController.createEncounter);
 
 router.post('/ehr/resources', authorize(
-  'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'PHARMACIST', 'LAB_TECHNICIAN', 'RADIOLOGIST'
+  'HOSPITAL','HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'PHARMACIST', 'LAB_TECHNICIAN', 'RADIOLOGIST'
 ), PatientController.createResource);
 
 router.patch('/ehr/resources/:resourceType/:resourceId', authorize(
-  'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'PHARMACIST', 'LAB_TECHNICIAN', 'RADIOLOGIST'
+  'HOSPITAL', 'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'PHARMACIST', 'LAB_TECHNICIAN', 'RADIOLOGIST'
 ), PatientController.updateResource);
 
 router.get('/:id/ehr/resources/:resourceType/:resourceId/versions', PatientController.versions);
@@ -58,11 +58,11 @@ router.get('/:id/ehr/resources/:resourceType/:resourceId/versions', PatientContr
  * Consent records
  */
 router.post('/:id/ehr/consents', authorize(
-  'HOSPITAL_ADMIN', 'DOCTOR'
+  'HOSPITAL', 'HOSPITAL_ADMIN', 'DOCTOR'
 ), PatientController.createConsent);
 
 router.post('/ehr/consents/:consentId/revoke', authorize(
-  'HOSPITAL_ADMIN', 'DOCTOR'
+  'HOSPITAL', 'HOSPITAL_ADMIN', 'DOCTOR'
 ), PatientController.revokeConsent);
 
 export default router;
