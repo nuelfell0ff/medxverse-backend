@@ -123,3 +123,33 @@ export interface EnrolleeEligibilityResult {
   coverageEndDate?: Date;
   reason?: string;
 }
+
+export interface UpdateEnrolleeStatusInput {
+  status: EnrolleeStatus;
+  reason?: string;
+}
+
+export interface RenewEnrolleeInput {
+  endDate: Date | string;
+  reason?: string;
+}
+
+export interface EnrolleeCardResult {
+  cardNumber: string;
+  status: 'ACTIVE' | 'REVOKED' | 'EXPIRED';
+  enrolleeId: string;
+  policyNumber: string;
+  issuedAt: Date;
+  expiresAt?: Date;
+}
+
+export interface EnrolleeLifecycleResult {
+  _id: string;
+  type: string;
+  fromStatus?: string;
+  toStatus?: string;
+  reason?: string;
+  actorId?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: Date;
+}

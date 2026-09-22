@@ -22,24 +22,22 @@ interface AuthContext {
 
 const resolveHmoId = (req: Request): string => {
   const auth = req as Request & AuthContext;
-  const hmoId =
-    auth.user?.hmoId ||
-    auth.user?.accountId ||
-    auth.account?.accountId;
-
+  const hmoId = auth.user?.hmoId || auth.user?.accountId || auth.account?.accountId;
   if (!hmoId) {
-    throw Object.assign(new Error('Authenticated HMO account could not be resolved'), {
-      statusCode: 401,
-    });
+    throw Object.assign(new Error('Authenticated HMO account could not be resolved'), { statusCode: 401 });
   }
-
   return hmoId;
+};
+
+const resolveActorId = (req: Request): string | undefined => {
+  const auth = req as Request & AuthContext;
+  return auth.user?._id;
 };
 
 export class EnrolleesController {
   public async createEnrollee(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const enrollee = await enrolleesService.createEnrollee(resolveHmoId(req), req.body);
+      const enrollee = await enrolleesService.createEnrollee(resolveHmoId(req), req.body, resolveActorId(req));
       res.status(201).json({ success: true, data: enrollee });
     } catch (error) {
       next(error);
@@ -98,7 +96,8 @@ export class EnrolleesController {
       const updated = await enrolleesService.updateEnrollee(
         String(req.params.id),
         resolveHmoId(req),
-        req.body
+        req.body,
+        resolveActorId(req)
       );
 
       if (!updated) {
@@ -123,7 +122,8 @@ export class EnrolleesController {
       const updated = await enrolleesService.updateEnrolleeStatus(
         String(req.params.id),
         resolveHmoId(req),
-        status
+        { status, reason: req.body?.reason },
+        resolveActorId(req)
       );
 
       if (!updated) {
@@ -148,6 +148,34 @@ export class EnrolleesController {
     } catch (error) {
       next(error);
     }
+  }
+
+  public async renewEnrollee(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const updated = await enrolleesService.renewEnrollee(
+        String(req.params.id),
+        resolveHmoId(req),
+        req.body,
+        resolveActorId(req),
+      );
+      if (!updated) { res.status(404).json({ success: false, message: 'Enrollee not found' }); return; }
+      res.status(200).json({ success: true, data: updated, message: 'Enrollee renewed successfully' });
+    } catch (error) { next(error); }
+  }
+
+  public async getCard(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const card = await enrolleesService.getCard(String(req.params.id), resolveHmoId(req), resolveActorId(req));
+      if (!card) { res.status(404).json({ success: false, message: 'Enrollee not found' }); return; }
+      res.status(200).json({ success: true, data: card });
+    } catch (error) { next(error); }
+  }
+
+  public async getLifecycle(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const events = await enrolleesService.getLifecycle(String(req.params.id), resolveHmoId(req));
+      res.status(200).json({ success: true, data: events });
+    } catch (error) { next(error); }
   }
 
   public async checkEligibility(req: Request, res: Response, next: NextFunction): Promise<void> {

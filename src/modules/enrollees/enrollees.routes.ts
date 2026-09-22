@@ -47,6 +47,18 @@ router.get('/:id/dependents', (req: Request, res: Response, next: NextFunction) 
   enrolleesController.getDependents(req, res, next)
 );
 
+router.post('/:id/renew', (req: Request, res: Response, next: NextFunction) =>
+  enrolleesController.renewEnrollee(req, res, next)
+);
+
+router.get('/:id/card', (req: Request, res: Response, next: NextFunction) =>
+  enrolleesController.getCard(req, res, next)
+);
+
+router.get('/:id/history', (req: Request, res: Response, next: NextFunction) =>
+  enrolleesController.getLifecycle(req, res, next)
+);
+
 router.patch('/:id/status', (req: Request, res: Response, next: NextFunction) =>
   enrolleesController.updateStatus(req, res, next)
 );
