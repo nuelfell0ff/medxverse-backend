@@ -35,12 +35,13 @@ import enrolleesRoutes from '../modules/enrollees/enrollees.routes.js';
 import claimsRoutes from '../modules/claims/claims.routes.js';
 import providerRoutes from '../modules/provider/provider.routes.js';
 import benefitsRoutes from '../modules/benefits/benefits.routes.js';
+import tariffsRoutes from '../modules/tariffs/tariffs.routes.js';
 import hmsReportsRoutes from '../modules/hms-reports/reports.routes.js';
 import hmsNotificationsRoutes from '../modules/hms-notifications/notifications.routes.js';
 const v1Router = Router();
 // Platform & Onboarding
 v1Router.use('/auth', authRoutes);
-// hospital hms 
+// hospital hms
 v1Router.use('/dashboard', dashboardRoutes);
 v1Router.use('/patients', patientRoutes);
 v1Router.use('/appointments', appointmentRoutes);
@@ -75,6 +76,7 @@ v1Router.use('/enrollees', enrolleesRoutes);
 v1Router.use('/claims', claimsRoutes);
 v1Router.use('/providers', providerRoutes);
 v1Router.use('/benefits', benefitsRoutes);
+v1Router.use('/tariffs', tariffsRoutes);
 v1Router.use('/hms-reports', hmsReportsRoutes);
 v1Router.use('/hms-notifications', hmsNotificationsRoutes);
 export default v1Router;
