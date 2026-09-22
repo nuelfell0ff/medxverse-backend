@@ -1,11 +1,36 @@
 import { tariffsService } from './tariffs.service.js';
 const payload = (body) => body?.data ?? body;
+/**
+ * Resolve the HMO tenant from the authenticated request.
+ *
+ * The existing authentication layer may expose the tenant as hmoId,
+ * accountId, or (for HMO accounts where the account itself is the
+ * tenant) the authenticated user's id/_id.
+ *
+ * We only read trusted authentication context here; no client-supplied
+ * query/body hmoId is accepted for tenant isolation.
+ */
 const hmoIdFromRequest = (req) => {
-    const value = req.user?.hmoId ??
-        req.account?.hmoId ??
-        req.hmoId;
-    if (!value)
+    const authReq = req;
+    const user = authReq.user;
+    const account = authReq.account;
+    const value = user?.hmoId ??
+        user?.account?.hmoId ??
+        user?.hmo?._id ??
+        user?.hmo?.id ??
+        user?.hmo?.hmoId ??
+        user?.organizationId ??
+        account?.hmoId ??
+        account?.accountId ??
+        authReq.hmoId ??
+        user?.accountId ??
+        account?._id ??
+        account?.id ??
+        user?.id ??
+        user?._id;
+    if (!value) {
         throw new Error('HMO context is required');
+    }
     return String(value);
 };
 export class TariffsController {
@@ -35,7 +60,10 @@ export class TariffsController {
                 message: 'Tariff not found',
             });
         }
-        return res.json({ success: true, data: tariff });
+        return res.json({
+            success: true,
+            data: tariff,
+        });
     }
     async update(req, res) {
         const tariff = await tariffsService.updateTariff(req.params.id, hmoIdFromRequest(req), payload(req.body));

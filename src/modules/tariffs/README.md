@@ -39,12 +39,23 @@ POST `/quote`
 
 ## Important integration note
 
-`hmoIdFromRequest()` intentionally reads HMO context from the authenticated request:
+`hmoIdFromRequest()` resolves the HMO tenant only from trusted authenticated request context.
+
+Supported authentication shapes include:
 
 - `req.user.hmoId`
+- `req.user.account.hmoId`
+- `req.user.hmo._id` / `req.user.hmo.id`
+- `req.user.organizationId`
 - `req.account.hmoId`
+- `req.account.accountId`
 - `req.hmoId`
+- `req.user.accountId`
+- `req.account._id` / `req.account.id`
+- `req.user.id` / `req.user._id`
 
-If your auth middleware uses a different property, change only that helper in `tariffs.controller.ts`.
+No client-supplied query/body `hmoId` is used for tenant resolution, preserving HMO isolation.
+
+The helper is intentionally compatible with the existing authentication pattern where the authenticated account itself may be the HMO tenant.
 
 The module does not bypass authentication or authorization middleware. Mount it behind the same HMO authentication/permission middleware used by your other HMO modules.

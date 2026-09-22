@@ -1,4 +1,4 @@
-import { Schema, model, models, } from 'mongoose';
+import mongoose, { Schema, } from 'mongoose';
 import { TariffCategory, TariffStatus, } from './tariffs.types.js';
 /**
  * Provider-specific tariff rate.
@@ -105,7 +105,12 @@ const tariffSchema = new Schema({
  * A tariff code must be unique within an HMO,
  * but the same code can exist under another HMO.
  */
-tariffSchema.index({ hmoId: 1, code: 1 }, { unique: true });
+tariffSchema.index({
+    hmoId: 1,
+    code: 1,
+}, {
+    unique: true,
+});
 tariffSchema.index({
     hmoId: 1,
     status: 1,
@@ -121,16 +126,21 @@ tariffSchema.index({
     effectiveTo: 1,
 });
 /**
- * Explicitly type the existing model as a Mongoose Model.
+ * Reuse the existing model if it has already been registered.
  *
- * This avoids the TypeScript incompatibility caused by
- * ReturnType<typeof model<ITariffDocument>> when retrieving
- * an existing model from mongoose.models.
+ * IMPORTANT:
+ * We intentionally access `models` through the default mongoose
+ * import instead of importing `models` as a named ESM export.
+ *
+ * This avoids:
+ *
+ * SyntaxError:
+ * The requested module 'mongoose' does not provide an export named 'models'
  */
-const existingTariffModel = models.Tariff;
+const existingTariffModel = mongoose.models.Tariff;
 /**
  * Reuse the existing model during development/hot reloads.
  * Otherwise create the model from the schema.
  */
 export const TariffModel = existingTariffModel ??
-    model('Tariff', tariffSchema);
+    mongoose.model('Tariff', tariffSchema);
