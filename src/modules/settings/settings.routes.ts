@@ -18,6 +18,7 @@ router.use(authenticateAccount);
 router.get(
   '/',
   restrictTo(
+    'HMO',
     'HMO_ADMIN',
     'HMO_CLAIMS_OFFICER',
     'HMO_MEDICAL_OFFICER',
@@ -34,7 +35,7 @@ router.get(
 // Organization-wide configuration is admin-only.
 router.patch(
   '/',
-  restrictTo('HMO_ADMIN'),
+  restrictTo('HMO', 'HMO_ADMIN'),
   (req, res, next) => {
     hmoSettingsController
       .update(req, res)
@@ -46,7 +47,7 @@ router.patch(
 // Destructive configuration operation — admin-only.
 router.post(
   '/reset',
-  restrictTo('HMO_ADMIN'),
+  restrictTo('HMO', 'HMO_ADMIN'),
   (req, res, next) => {
     hmoSettingsController
       .reset(req, res)
