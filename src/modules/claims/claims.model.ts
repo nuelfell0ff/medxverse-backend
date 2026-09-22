@@ -90,7 +90,7 @@ const ClaimSchema = new Schema<IClaimDocument>(
     },
     adjudicatedBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Account',
     },
     adjudicatedAt: {
       type: Date,

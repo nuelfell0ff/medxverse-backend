@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { membersController } from './members.controller.js';
-import { authenticate } from '../../middlewares/auth.middleware.js';
+import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
 router.use(authenticate);
+router.use(authorize('HMO', 'HMO_ADMIN', 'HMO_CLAIMS_OFFICER', 'HMO_MEDICAL_OFFICER', 'HMO_OFFICER'));
 
 // Enrolment & Members endpoints
 router.post('/', (req, res, next) =>

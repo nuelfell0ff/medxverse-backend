@@ -3,7 +3,7 @@ import { IReportDocument, ReportFormat, ReportStatus, ReportType } from './repor
 
 const ReportSchema = new Schema<IReportDocument>(
   {
-    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'HMO', index: true },
+    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'Account', index: true },
     title: { type: String, required: true, trim: true },
     type: {
       type: String,
@@ -26,7 +26,7 @@ const ReportSchema = new Schema<IReportDocument>(
       providerId: { type: String },
       status: { type: String },
     },
-    generatedBy: { type: Schema.Types.ObjectId, required: true, ref: 'User' },
+    generatedBy: { type: Schema.Types.ObjectId, required: true, ref: 'Account' },
     fileUrl: { type: String, trim: true },
     dataSummary: { type: Schema.Types.Mixed, default: {} },
   },

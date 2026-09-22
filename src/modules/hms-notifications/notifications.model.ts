@@ -8,8 +8,8 @@ import {
 
 const NotificationSchema = new Schema<INotificationDocument>(
   {
-    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'HMO', index: true },
-    recipientId: { type: Schema.Types.ObjectId, required: true, ref: 'User', index: true },
+    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'Account', index: true },
+    recipientId: { type: Schema.Types.ObjectId, required: true, ref: 'Account', index: true },
     type: {
       type: String,
       enum: Object.values(NotificationType),

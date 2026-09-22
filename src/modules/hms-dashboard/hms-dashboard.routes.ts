@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { hmsDashboardController } from './hms-dashboard.controller.js';
-import { authenticate } from '../../middlewares/auth.middleware.js';
+import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 
 router.use(authenticate);
+router.use(authorize('HMO', 'HMO_ADMIN', 'HMO_CLAIMS_OFFICER', 'HMO_MEDICAL_OFFICER', 'HMO_OFFICER'));
 
 // Metrics
 router.get('/metrics', (req, res, next) =>

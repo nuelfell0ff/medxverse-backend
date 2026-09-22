@@ -40,7 +40,7 @@ const PreAuthSchema = new Schema<IPreAuthDocument>(
     totalApprovedAmount: { type: Number, default: 0, min: 0 },
     clinicalNotes: { type: String, trim: true },
     decisionReason: { type: String, trim: true },
-    reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    reviewedBy: { type: Schema.Types.ObjectId, ref: 'Account' },
     reviewedAt: { type: Date },
     expiresAt: { type: Date },
   },

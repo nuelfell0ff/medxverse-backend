@@ -3,7 +3,7 @@ import { IProviderDocument, ProviderStatus, ProviderType } from './provider.type
 
 const ProviderSchema = new Schema<IProviderDocument>(
   {
-    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'HMO', index: true },
+    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'Account', index: true },
     code: { type: String, required: true, uppercase: true, trim: true },
     name: { type: String, required: true, trim: true },
     type: {

@@ -42,12 +42,12 @@ export class PreAuthorizationsService {
     const limit = Math.min(50, Math.max(1, query.limit || 20));
     const skip = (page - 1) * limit;
 
-    const filter: Record<string, unknown> = { hmoId };
+    const filter: Record<string, unknown> = { hmoId: new Types.ObjectId(hmoId) };
 
     if (query.status) filter.status = query.status;
     if (query.priority) filter.priority = query.priority;
-    if (query.memberId) filter.memberId = query.memberId;
-    if (query.providerId) filter.providerId = query.providerId;
+    if (query.memberId) filter.memberId = new Types.ObjectId(query.memberId);
+    if (query.providerId) filter.providerId = new Types.ObjectId(query.providerId);
     if (query.search) {
       filter.$or = [
         { requestNumber: { $regex: query.search, $options: 'i' } },
@@ -77,7 +77,7 @@ export class PreAuthorizationsService {
   }
 
   public async getPreAuthById(id: string, hmoId: string): Promise<IPreAuthDocument | null> {
-    return PreAuthModel.findOne({ _id: id, hmoId })
+    return PreAuthModel.findOne({ _id: new Types.ObjectId(id), hmoId: new Types.ObjectId(hmoId) })
       .populate('memberId')
       .populate('providerId')
       .populate('reviewedBy', 'firstName lastName email')
@@ -90,7 +90,7 @@ export class PreAuthorizationsService {
     reviewerId: string,
     input: ReviewPreAuthInput
   ): Promise<IPreAuthDocument | null> {
-    const preAuth = await PreAuthModel.findOne({ _id: id, hmoId });
+    const preAuth = await PreAuthModel.findOne({ _id: new Types.ObjectId(id), hmoId: new Types.ObjectId(hmoId) });
     if (!preAuth) return null;
 
     if (input.procedures && input.procedures.length > 0) {
@@ -128,14 +128,14 @@ export class PreAuthorizationsService {
     todayStart.setHours(0, 0, 0, 0);
 
     const [newRequests, pending, approvedToday, declined] = await Promise.all([
-      PreAuthModel.countDocuments({ hmoId, status: PreAuthStatus.NEW_REQUEST }),
-      PreAuthModel.countDocuments({ hmoId, status: PreAuthStatus.PENDING }),
+      PreAuthModel.countDocuments({ hmoId: new Types.ObjectId(hmoId), status: PreAuthStatus.NEW_REQUEST }),
+      PreAuthModel.countDocuments({ hmoId: new Types.ObjectId(hmoId), status: PreAuthStatus.PENDING }),
       PreAuthModel.countDocuments({
-        hmoId,
+        hmoId: new Types.ObjectId(hmoId),
         status: PreAuthStatus.APPROVED,
         reviewedAt: { $gte: todayStart },
       }),
-      PreAuthModel.countDocuments({ hmoId, status: PreAuthStatus.DECLINED }),
+      PreAuthModel.countDocuments({ hmoId: new Types.ObjectId(hmoId), status: PreAuthStatus.DECLINED }),
     ]);
 
     return {

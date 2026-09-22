@@ -40,6 +40,7 @@ import providerRoutes from '../modules/provider/provider.routes.js';
 import benefitsRoutes from '../modules/benefits/benefits.routes.js';
 import hmsReportsRoutes from '../modules/hms-reports/reports.routes.js';
 import hmsNotificationsRoutes from '../modules/hms-notifications/notifications.routes.js';
+import hmoPortalRoutes from '../modules/hmo/hmo-portal.routes.js';
 
 
 const v1Router = Router();
@@ -85,6 +86,9 @@ v1Router.use('/providers', providerRoutes);
 v1Router.use('/benefits', benefitsRoutes);
 v1Router.use('/hms-reports', hmsReportsRoutes);
 v1Router.use('/hms-notifications', hmsNotificationsRoutes);
+
+// Unified HMO portal API
+v1Router.use('/hmo', hmoPortalRoutes);
 
 
 export default v1Router;

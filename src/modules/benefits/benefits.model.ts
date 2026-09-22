@@ -21,7 +21,7 @@ const BenefitRuleSchema = new Schema(
 
 const BenefitPackageSchema = new Schema<IBenefitPackageDocument>(
   {
-    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'HMO', index: true },
+    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'Account', index: true },
     code: { type: String, required: true, uppercase: true, trim: true },
     name: { type: String, required: true, trim: true },
     description: { type: String, trim: true },

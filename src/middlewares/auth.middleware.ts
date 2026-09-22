@@ -11,7 +11,8 @@ export interface AuthRequest extends Request {
   };
   user?: {
     _id: string;
-    hospitalId: string;
+    hospitalId?: string;
+    hmoId?: string;
     accountId?: string;
     accountType?: string;
     name?: string;
@@ -52,7 +53,8 @@ export const authenticateAccount = (
     req.user = {
       ...decoded,
       _id: resolvedUserId,
-      hospitalId: resolvedHospitalId,
+      hospitalId: decoded.accountType === 'HOSPITAL' ? resolvedHospitalId : undefined,
+      hmoId: decoded.accountType === 'HMO' ? resolvedHospitalId : undefined,
       hospital: resolvedHospitalId,
     };
 

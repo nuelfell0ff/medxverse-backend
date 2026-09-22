@@ -12,6 +12,7 @@ export interface AuthUserPayload {
   accountType: AccountType;
   role?: string;
   hospitalId?: string;
+  hmoId?: string;
 }
 
 export interface IAccount {
