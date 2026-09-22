@@ -8,7 +8,13 @@ export type ClaimStatus =
   | 'PAID'
   | 'CANCELLED';
 
-export type ClaimItemCategory = 'PROCEDURE' | 'DRUG' | 'LAB_TEST' | 'CONSULTATION' | 'ACCOMMODATION' | 'OTHER';
+export type ClaimItemCategory =
+  | 'PROCEDURE'
+  | 'DRUG'
+  | 'LAB_TEST'
+  | 'CONSULTATION'
+  | 'ACCOMMODATION'
+  | 'OTHER';
 
 export interface IClaimItem {
   code?: string;

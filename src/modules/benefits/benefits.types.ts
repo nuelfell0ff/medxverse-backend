@@ -53,7 +53,13 @@ export interface CreateBenefitPackageInput {
   rules: IBenefitRule[];
 }
 
-export interface UpdateBenefitPackageInput extends Partial<CreateBenefitPackageInput> {
+export interface UpdateBenefitPackageInput {
+  code?: string;
+  name?: string;
+  description?: string;
+  tier?: string;
+  annualMaxBenefit?: number;
+  rules?: IBenefitRule[];
   status?: PackageStatus;
 }
 
