@@ -1,10 +1,16 @@
 import { claimsService } from './claims.service.js';
+const getAuthUser = (req) => {
+    const user = req.user;
+    if (!user?.hmoId) {
+        throw new Error('Authenticated HMO context is missing');
+    }
+    return user;
+};
 export class ClaimsController {
     async createClaim(req, res, next) {
         try {
-            const authReq = req;
-            const hmoId = authReq.user.hmoId;
-            const claim = await claimsService.createClaim(hmoId, req.body);
+            const user = getAuthUser(req);
+            const claim = await claimsService.createClaim(user.hmoId, req.body);
             res.status(201).json({ success: true, data: claim });
         }
         catch (error) {
@@ -13,25 +19,18 @@ export class ClaimsController {
     }
     async getClaims(req, res, next) {
         try {
-            const authReq = req;
-            const hmoId = authReq.user.hmoId;
-            const page = req.query.page ? parseInt(req.query.page, 10) : 1;
-            const limit = req.query.limit ? parseInt(req.query.limit, 10) : 20;
-            const status = req.query.status;
-            const memberId = req.query.memberId;
-            const providerId = req.query.providerId;
-            const startDate = req.query.startDate;
-            const endDate = req.query.endDate;
-            const search = req.query.search;
-            const result = await claimsService.getClaims(hmoId, {
-                page,
-                limit,
-                status,
-                memberId,
-                providerId,
-                startDate,
-                endDate,
-                search,
+            const user = getAuthUser(req);
+            const rawPage = Number.parseInt(String(req.query.page ?? '1'), 10);
+            const rawLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
+            const result = await claimsService.getClaims(user.hmoId, {
+                page: Number.isFinite(rawPage) ? rawPage : 1,
+                limit: Number.isFinite(rawLimit) ? rawLimit : 20,
+                status: req.query.status,
+                memberId: req.query.memberId,
+                providerId: req.query.providerId,
+                startDate: req.query.startDate,
+                endDate: req.query.endDate,
+                search: req.query.search,
             });
             res.status(200).json({ success: true, data: result });
         }
@@ -41,10 +40,8 @@ export class ClaimsController {
     }
     async getClaimById(req, res, next) {
         try {
-            const authReq = req;
-            const hmoId = authReq.user.hmoId;
-            const id = req.params.id;
-            const claim = await claimsService.getClaimById(id, hmoId);
+            const user = getAuthUser(req);
+            const claim = await claimsService.getClaimById(req.params.id, user.hmoId);
             if (!claim) {
                 res.status(404).json({ success: false, message: 'Claim not found' });
                 return;
@@ -57,11 +54,8 @@ export class ClaimsController {
     }
     async updateClaimStatus(req, res, next) {
         try {
-            const authReq = req;
-            const hmoId = authReq.user.hmoId;
-            const userId = authReq.user._id;
-            const id = req.params.id;
-            const updated = await claimsService.updateClaimStatus(id, hmoId, userId, req.body);
+            const user = getAuthUser(req);
+            const updated = await claimsService.updateClaimStatus(req.params.id, user.hmoId, user._id, req.body);
             if (!updated) {
                 res.status(404).json({ success: false, message: 'Claim not found' });
                 return;
@@ -74,10 +68,8 @@ export class ClaimsController {
     }
     async getMemberClaims(req, res, next) {
         try {
-            const authReq = req;
-            const hmoId = authReq.user.hmoId;
-            const memberId = req.params.memberId;
-            const claims = await claimsService.getMemberClaims(memberId, hmoId);
+            const user = getAuthUser(req);
+            const claims = await claimsService.getMemberClaims(req.params.memberId, user.hmoId);
             res.status(200).json({ success: true, data: claims });
         }
         catch (error) {

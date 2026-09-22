@@ -1,27 +1,94 @@
 import { Types } from 'mongoose';
+
 import { PreAuthModel } from './pre-authorizations.model.js';
+
 import {
   CreatePreAuthInput,
   ReviewPreAuthInput,
   GetPreAuthQuery,
   IPreAuthDocument,
   PreAuthStatus,
+  IPreAuthProcedure,
 } from './pre-authorizations.types.js';
 
 export class PreAuthorizationsService {
-  private generateRequestNumber(): string {
-    const randomHex = Math.floor(100000 + Math.random() * 900000).toString();
-    return `PA-${Date.now().toString().slice(-4)}-${randomHex}`;
+  private isValidObjectId(value: string): boolean {
+    return Types.ObjectId.isValid(value);
   }
 
-  public async createPreAuth(input: CreatePreAuthInput): Promise<IPreAuthDocument> {
-    const totalRequested = input.procedures.reduce((acc, p) => acc + p.requestedAmount, 0);
+  private objectId(value: string, field: string): Types.ObjectId {
+    if (!this.isValidObjectId(value)) {
+      throw new Error(`Invalid ${field}`);
+    }
+
+    return new Types.ObjectId(value);
+  }
+
+  private generateRequestNumber(): string {
+    const random = Math.floor(100000 + Math.random() * 900000).toString();
+
+    return `PA-${Date.now().toString().slice(-6)}-${random}`;
+  }
+
+  public async createPreAuth(
+    input: CreatePreAuthInput
+  ): Promise<IPreAuthDocument> {
+    if (!input.memberId) {
+      throw new Error('memberId is required');
+    }
+
+    if (!input.providerId) {
+      throw new Error('providerId is required');
+    }
+
+    if (!input.diagnosisCode?.trim()) {
+      throw new Error('diagnosisCode is required');
+    }
+
+    if (!input.diagnosisDescription?.trim()) {
+      throw new Error('diagnosisDescription is required');
+    }
+
+    if (!Array.isArray(input.procedures) || input.procedures.length === 0) {
+      throw new Error('At least one procedure is required');
+    }
+
+    const procedures: IPreAuthProcedure[] = input.procedures.map((p) => {
+      if (!p.code?.trim()) {
+        throw new Error('Each procedure requires a code');
+      }
+
+      if (!p.description?.trim()) {
+        throw new Error(`Procedure ${p.code} requires a description`);
+      }
+
+      if (!Number.isFinite(p.requestedAmount) || p.requestedAmount < 0) {
+        throw new Error(
+          `Invalid requested amount for procedure ${p.code}`
+        );
+      }
+
+      return {
+        code: p.code.trim().toUpperCase(),
+        description: p.description.trim(),
+        requestedAmount: p.requestedAmount,
+        approvedAmount: 0,
+      };
+    });
+
+    const totalRequested = procedures.reduce(
+      (sum, p) => sum + p.requestedAmount,
+      0
+    );
 
     return PreAuthModel.create({
       ...input,
-      hmoId: new Types.ObjectId(input.hmoId),
-      memberId: new Types.ObjectId(input.memberId),
-      providerId: new Types.ObjectId(input.providerId),
+      hmoId: this.objectId(input.hmoId, 'hmoId'),
+      memberId: this.objectId(input.memberId, 'memberId'),
+      providerId: this.objectId(input.providerId, 'providerId'),
+      diagnosisCode: input.diagnosisCode.trim().toUpperCase(),
+      diagnosisDescription: input.diagnosisDescription.trim(),
+      procedures,
       requestNumber: this.generateRequestNumber(),
       status: PreAuthStatus.NEW_REQUEST,
       totalRequestedAmount: totalRequested,
@@ -38,33 +105,92 @@ export class PreAuthorizationsService {
     page: number;
     totalPages: number;
   }> {
-    const page = Math.max(1, query.page || 1);
-    const limit = Math.min(50, Math.max(1, query.limit || 20));
+    const hmoObjectId = this.objectId(hmoId, 'hmoId');
+
+    const page = Math.max(1, Number(query.page) || 1);
+
+    const limit = Math.min(
+      50,
+      Math.max(1, Number(query.limit) || 20)
+    );
+
     const skip = (page - 1) * limit;
 
-    const filter: Record<string, unknown> = { hmoId: new Types.ObjectId(hmoId) };
+    const filter: Record<string, unknown> = {
+      hmoId: hmoObjectId,
+    };
 
-    if (query.status) filter.status = query.status;
-    if (query.priority) filter.priority = query.priority;
-    if (query.memberId) filter.memberId = new Types.ObjectId(query.memberId);
-    if (query.providerId) filter.providerId = new Types.ObjectId(query.providerId);
-    if (query.search) {
+    if (query.status) {
+      filter.status = query.status;
+    }
+
+    if (query.priority) {
+      filter.priority = query.priority;
+    }
+
+    if (query.memberId) {
+      filter.memberId = this.objectId(
+        query.memberId,
+        'memberId'
+      );
+    }
+
+    if (query.providerId) {
+      filter.providerId = this.objectId(
+        query.providerId,
+        'providerId'
+      );
+    }
+
+    const search = query.search?.trim();
+
+    if (search) {
+      const escaped = search.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        '\\$&'
+      );
+
       filter.$or = [
-        { requestNumber: { $regex: query.search, $options: 'i' } },
-        { diagnosisCode: { $regex: query.search, $options: 'i' } },
-        { diagnosisDescription: { $regex: query.search, $options: 'i' } },
+        {
+          requestNumber: {
+            $regex: escaped,
+            $options: 'i',
+          },
+        },
+        {
+          diagnosisCode: {
+            $regex: escaped,
+            $options: 'i',
+          },
+        },
+        {
+          diagnosisDescription: {
+            $regex: escaped,
+            $options: 'i',
+          },
+        },
       ];
     }
 
     const [requests, total] = await Promise.all([
       PreAuthModel.find(filter)
-        .populate('memberId', 'firstName lastName policyNumber email')
-        .populate('providerId', 'name code category')
-        .populate('reviewedBy', 'firstName lastName email')
+        .populate(
+          'memberId',
+          'firstName lastName policyNumber email'
+        )
+        .populate(
+          'providerId',
+          'name code category'
+        )
+        .populate(
+          'reviewedBy',
+          'firstName lastName email'
+        )
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .exec(),
+
       PreAuthModel.countDocuments(filter),
     ]);
 
@@ -76,11 +202,27 @@ export class PreAuthorizationsService {
     };
   }
 
-  public async getPreAuthById(id: string, hmoId: string): Promise<IPreAuthDocument | null> {
-    return PreAuthModel.findOne({ _id: new Types.ObjectId(id), hmoId: new Types.ObjectId(hmoId) })
+  public async getPreAuthById(
+    id: string,
+    hmoId: string
+  ): Promise<IPreAuthDocument | null> {
+    return PreAuthModel.findOne({
+      _id: this.objectId(
+        id,
+        'pre-authorization id'
+      ),
+
+      hmoId: this.objectId(
+        hmoId,
+        'hmoId'
+      ),
+    })
       .populate('memberId')
       .populate('providerId')
-      .populate('reviewedBy', 'firstName lastName email')
+      .populate(
+        'reviewedBy',
+        'firstName lastName email'
+      )
       .exec();
   }
 
@@ -90,52 +232,183 @@ export class PreAuthorizationsService {
     reviewerId: string,
     input: ReviewPreAuthInput
   ): Promise<IPreAuthDocument | null> {
-    const preAuth = await PreAuthModel.findOne({ _id: new Types.ObjectId(id), hmoId: new Types.ObjectId(hmoId) });
-    if (!preAuth) return null;
+    const preAuth = await PreAuthModel.findOne({
+      _id: this.objectId(
+        id,
+        'pre-authorization id'
+      ),
 
-    if (input.procedures && input.procedures.length > 0) {
+      hmoId: this.objectId(
+        hmoId,
+        'hmoId'
+      ),
+    });
+
+    if (!preAuth) {
+      return null;
+    }
+
+    if (!input.status) {
+      throw new Error('status is required');
+    }
+
+    if (
+      input.status === PreAuthStatus.DECLINED &&
+      !input.decisionReason?.trim()
+    ) {
+      throw new Error(
+        'decisionReason is required when declining a pre-authorization'
+      );
+    }
+
+    if (input.procedures) {
+      const reviews = new Map(
+        input.procedures.map((p) => [
+          p.code.trim().toUpperCase(),
+          p.approvedAmount,
+        ])
+      );
+
       let totalApproved = 0;
-      preAuth.procedures = preAuth.procedures.map((proc: { code: string; approvedAmount?: number }) => {
-        const matchingReview = input.procedures?.find((p) => p.code === proc.code);
-        const approvedAmount = matchingReview ? matchingReview.approvedAmount : 0;
-        totalApproved += approvedAmount;
-        return { ...proc, approvedAmount };
-      });
+
+      preAuth.procedures = preAuth.procedures.map(
+        (proc: IPreAuthProcedure): IPreAuthProcedure => {
+          const approved = reviews.has(proc.code)
+            ? reviews.get(proc.code) ?? 0
+            : 0;
+
+          if (
+            !Number.isFinite(approved) ||
+            approved < 0 ||
+            approved > proc.requestedAmount
+          ) {
+            throw new Error(
+              `Invalid approved amount for procedure ${proc.code}`
+            );
+          }
+
+          totalApproved += approved;
+
+          return {
+            code: proc.code,
+            description: proc.description,
+            requestedAmount: proc.requestedAmount,
+            approvedAmount: approved,
+          };
+        }
+      );
+
       preAuth.totalApprovedAmount = totalApproved;
-    } else if (input.status === PreAuthStatus.APPROVED) {
-      preAuth.procedures = preAuth.procedures.map((proc: { requestedAmount: number }) => ({
-        ...proc,
-        approvedAmount: proc.requestedAmount,
-      }));
-      preAuth.totalApprovedAmount = preAuth.totalRequestedAmount;
+    } else if (
+      input.status === PreAuthStatus.APPROVED
+    ) {
+      preAuth.procedures = preAuth.procedures.map(
+        (proc: IPreAuthProcedure): IPreAuthProcedure => ({
+          code: proc.code,
+          description: proc.description,
+          requestedAmount: proc.requestedAmount,
+          approvedAmount: proc.requestedAmount,
+        })
+      );
+
+      preAuth.totalApprovedAmount =
+        preAuth.totalRequestedAmount;
+    } else if (
+      input.status === PreAuthStatus.DECLINED ||
+      input.status === PreAuthStatus.CANCELLED
+    ) {
+      preAuth.procedures = preAuth.procedures.map(
+        (proc: IPreAuthProcedure): IPreAuthProcedure => ({
+          code: proc.code,
+          description: proc.description,
+          requestedAmount: proc.requestedAmount,
+          approvedAmount: 0,
+        })
+      );
+
+      preAuth.totalApprovedAmount = 0;
     }
 
     preAuth.status = input.status;
-    preAuth.decisionReason = input.decisionReason;
-    preAuth.reviewedBy = new Types.ObjectId(reviewerId);
+
+    preAuth.decisionReason =
+      input.decisionReason?.trim() || undefined;
+
+    preAuth.reviewedBy = this.objectId(
+      reviewerId,
+      'reviewerId'
+    );
+
     preAuth.reviewedAt = new Date();
 
-    if (input.status === PreAuthStatus.APPROVED) {
-      const days = input.expiresInDays || 30;
-      preAuth.expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    if (
+      input.status === PreAuthStatus.APPROVED
+    ) {
+      const days = Math.min(
+        365,
+        Math.max(
+          1,
+          Number(input.expiresInDays) || 30
+        )
+      );
+
+      preAuth.expiresAt = new Date(
+        Date.now() +
+          days * 24 * 60 * 60 * 1000
+      );
+    } else if (
+      input.status === PreAuthStatus.DECLINED ||
+      input.status === PreAuthStatus.CANCELLED
+    ) {
+      preAuth.expiresAt = undefined;
     }
 
     return preAuth.save();
   }
 
   public async getPreAuthStats(hmoId: string) {
+    const hmoObjectId = this.objectId(
+      hmoId,
+      'hmoId'
+    );
+
     const todayStart = new Date();
+
     todayStart.setHours(0, 0, 0, 0);
 
-    const [newRequests, pending, approvedToday, declined] = await Promise.all([
-      PreAuthModel.countDocuments({ hmoId: new Types.ObjectId(hmoId), status: PreAuthStatus.NEW_REQUEST }),
-      PreAuthModel.countDocuments({ hmoId: new Types.ObjectId(hmoId), status: PreAuthStatus.PENDING }),
+    const [
+      newRequests,
+      pending,
+      approvedToday,
+      declined,
+      total,
+    ] = await Promise.all([
       PreAuthModel.countDocuments({
-        hmoId: new Types.ObjectId(hmoId),
-        status: PreAuthStatus.APPROVED,
-        reviewedAt: { $gte: todayStart },
+        hmoId: hmoObjectId,
+        status: PreAuthStatus.NEW_REQUEST,
       }),
-      PreAuthModel.countDocuments({ hmoId: new Types.ObjectId(hmoId), status: PreAuthStatus.DECLINED }),
+
+      PreAuthModel.countDocuments({
+        hmoId: hmoObjectId,
+        status: PreAuthStatus.PENDING,
+      }),
+
+      PreAuthModel.countDocuments({
+        hmoId: hmoObjectId,
+        status: PreAuthStatus.APPROVED,
+        reviewedAt: {
+          $gte: todayStart,
+        },
+      }),
+
+      PreAuthModel.countDocuments({
+        hmoId: hmoObjectId,
+        status: PreAuthStatus.DECLINED,
+      }),
+
+      PreAuthModel.countDocuments({
+        hmoId: hmoObjectId,
+      }),
     ]);
 
     return {
@@ -143,8 +416,10 @@ export class PreAuthorizationsService {
       pending,
       approvedToday,
       declined,
+      total,
     };
   }
 }
 
-export const preAuthorizationsService = new PreAuthorizationsService();
+export const preAuthorizationsService =
+  new PreAuthorizationsService();

@@ -1,5 +1,5 @@
 import mongoose, { Schema, model } from 'mongoose';
-import { PreAuthStatus, PreAuthPriority, } from './pre-authorizations.types.js';
+import { PreAuthPriority, PreAuthStatus, } from './pre-authorizations.types.js';
 const ProcedureItemSchema = new Schema({
     code: { type: String, required: true, trim: true, uppercase: true },
     description: { type: String, required: true, trim: true },
@@ -25,15 +25,17 @@ const PreAuthSchema = new Schema({
         default: PreAuthStatus.NEW_REQUEST,
         index: true,
     },
-    procedures: [ProcedureItemSchema],
+    procedures: { type: [ProcedureItemSchema], required: true, default: [] },
     totalRequestedAmount: { type: Number, required: true, min: 0 },
     totalApprovedAmount: { type: Number, default: 0, min: 0 },
     clinicalNotes: { type: String, trim: true },
     decisionReason: { type: String, trim: true },
-    reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    reviewedBy: { type: Schema.Types.ObjectId, ref: 'Account' },
     reviewedAt: { type: Date },
     expiresAt: { type: Date },
 }, { timestamps: true });
 PreAuthSchema.index({ hmoId: 1, status: 1 });
+PreAuthSchema.index({ hmoId: 1, priority: 1 });
+PreAuthSchema.index({ hmoId: 1, createdAt: -1 });
 PreAuthSchema.index({ requestNumber: 'text', diagnosisDescription: 'text' });
 export const PreAuthModel = mongoose.models.PreAuth || model('PreAuth', PreAuthSchema);

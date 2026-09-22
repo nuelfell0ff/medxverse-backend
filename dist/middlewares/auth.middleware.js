@@ -16,7 +16,8 @@ export const authenticateAccount = (req, res, next) => {
         req.user = {
             ...decoded,
             _id: resolvedUserId,
-            hospitalId: resolvedHospitalId,
+            hospitalId: decoded.accountType === 'HOSPITAL' ? resolvedHospitalId : undefined,
+            hmoId: decoded.accountType === 'HMO' ? resolvedHospitalId : undefined,
             hospital: resolvedHospitalId,
         };
         next();

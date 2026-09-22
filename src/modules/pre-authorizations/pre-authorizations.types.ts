@@ -57,7 +57,7 @@ export interface CreatePreAuthInput {
 }
 
 export interface ReviewPreAuthInput {
-  status: PreAuthStatus.APPROVED | PreAuthStatus.DECLINED | PreAuthStatus.PENDING;
+  status: PreAuthStatus.APPROVED | PreAuthStatus.DECLINED | PreAuthStatus.PENDING | PreAuthStatus.CANCELLED;
   procedures?: {
     code: string;
     approvedAmount: number;
@@ -74,4 +74,11 @@ export interface GetPreAuthQuery {
   memberId?: string;
   providerId?: string;
   search?: string;
+}
+
+export interface IPreAuthProcedure {
+  code: string;
+  description: string;
+  requestedAmount: number;
+  approvedAmount: number;
 }

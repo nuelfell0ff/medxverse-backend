@@ -1,65 +1,65 @@
-import mongoose, { Types } from 'mongoose';
+import { Types } from 'mongoose';
+import { MemberModel } from '../members/members.model.js';
+import { BenefitPackageModel } from '../benefits/benefits.model.js';
+import { ClaimModel } from '../claims/claims.model.js';
 import { HmsDashboardSettingsModel } from './hms-dashboard.model.js';
 export class HmsDashboardService {
     async getDashboardMetrics(hmoId) {
         const objectHmoId = new Types.ObjectId(hmoId);
-        const MemberModel = mongoose.models.HMSMember || mongoose.model('HMSMember');
-        const BenefitPlanModel = mongoose.models.BenefitPlan || mongoose.model('BenefitPlan');
-        const ClaimModel = mongoose.models.Claim || mongoose.model('Claim');
-        const [enrolledMembersCount, activePlansCount, claimsStats, financialAgg,] = await Promise.all([
-            MemberModel.countDocuments({ hmoId: objectHmoId, status: 'ACTIVE' }).catch(() => 0),
-            BenefitPlanModel.countDocuments({ hmoId: objectHmoId, isActive: true }).catch(() => 0),
+        const [enrolledMembersCount, activePlansCount, claimsStats, financialAgg] = await Promise.all([
+            MemberModel.countDocuments({ hmoId: objectHmoId, status: 'ACTIVE' }),
+            BenefitPackageModel.countDocuments({ hmoId: objectHmoId, status: { $in: ['ACTIVE', 'PUBLISHED'] } }),
             ClaimModel.aggregate([
                 { $match: { hmoId: objectHmoId } },
                 {
                     $group: {
                         _id: '$status',
                         count: { $sum: 1 },
-                        totalAmount: { $sum: '$claimAmount' },
-                        approvedAmount: { $sum: '$approvedAmount' },
+                        totalAmount: { $sum: '$totalClaimedAmount' },
+                        approvedAmount: { $sum: { $ifNull: ['$totalApprovedAmount', 0] } },
                     },
                 },
-            ]).catch(() => []),
+            ]),
             ClaimModel.aggregate([
                 { $match: { hmoId: objectHmoId } },
                 {
                     $group: {
                         _id: null,
-                        claimsValueOnFile: { $sum: '$claimAmount' },
+                        claimsValueOnFile: { $sum: '$totalClaimedAmount' },
                         settledToProviders: {
                             $sum: {
-                                $cond: [{ $eq: ['$status', 'SETTLED'] }, '$approvedAmount', 0],
+                                $cond: [{ $eq: ['$status', 'PAID'] }, { $ifNull: ['$totalApprovedAmount', 0] }, 0],
                             },
                         },
                         approvedAwaitingPayment: {
                             $sum: {
-                                $cond: [{ $eq: ['$status', 'APPROVED'] }, '$approvedAmount', 0],
+                                $cond: [{ $eq: ['$status', 'APPROVED'] }, { $ifNull: ['$totalApprovedAmount', 0] }, 0],
                             },
                         },
                         exposureUnderReview: {
                             $sum: {
-                                $cond: [{ $in: ['$status', ['SUBMITTED', 'UNDER_REVIEW']] }, '$claimAmount', 0],
+                                $cond: [{ $in: ['$status', ['SUBMITTED', 'UNDER_REVIEW']] }, '$totalClaimedAmount', 0],
                             },
                         },
                         deniedValue: {
                             $sum: {
-                                $cond: [{ $eq: ['$status', 'DENIED'] }, '$claimAmount', 0],
+                                $cond: [{ $eq: ['$status', 'REJECTED'] }, '$totalClaimedAmount', 0],
                             },
                         },
                         totalVolume: { $sum: 1 },
                         deniedVolume: {
                             $sum: {
-                                $cond: [{ $eq: ['$status', 'DENIED'] }, 1, 0],
+                                $cond: [{ $eq: ['$status', 'REJECTED'] }, 1, 0],
                             },
                         },
                         draftCount: {
                             $sum: {
-                                $cond: [{ $eq: ['$status', 'DRAFT'] }, 1, 0],
+                                $cond: [{ $eq: ['$status', 'CANCELLED'] }, 1, 0],
                             },
                         },
                     },
                 },
-            ]).catch(() => []),
+            ]),
         ]);
         const claimsMap = new Map();
         claimsStats.forEach((item) => {
@@ -68,8 +68,8 @@ export class HmsDashboardService {
         const submitted = claimsMap.get('SUBMITTED')?.count || 0;
         const underReview = claimsMap.get('UNDER_REVIEW')?.count || 0;
         const approved = claimsMap.get('APPROVED')?.count || 0;
-        const denied = claimsMap.get('DENIED')?.count || 0;
-        const settled = claimsMap.get('SETTLED')?.count || 0;
+        const denied = claimsMap.get('REJECTED')?.count || 0;
+        const settled = claimsMap.get('PAID')?.count || 0;
         const pendingReviewCount = submitted + underReview;
         const fin = financialAgg[0] || {
             claimsValueOnFile: 0,

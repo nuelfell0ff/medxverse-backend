@@ -9,6 +9,9 @@ export class AuthService {
             accountType: account.accountType,
             name: account.name,
             email: account.email,
+            ...(account.accountType === 'HMO'
+                ? { hmoId: account._id.toString() }
+                : { hospitalId: account._id.toString() }),
         }, secret, { expiresIn });
     }
     static formatAccountPayload(account) {

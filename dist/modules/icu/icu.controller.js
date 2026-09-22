@@ -6,9 +6,11 @@ export class ICUController {
             const user = auth(req);
             const admission = await icuService.createAdmission(user.hospitalId, {
                 patientId: req.body.patientId,
+                wardId: req.body.wardId,
                 bedNumber: req.body.bedNumber,
                 careLevel: req.body.careLevel,
                 primaryDiagnosis: req.body.primaryDiagnosis,
+                admissionReason: req.body.admissionReason,
                 attendingPhysicianId: req.body.attendingPhysicianId,
                 admittedById: user._id,
                 vitals: req.body.vitals,
@@ -35,6 +37,7 @@ export class ICUController {
                 status: req.query.status,
                 careLevel: req.query.careLevel,
                 patientId: req.query.patientId,
+                wardId: req.query.wardId,
                 bedNumber: req.query.bedNumber,
             });
             res.status(200).json({ success: true, data: result });
@@ -257,7 +260,7 @@ export class ICUController {
         try {
             const user = auth(req);
             const log = await icuService.addFamilyCommunication(user.hospitalId, user._id, {
-                admissionId: req.params.id,
+                admissionId: req.params.id || req.body.admissionId,
                 contactName: req.body.contactName,
                 relationship: req.body.relationship,
                 contactMethod: req.body.contactMethod,

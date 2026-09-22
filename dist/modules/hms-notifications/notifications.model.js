@@ -1,8 +1,8 @@
 import mongoose, { Schema, model } from 'mongoose';
 import { NotificationChannel, NotificationStatus, NotificationType, } from './notifications.types.js';
 const NotificationSchema = new Schema({
-    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'HMO', index: true },
-    recipientId: { type: Schema.Types.ObjectId, required: true, ref: 'User', index: true },
+    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'Account', index: true },
+    recipientId: { type: Schema.Types.ObjectId, required: true, ref: 'Account', index: true },
     type: {
         type: String,
         enum: Object.values(NotificationType),

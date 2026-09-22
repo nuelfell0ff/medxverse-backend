@@ -10,7 +10,18 @@ const ClaimItemSchema = new Schema({
     quantity: { type: Number, required: true, min: 1 },
     unitPrice: { type: Number, required: true, min: 0 },
     claimedAmount: { type: Number, required: true, min: 0 },
-    approvedAmount: { type: Number, min: 0 },
+    approvedAmount: {
+        type: Number,
+        min: 0,
+        validate: {
+            validator: function (value) {
+                if (value === undefined || value === null)
+                    return true;
+                return value <= this.claimedAmount;
+            },
+            message: 'Approved amount cannot exceed claimed amount',
+        },
+    },
 }, { _id: false });
 const ClaimSchema = new Schema({
     hmoId: {
@@ -57,10 +68,10 @@ const ClaimSchema = new Schema({
     },
     items: {
         type: [ClaimItemSchema],
-        validate: [
-            (val) => val.length > 0,
-            'Claim must contain at least one item',
-        ],
+        validate: {
+            validator: (val) => Array.isArray(val) && val.length > 0,
+            message: 'Claim must contain at least one item',
+        },
     },
     totalClaimedAmount: {
         type: Number,
@@ -70,6 +81,14 @@ const ClaimSchema = new Schema({
     totalApprovedAmount: {
         type: Number,
         min: 0,
+        validate: {
+            validator: function (value) {
+                if (value === undefined || value === null)
+                    return true;
+                return value <= this.totalClaimedAmount;
+            },
+            message: 'Total approved amount cannot exceed total claimed amount',
+        },
     },
     status: {
         type: String,
@@ -83,7 +102,7 @@ const ClaimSchema = new Schema({
     },
     adjudicatedBy: {
         type: Schema.Types.ObjectId,
-        ref: 'User',
+        ref: 'Account',
     },
     adjudicatedAt: {
         type: Date,
@@ -94,7 +113,8 @@ const ClaimSchema = new Schema({
     },
 }, { timestamps: true });
 ClaimSchema.index({ hmoId: 1, claimNumber: 1 }, { unique: true });
-ClaimSchema.index({ hmoId: 1, status: 1 });
-ClaimSchema.index({ hmoId: 1, memberId: 1 });
-ClaimSchema.index({ hmoId: 1, providerId: 1 });
+ClaimSchema.index({ hmoId: 1, status: 1, createdAt: -1 });
+ClaimSchema.index({ hmoId: 1, memberId: 1, createdAt: -1 });
+ClaimSchema.index({ hmoId: 1, providerId: 1, createdAt: -1 });
+ClaimSchema.index({ hmoId: 1, treatmentDate: -1 });
 export const ClaimModel = mongoose.models.HMSClaim || model('HMSClaim', ClaimSchema);

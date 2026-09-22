@@ -1,8 +1,8 @@
 import mongoose, { Schema, model } from 'mongoose';
 import {
   IPreAuthDocument,
-  PreAuthStatus,
   PreAuthPriority,
+  PreAuthStatus,
 } from './pre-authorizations.types.js';
 
 const ProcedureItemSchema = new Schema(
@@ -35,7 +35,7 @@ const PreAuthSchema = new Schema<IPreAuthDocument>(
       default: PreAuthStatus.NEW_REQUEST,
       index: true,
     },
-    procedures: [ProcedureItemSchema],
+    procedures: { type: [ProcedureItemSchema], required: true, default: [] },
     totalRequestedAmount: { type: Number, required: true, min: 0 },
     totalApprovedAmount: { type: Number, default: 0, min: 0 },
     clinicalNotes: { type: String, trim: true },
@@ -48,6 +48,8 @@ const PreAuthSchema = new Schema<IPreAuthDocument>(
 );
 
 PreAuthSchema.index({ hmoId: 1, status: 1 });
+PreAuthSchema.index({ hmoId: 1, priority: 1 });
+PreAuthSchema.index({ hmoId: 1, createdAt: -1 });
 PreAuthSchema.index({ requestNumber: 'text', diagnosisDescription: 'text' });
 
 export const PreAuthModel =

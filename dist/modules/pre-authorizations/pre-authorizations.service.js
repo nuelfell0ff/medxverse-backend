@@ -2,17 +2,61 @@ import { Types } from 'mongoose';
 import { PreAuthModel } from './pre-authorizations.model.js';
 import { PreAuthStatus, } from './pre-authorizations.types.js';
 export class PreAuthorizationsService {
+    isValidObjectId(value) {
+        return Types.ObjectId.isValid(value);
+    }
+    objectId(value, field) {
+        if (!this.isValidObjectId(value)) {
+            throw new Error(`Invalid ${field}`);
+        }
+        return new Types.ObjectId(value);
+    }
     generateRequestNumber() {
-        const randomHex = Math.floor(100000 + Math.random() * 900000).toString();
-        return `PA-${Date.now().toString().slice(-4)}-${randomHex}`;
+        const random = Math.floor(100000 + Math.random() * 900000).toString();
+        return `PA-${Date.now().toString().slice(-6)}-${random}`;
     }
     async createPreAuth(input) {
-        const totalRequested = input.procedures.reduce((acc, p) => acc + p.requestedAmount, 0);
+        if (!input.memberId) {
+            throw new Error('memberId is required');
+        }
+        if (!input.providerId) {
+            throw new Error('providerId is required');
+        }
+        if (!input.diagnosisCode?.trim()) {
+            throw new Error('diagnosisCode is required');
+        }
+        if (!input.diagnosisDescription?.trim()) {
+            throw new Error('diagnosisDescription is required');
+        }
+        if (!Array.isArray(input.procedures) || input.procedures.length === 0) {
+            throw new Error('At least one procedure is required');
+        }
+        const procedures = input.procedures.map((p) => {
+            if (!p.code?.trim()) {
+                throw new Error('Each procedure requires a code');
+            }
+            if (!p.description?.trim()) {
+                throw new Error(`Procedure ${p.code} requires a description`);
+            }
+            if (!Number.isFinite(p.requestedAmount) || p.requestedAmount < 0) {
+                throw new Error(`Invalid requested amount for procedure ${p.code}`);
+            }
+            return {
+                code: p.code.trim().toUpperCase(),
+                description: p.description.trim(),
+                requestedAmount: p.requestedAmount,
+                approvedAmount: 0,
+            };
+        });
+        const totalRequested = procedures.reduce((sum, p) => sum + p.requestedAmount, 0);
         return PreAuthModel.create({
             ...input,
-            hmoId: new Types.ObjectId(input.hmoId),
-            memberId: new Types.ObjectId(input.memberId),
-            providerId: new Types.ObjectId(input.providerId),
+            hmoId: this.objectId(input.hmoId, 'hmoId'),
+            memberId: this.objectId(input.memberId, 'memberId'),
+            providerId: this.objectId(input.providerId, 'providerId'),
+            diagnosisCode: input.diagnosisCode.trim().toUpperCase(),
+            diagnosisDescription: input.diagnosisDescription.trim(),
+            procedures,
             requestNumber: this.generateRequestNumber(),
             status: PreAuthStatus.NEW_REQUEST,
             totalRequestedAmount: totalRequested,
@@ -20,23 +64,47 @@ export class PreAuthorizationsService {
         });
     }
     async getPreAuths(hmoId, query) {
-        const page = Math.max(1, query.page || 1);
-        const limit = Math.min(50, Math.max(1, query.limit || 20));
+        const hmoObjectId = this.objectId(hmoId, 'hmoId');
+        const page = Math.max(1, Number(query.page) || 1);
+        const limit = Math.min(50, Math.max(1, Number(query.limit) || 20));
         const skip = (page - 1) * limit;
-        const filter = { hmoId };
-        if (query.status)
+        const filter = {
+            hmoId: hmoObjectId,
+        };
+        if (query.status) {
             filter.status = query.status;
-        if (query.priority)
+        }
+        if (query.priority) {
             filter.priority = query.priority;
-        if (query.memberId)
-            filter.memberId = query.memberId;
-        if (query.providerId)
-            filter.providerId = query.providerId;
-        if (query.search) {
+        }
+        if (query.memberId) {
+            filter.memberId = this.objectId(query.memberId, 'memberId');
+        }
+        if (query.providerId) {
+            filter.providerId = this.objectId(query.providerId, 'providerId');
+        }
+        const search = query.search?.trim();
+        if (search) {
+            const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             filter.$or = [
-                { requestNumber: { $regex: query.search, $options: 'i' } },
-                { diagnosisCode: { $regex: query.search, $options: 'i' } },
-                { diagnosisDescription: { $regex: query.search, $options: 'i' } },
+                {
+                    requestNumber: {
+                        $regex: escaped,
+                        $options: 'i',
+                    },
+                },
+                {
+                    diagnosisCode: {
+                        $regex: escaped,
+                        $options: 'i',
+                    },
+                },
+                {
+                    diagnosisDescription: {
+                        $regex: escaped,
+                        $options: 'i',
+                    },
+                },
             ];
         }
         const [requests, total] = await Promise.all([
@@ -58,61 +126,125 @@ export class PreAuthorizationsService {
         };
     }
     async getPreAuthById(id, hmoId) {
-        return PreAuthModel.findOne({ _id: id, hmoId })
+        return PreAuthModel.findOne({
+            _id: this.objectId(id, 'pre-authorization id'),
+            hmoId: this.objectId(hmoId, 'hmoId'),
+        })
             .populate('memberId')
             .populate('providerId')
             .populate('reviewedBy', 'firstName lastName email')
             .exec();
     }
     async reviewPreAuth(id, hmoId, reviewerId, input) {
-        const preAuth = await PreAuthModel.findOne({ _id: id, hmoId });
-        if (!preAuth)
+        const preAuth = await PreAuthModel.findOne({
+            _id: this.objectId(id, 'pre-authorization id'),
+            hmoId: this.objectId(hmoId, 'hmoId'),
+        });
+        if (!preAuth) {
             return null;
-        if (input.procedures && input.procedures.length > 0) {
+        }
+        if (!input.status) {
+            throw new Error('status is required');
+        }
+        if (input.status === PreAuthStatus.DECLINED &&
+            !input.decisionReason?.trim()) {
+            throw new Error('decisionReason is required when declining a pre-authorization');
+        }
+        if (input.procedures) {
+            const reviews = new Map(input.procedures.map((p) => [
+                p.code.trim().toUpperCase(),
+                p.approvedAmount,
+            ]));
             let totalApproved = 0;
             preAuth.procedures = preAuth.procedures.map((proc) => {
-                const matchingReview = input.procedures?.find((p) => p.code === proc.code);
-                const approvedAmount = matchingReview ? matchingReview.approvedAmount : 0;
-                totalApproved += approvedAmount;
-                return { ...proc, approvedAmount };
+                const approved = reviews.has(proc.code)
+                    ? reviews.get(proc.code) ?? 0
+                    : 0;
+                if (!Number.isFinite(approved) ||
+                    approved < 0 ||
+                    approved > proc.requestedAmount) {
+                    throw new Error(`Invalid approved amount for procedure ${proc.code}`);
+                }
+                totalApproved += approved;
+                return {
+                    code: proc.code,
+                    description: proc.description,
+                    requestedAmount: proc.requestedAmount,
+                    approvedAmount: approved,
+                };
             });
             preAuth.totalApprovedAmount = totalApproved;
         }
         else if (input.status === PreAuthStatus.APPROVED) {
             preAuth.procedures = preAuth.procedures.map((proc) => ({
-                ...proc,
+                code: proc.code,
+                description: proc.description,
+                requestedAmount: proc.requestedAmount,
                 approvedAmount: proc.requestedAmount,
             }));
-            preAuth.totalApprovedAmount = preAuth.totalRequestedAmount;
+            preAuth.totalApprovedAmount =
+                preAuth.totalRequestedAmount;
+        }
+        else if (input.status === PreAuthStatus.DECLINED ||
+            input.status === PreAuthStatus.CANCELLED) {
+            preAuth.procedures = preAuth.procedures.map((proc) => ({
+                code: proc.code,
+                description: proc.description,
+                requestedAmount: proc.requestedAmount,
+                approvedAmount: 0,
+            }));
+            preAuth.totalApprovedAmount = 0;
         }
         preAuth.status = input.status;
-        preAuth.decisionReason = input.decisionReason;
-        preAuth.reviewedBy = new Types.ObjectId(reviewerId);
+        preAuth.decisionReason =
+            input.decisionReason?.trim() || undefined;
+        preAuth.reviewedBy = this.objectId(reviewerId, 'reviewerId');
         preAuth.reviewedAt = new Date();
         if (input.status === PreAuthStatus.APPROVED) {
-            const days = input.expiresInDays || 30;
-            preAuth.expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+            const days = Math.min(365, Math.max(1, Number(input.expiresInDays) || 30));
+            preAuth.expiresAt = new Date(Date.now() +
+                days * 24 * 60 * 60 * 1000);
+        }
+        else if (input.status === PreAuthStatus.DECLINED ||
+            input.status === PreAuthStatus.CANCELLED) {
+            preAuth.expiresAt = undefined;
         }
         return preAuth.save();
     }
     async getPreAuthStats(hmoId) {
+        const hmoObjectId = this.objectId(hmoId, 'hmoId');
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
-        const [newRequests, pending, approvedToday, declined] = await Promise.all([
-            PreAuthModel.countDocuments({ hmoId, status: PreAuthStatus.NEW_REQUEST }),
-            PreAuthModel.countDocuments({ hmoId, status: PreAuthStatus.PENDING }),
+        const [newRequests, pending, approvedToday, declined, total,] = await Promise.all([
             PreAuthModel.countDocuments({
-                hmoId,
-                status: PreAuthStatus.APPROVED,
-                reviewedAt: { $gte: todayStart },
+                hmoId: hmoObjectId,
+                status: PreAuthStatus.NEW_REQUEST,
             }),
-            PreAuthModel.countDocuments({ hmoId, status: PreAuthStatus.DECLINED }),
+            PreAuthModel.countDocuments({
+                hmoId: hmoObjectId,
+                status: PreAuthStatus.PENDING,
+            }),
+            PreAuthModel.countDocuments({
+                hmoId: hmoObjectId,
+                status: PreAuthStatus.APPROVED,
+                reviewedAt: {
+                    $gte: todayStart,
+                },
+            }),
+            PreAuthModel.countDocuments({
+                hmoId: hmoObjectId,
+                status: PreAuthStatus.DECLINED,
+            }),
+            PreAuthModel.countDocuments({
+                hmoId: hmoObjectId,
+            }),
         ]);
         return {
             newRequests,
             pending,
             approvedToday,
             declined,
+            total,
         };
     }
 }

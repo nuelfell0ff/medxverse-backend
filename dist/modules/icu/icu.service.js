@@ -4,6 +4,7 @@ import { FlowEntrySource, ICUCaseStatus, } from './icu.types.js';
 import { icuDeviceGatewayService } from './icu.device-gateway.service.js';
 import { icuScoringService } from './icu.scoring.service.js';
 import { publishEhrResource } from '../patient/ehr.publisher.js';
+import { WardModel } from '../bed-ward/bed-ward.model.js';
 export class ICUService {
     validateObjectId(id, field) {
         if (!id || !Types.ObjectId.isValid(id))
@@ -32,7 +33,7 @@ export class ICUService {
     }
     async getAdmissionOrThrow(admissionId, hospitalId) {
         this.validateObjectId(admissionId, 'ICU admission ID');
-        const admission = await ICUAdmissionModel.findOne({ _id: admissionId, hospitalId });
+        const admission = await ICUAdmissionModel.findOne({ _id: admissionId, $or: [{ hospitalId: new Types.ObjectId(hospitalId) }, { hospitalId }] });
         if (!admission)
             throw new Error('ICU admission not found.');
         return admission;
@@ -41,10 +42,21 @@ export class ICUService {
         await this.assertHospitalMember(hospitalId, input.admittedById);
         this.validateObjectId(input.patientId, 'patient ID');
         await this.assertPatientBelongsToHospital(hospitalId, input.patientId);
+        if (!input.wardId?.trim() || !Types.ObjectId.isValid(input.wardId))
+            throw new Error('Valid ICU ward ID is required.');
         if (!input.bedNumber?.trim())
             throw new Error('ICU bed number is required.');
+        if (!input.admissionReason?.trim())
+            throw new Error('Admission reason is required.');
         if (!input.primaryDiagnosis?.trim())
             throw new Error('Primary diagnosis is required.');
+        const ward = await WardModel.findOne({
+            _id: new Types.ObjectId(input.wardId),
+            hospitalId: new Types.ObjectId(hospitalId),
+            active: true,
+        }).select('_id').lean();
+        if (!ward)
+            throw new Error('ICU ward not found or is inactive.');
         if (input.attendingPhysicianId)
             this.validateObjectId(input.attendingPhysicianId, 'attending physician ID');
         if (input.sourceSurgeryCaseId)
@@ -54,9 +66,11 @@ export class ICUService {
         const admission = await ICUAdmissionModel.create({
             hospitalId: new Types.ObjectId(hospitalId),
             patientId: new Types.ObjectId(input.patientId),
+            wardId: new Types.ObjectId(input.wardId),
             bedNumber: input.bedNumber.trim(),
             careLevel: input.careLevel,
             primaryDiagnosis: input.primaryDiagnosis.trim(),
+            admissionReason: input.admissionReason.trim(),
             attendingPhysicianId: input.attendingPhysicianId ? new Types.ObjectId(input.attendingPhysicianId) : undefined,
             admittedById: new Types.ObjectId(input.admittedById),
             vitals: input.vitals,
@@ -77,6 +91,8 @@ export class ICUService {
                 id: admission._id.toString(),
                 patientId: input.patientId,
                 bedNumber: admission.bedNumber,
+                wardId: input.wardId,
+                admissionReason: admission.admissionReason,
                 careLevel: admission.careLevel,
                 primaryDiagnosis: admission.primaryDiagnosis,
                 admittedAt: admission.admittedAt,
@@ -91,21 +107,30 @@ export class ICUService {
         const page = Math.max(1, query.page || 1);
         const limit = Math.min(100, Math.max(1, query.limit || 20));
         const skip = (page - 1) * limit;
-        const filter = { hospitalId: new Types.ObjectId(hospitalId) };
+        // Always scope admissions to the authenticated hospital.  Use both the
+        // ObjectId and string representation because older ICU records may have
+        // been persisted with a string hospitalId before the ICU schema was
+        // normalized to ObjectId.
+        const hospitalObjectId = new Types.ObjectId(hospitalId);
+        const filter = {
+            $or: [{ hospitalId: hospitalObjectId }, { hospitalId }],
+        };
         if (query.status)
             filter.status = query.status;
         if (query.careLevel)
             filter.careLevel = query.careLevel;
         if (query.patientId)
             filter.patientId = this.validateObjectId(query.patientId, 'patient ID');
+        if (query.wardId)
+            filter.wardId = this.validateObjectId(query.wardId, 'ward ID');
         if (query.bedNumber)
             filter.bedNumber = { $regex: query.bedNumber, $options: 'i' };
         const [admissions, total] = await Promise.all([
             ICUAdmissionModel.find(filter)
                 .populate('patientId', 'firstName lastName mrn dateOfBirth gender bloodGroup phone')
-                .populate('attendingPhysicianId', 'firstName lastName role')
-                .populate('admittedById', 'firstName lastName role')
-                .populate('transferredToWardId', 'name wardNumber')
+                .populate('wardId', 'code name department floor building specialty')
+                .populate('transferredToWardId', 'code name department floor building specialty')
+                .populate('attendingPhysicianId', 'staffId firstName middleName lastName role professionalTitle jobTitle')
                 .sort({ admittedAt: -1 })
                 .skip(skip)
                 .limit(limit)
@@ -117,27 +142,83 @@ export class ICUService {
     async getAdmissionById(admissionId, hospitalId) {
         this.validateObjectId(admissionId, 'ICU admission ID');
         this.validateObjectId(hospitalId, 'hospital ID');
-        return ICUAdmissionModel.findOne({ _id: admissionId, hospitalId })
+        return ICUAdmissionModel.findOne({ _id: admissionId, $or: [{ hospitalId: new Types.ObjectId(hospitalId) }, { hospitalId }] })
             .populate('patientId', 'firstName lastName mrn dateOfBirth gender bloodGroup phone')
-            .populate('attendingPhysicianId', 'firstName lastName role')
-            .populate('admittedById', 'firstName lastName role')
-            .populate('transferredToWardId', 'name wardNumber')
+            .populate('wardId', 'code name department floor building specialty')
+            .populate('attendingPhysicianId', 'staffId firstName middleName lastName role professionalTitle jobTitle')
+            .populate('transferredToWardId', 'code name department floor building specialty')
             .exec();
     }
     async updateVitals(admissionId, hospitalId, actorId, input) {
         await this.assertHospitalMember(hospitalId, actorId);
         const admission = await this.getAdmissionOrThrow(admissionId, hospitalId);
-        const updated = await ICUAdmissionModel.findOneAndUpdate({ _id: admission._id, hospitalId, status: { $in: [ICUCaseStatus.ADMITTED, ICUCaseStatus.STABILIZED] } }, { $set: { vitals: input.vitals } }, { new: true }).exec();
+        /*
+         * Normalize the payload before persisting it.
+         *
+         * Older versions of the ICU page used display-oriented keys such as
+         * `heartRate`, `spo2`, `temperature`, `respiratoryRate` and `gcs`.
+         * Those keys are not part of ICUVitalsSchema, so Mongoose silently
+         * stripped them from `admission.vitals` while the same raw keys were
+         * still being written to the flowsheet. That produced the exact symptom
+         * where Flowsheet showed values but Overview showed `—`.
+         *
+         * Accept both the canonical API keys and the legacy UI keys so existing
+         * clients cannot create another split-brain record.
+         */
+        const rawVitals = (input?.vitals ?? {});
+        const firstNumber = (...values) => {
+            for (const value of values) {
+                if (typeof value === 'number' && Number.isFinite(value))
+                    return value;
+                if (typeof value === 'string' && value.trim() !== '') {
+                    const parsed = Number(value);
+                    if (Number.isFinite(parsed))
+                        return parsed;
+                }
+            }
+            return undefined;
+        };
+        const normalizedVitals = {};
+        const mappings = {
+            heartRateBpm: ['heartRateBpm', 'heartRate', 'heartrate'],
+            systolicBpMmHg: ['systolicBpMmHg', 'systolicBp', 'bloodPressure', 'bloodpressure'],
+            diastolicBpMmHg: ['diastolicBpMmHg', 'diastolicBp'],
+            meanArterialPressureMmHg: ['meanArterialPressureMmHg', 'map', 'meanArterialPressure'],
+            respiratoryRateBpm: ['respiratoryRateBpm', 'respiratoryRate', 'respiratoryrate'],
+            oxygenSaturationPct: ['oxygenSaturationPct', 'spo2', 'SpO2', 'oxygenSaturation'],
+            temperatureCelsius: ['temperatureCelsius', 'temperature', 'temp'],
+            centralVenousPressureMmHg: ['centralVenousPressureMmHg', 'cvp'],
+            intracranialPressureMmHg: ['intracranialPressureMmHg', 'icp'],
+            glasgowComaScale: ['glasgowComaScale', 'gcs'],
+        };
+        for (const [canonicalKey, aliases] of Object.entries(mappings)) {
+            const value = firstNumber(...aliases.map((key) => rawVitals[key]));
+            if (value !== undefined)
+                normalizedVitals[canonicalKey] = value;
+        }
+        const updated = await ICUAdmissionModel.findOneAndUpdate({ _id: admission._id, hospitalId, status: { $in: [ICUCaseStatus.ADMITTED, ICUCaseStatus.STABILIZED] } }, { $set: { vitals: { ...(admission.vitals ?? {}), ...normalizedVitals } } }, { new: true }).exec();
         if (updated) {
-            const entries = Object.entries(input.vitals || {}).filter(([, value]) => value !== undefined);
+            const entries = Object.entries(normalizedVitals).filter(([, value]) => value !== undefined);
             if (entries.length) {
+                const parameterLabels = {
+                    heartRateBpm: 'Heart rate',
+                    systolicBpMmHg: 'Systolic BP',
+                    diastolicBpMmHg: 'Diastolic BP',
+                    meanArterialPressureMmHg: 'MAP',
+                    respiratoryRateBpm: 'Respiratory rate',
+                    oxygenSaturationPct: 'SpO2',
+                    temperatureCelsius: 'Temperature',
+                    centralVenousPressureMmHg: 'CVP',
+                    intracranialPressureMmHg: 'ICP',
+                    glasgowComaScale: 'GCS',
+                };
                 await FlowsheetEntryModel.insertMany(entries.map(([parameter, value]) => ({
                     hospitalId: new Types.ObjectId(hospitalId),
                     admissionId: admission._id,
                     patientId: admission.patientId,
                     recordedAt: new Date(),
                     category: 'VITALS',
-                    parameter,
+                    parameter: parameterLabels[parameter] ?? parameter,
                     value,
                     source: FlowEntrySource.MANUAL,
                     enteredById: new Types.ObjectId(actorId),
@@ -285,8 +366,6 @@ export class ICUService {
         return FlowsheetEntryModel.find(filter)
             .sort({ recordedAt: -1 })
             .limit(Math.min(5000, Math.max(1, options.limit || 1000)))
-            .populate('enteredById', 'firstName lastName role')
-            .populate('reviewedById', 'firstName lastName role')
             .lean();
     }
     async confirmFlowsheetEntry(hospitalId, actorId, entryId, annotation) {
@@ -372,7 +451,6 @@ export class ICUService {
             admissionId: admission._id,
         })
             .sort({ communicatedAt: -1 })
-            .populate('communicatedById', 'firstName lastName role')
             .lean();
     }
     async getDashboard(hospitalId, admissionId) {
@@ -398,8 +476,6 @@ export class ICUService {
             })
                 .sort({ recordedAt: -1 })
                 .limit(250)
-                .populate('enteredById', 'firstName lastName role')
-                .populate('reviewedById', 'firstName lastName role')
                 .exec(),
             ICUScoreModel.find({
                 hospitalId: hospitalObjectId,
@@ -413,9 +489,70 @@ export class ICUService {
                 admissionId: admissionObjectId,
             })
                 .sort({ communicatedAt: -1 })
-                .populate('communicatedById', 'firstName lastName role')
                 .exec(),
         ]);
+        /*
+         * Keep the dashboard resilient to older ICU records created before
+         * vitals were persisted on ICUAdmission. Those records may have their
+         * latest values only in FlowsheetEntry.
+         *
+         * The admission snapshot remains the authoritative source for new
+         * records, while this fallback makes historical records immediately
+         * visible in Overview without requiring clinicians to re-enter vitals.
+         */
+        const vitals = {
+            ...(admission.vitals ?? {}),
+        };
+        const canonicalFromParameter = {
+            'Heart rate': 'heartRateBpm',
+            Heartrate: 'heartRateBpm',
+            heartRateBpm: 'heartRateBpm',
+            'Systolic BP': 'systolicBpMmHg',
+            Bloodpressure: 'systolicBpMmHg',
+            bloodPressure: 'systolicBpMmHg',
+            systolicBpMmHg: 'systolicBpMmHg',
+            'Diastolic BP': 'diastolicBpMmHg',
+            diastolicBpMmHg: 'diastolicBpMmHg',
+            MAP: 'meanArterialPressureMmHg',
+            meanArterialPressureMmHg: 'meanArterialPressureMmHg',
+            'Respiratory rate': 'respiratoryRateBpm',
+            Respiratoryrate: 'respiratoryRateBpm',
+            respiratoryRate: 'respiratoryRateBpm',
+            respiratoryRateBpm: 'respiratoryRateBpm',
+            SpO2: 'oxygenSaturationPct',
+            Spo2: 'oxygenSaturationPct',
+            spo2: 'oxygenSaturationPct',
+            oxygenSaturationPct: 'oxygenSaturationPct',
+            Temperature: 'temperatureCelsius',
+            temperature: 'temperatureCelsius',
+            temperatureCelsius: 'temperatureCelsius',
+            CVP: 'centralVenousPressureMmHg',
+            ICP: 'intracranialPressureMmHg',
+            GCS: 'glasgowComaScale',
+            Gcs: 'glasgowComaScale',
+            gcs: 'glasgowComaScale',
+            glasgowComaScale: 'glasgowComaScale',
+        };
+        // recentFlowsheet is newest-first, so the first matching entry is the
+        // latest recorded value for that parameter.
+        for (const entry of recentFlowsheet) {
+            const key = canonicalFromParameter[String(entry.parameter ?? '').trim()];
+            if (!key || vitals[key] !== undefined)
+                continue;
+            const value = typeof entry.value === 'number'
+                ? entry.value
+                : typeof entry.value === 'string' && entry.value.trim() !== ''
+                    ? Number(entry.value)
+                    : undefined;
+            if (value !== undefined && Number.isFinite(value)) {
+                vitals[key] = value;
+            }
+        }
+        // Mutating the hydrated document here changes only the response object;
+        // it does not write fallback values back to MongoDB.
+        if (Object.keys(vitals).length) {
+            Object.assign(admission, { vitals });
+        }
         return {
             admission,
             latestReadings,

@@ -1,7 +1,7 @@
 import { Schema, model } from 'mongoose';
 import { ReportFormat, ReportStatus, ReportType } from './reports.types.js';
 const ReportSchema = new Schema({
-    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'HMO', index: true },
+    hmoId: { type: Schema.Types.ObjectId, required: true, ref: 'Account', index: true },
     title: { type: String, required: true, trim: true },
     type: {
         type: String,
@@ -24,7 +24,7 @@ const ReportSchema = new Schema({
         providerId: { type: String },
         status: { type: String },
     },
-    generatedBy: { type: Schema.Types.ObjectId, required: true, ref: 'User' },
+    generatedBy: { type: Schema.Types.ObjectId, required: true, ref: 'Account' },
     fileUrl: { type: String, trim: true },
     dataSummary: { type: Schema.Types.Mixed, default: {} },
 }, { timestamps: true });

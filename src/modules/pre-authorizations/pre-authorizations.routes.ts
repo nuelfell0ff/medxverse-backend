@@ -5,13 +5,19 @@ import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
 const router = Router();
 
 router.use(authenticate);
-router.use(authorize('HMO', 'HMO_ADMIN', 'HMO_CLAIMS_OFFICER', 'HMO_MEDICAL_OFFICER', 'HMO_OFFICER'));
+router.use(
+  authorize(
+    'HMO',
+    'HMO_ADMIN',
+    'HMO_CLAIMS_OFFICER',
+    'HMO_MEDICAL_OFFICER',
+    'HMO_OFFICER'
+  )
+);
 
-// Pre-Authorization Queue & Stats
 router.get('/stats', (req, res, next) =>
   preAuthorizationsController.getPreAuthStats(req, res, next)
 );
-
 router.post('/', (req, res, next) =>
   preAuthorizationsController.createPreAuth(req, res, next)
 );
@@ -21,8 +27,6 @@ router.get('/', (req, res, next) =>
 router.get('/:id', (req, res, next) =>
   preAuthorizationsController.getPreAuthById(req, res, next)
 );
-
-// Decision & Clinical Review
 router.patch('/:id/review', (req, res, next) =>
   preAuthorizationsController.reviewPreAuth(req, res, next)
 );

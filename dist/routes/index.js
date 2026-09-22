@@ -26,6 +26,7 @@ import inventoryRoutes from '../modules/inventory/inventory.routes.js';
 import administrationRoutes from '../modules/administration/administration.routes.js';
 import telemedicineRoutes from '../modules/telemedicine/telemedicine.routes.js';
 import settingsRoutes from '../modules/settings/settings.routes.js';
+import icuRoutes from '../modules/icu/icu.routes.js';
 // hms portal
 import hmsDashboardRoutes from '../modules/hms-dashboard/hms-dashboard.routes.js';
 import preAuthorizationRoutes from '../modules/pre-authorizations/pre-authorizations.routes.js';
@@ -35,6 +36,7 @@ import providerRoutes from '../modules/provider/provider.routes.js';
 import benefitsRoutes from '../modules/benefits/benefits.routes.js';
 import hmsReportsRoutes from '../modules/hms-reports/reports.routes.js';
 import hmsNotificationsRoutes from '../modules/hms-notifications/notifications.routes.js';
+import hmoPortalRoutes from '../modules/hmo/hmo-portal.routes.js';
 const v1Router = Router();
 // Platform & Onboarding
 v1Router.use('/auth', authRoutes);
@@ -64,6 +66,7 @@ v1Router.use('/inventory', inventoryRoutes);
 v1Router.use('/administration', administrationRoutes);
 v1Router.use('/telemedicine', telemedicineRoutes);
 v1Router.use('/settings', settingsRoutes);
+v1Router.use('/icu', icuRoutes);
 // hms portal
 v1Router.use('/hms-dashboard', hmsDashboardRoutes);
 v1Router.use('/pre-authorizations', preAuthorizationRoutes);
@@ -73,4 +76,6 @@ v1Router.use('/providers', providerRoutes);
 v1Router.use('/benefits', benefitsRoutes);
 v1Router.use('/hms-reports', hmsReportsRoutes);
 v1Router.use('/hms-notifications', hmsNotificationsRoutes);
+// Unified HMO portal API
+v1Router.use('/hmo', hmoPortalRoutes);
 export default v1Router;
