@@ -1,7 +1,5 @@
-import {
+import mongoose, {
   Schema,
-  model,
-  models,
   HydratedDocument,
   Model,
 } from 'mongoose';
@@ -142,8 +140,13 @@ const tariffSchema = new Schema<ITariffDocument>(
  * but the same code can exist under another HMO.
  */
 tariffSchema.index(
-  { hmoId: 1, code: 1 },
-  { unique: true }
+  {
+    hmoId: 1,
+    code: 1,
+  },
+  {
+    unique: true,
+  }
 );
 
 tariffSchema.index({
@@ -170,13 +173,18 @@ export type TariffHydratedDocument =
   HydratedDocument<ITariffDocument>;
 
 /**
- * Explicitly type the existing model as a Mongoose Model.
+ * Reuse the existing model if it has already been registered.
  *
- * This avoids the TypeScript incompatibility caused by
- * ReturnType<typeof model<ITariffDocument>> when retrieving
- * an existing model from mongoose.models.
+ * IMPORTANT:
+ * We intentionally access `models` through the default mongoose
+ * import instead of importing `models` as a named ESM export.
+ *
+ * This avoids:
+ *
+ * SyntaxError:
+ * The requested module 'mongoose' does not provide an export named 'models'
  */
-const existingTariffModel = models.Tariff as
+const existingTariffModel = mongoose.models.Tariff as
   | Model<ITariffDocument>
   | undefined;
 
@@ -186,4 +194,7 @@ const existingTariffModel = models.Tariff as
  */
 export const TariffModel =
   existingTariffModel ??
-  model<ITariffDocument>('Tariff', tariffSchema);
+  mongoose.model<ITariffDocument>(
+    'Tariff',
+    tariffSchema
+  );
