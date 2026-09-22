@@ -35,11 +35,12 @@ import membersRoutes from '../modules/members/members.routes.js';
 import enrolleesRoutes from '../modules/enrollees/enrollees.routes.js';
 import claimsRoutes from '../modules/claims/claims.routes.js';
 import providerRoutes from '../modules/provider/provider.routes.js';
-import benefitsRoutes from '../modules/benefits/benefits.routes.js';
 import tariffsRoutes from '../modules/tariffs/tariffs.routes.js';
 import hmsReportsRoutes from '../modules/hms-reports/reports.routes.js';
 import hmsNotificationsRoutes from '../modules/hms-notifications/notifications.routes.js';
 import settingsRoutes from '../modules/settings/settings.routes.js';
+import healthPlansRoutes from '../modules/health-plans/health-plans.routes.js';
+import benefitsRoutes from '../modules/health-plans/benefits.routes.js';
 
 const v1Router = Router();
 
@@ -80,10 +81,11 @@ v1Router.use('/members', membersRoutes);
 v1Router.use('/enrollees', enrolleesRoutes);
 v1Router.use('/claims', claimsRoutes);
 v1Router.use('/providers', providerRoutes);
-v1Router.use('/benefits', benefitsRoutes);
 v1Router.use('/tariffs', tariffsRoutes);
 v1Router.use('/hms-reports', hmsReportsRoutes);
 v1Router.use('/hms-notifications', hmsNotificationsRoutes);
 v1Router.use('/settings', settingsRoutes);
+v1Router.use('/health-plans', healthPlansRoutes);
+v1Router.use('/benefits', benefitsRoutes);
 
 export default v1Router;

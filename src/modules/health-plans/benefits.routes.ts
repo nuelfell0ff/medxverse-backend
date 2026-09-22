@@ -1,0 +1,16 @@
+import { Router } from 'express';
+import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
+import { healthPlansController } from './health-plans.controller.js';
+
+const router = Router();
+
+router.use(authenticate);
+router.use(authorize('HMO', 'HMO_ADMIN', 'HMO_CLAIMS_OFFICER', 'HMO_MEDICAL_OFFICER', 'HMO_OFFICER'));
+
+router.get('/stats', (req, res, next) => healthPlansController.benefitStats(req, res).catch(next));
+router.post('/', (req, res, next) => healthPlansController.createBenefit(req, res).catch(next));
+router.get('/', (req, res, next) => healthPlansController.listBenefits(req, res).catch(next));
+router.get('/:id', (req, res, next) => healthPlansController.getBenefit(req, res).catch(next));
+router.patch('/:id', (req, res, next) => healthPlansController.updateBenefit(req, res).catch(next));
+
+export default router;
