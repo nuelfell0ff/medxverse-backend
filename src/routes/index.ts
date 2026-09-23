@@ -42,6 +42,7 @@ import settingsRoutes from '../modules/settings/settings.routes.js';
 import healthPlansRoutes from '../modules/health-plans/health-plans.routes.js';
 import benefitsRoutes from '../modules/health-plans/benefits.routes.js';
 import eligibilityRoutes from '../modules/eligibility/eligibility.routes.js';
+import hmoBillingRoutes from '../modules/hmo-billing/hmo-billing.routes.js';
 
 const v1Router = Router();
 
@@ -89,5 +90,6 @@ v1Router.use('/settings', settingsRoutes);
 v1Router.use('/health-plans', healthPlansRoutes);
 v1Router.use('/benefits', benefitsRoutes);
 v1Router.use('/eligibility', eligibilityRoutes);
+v1Router.use('/hmo-billing', hmoBillingRoutes);
 
 export default v1Router;
