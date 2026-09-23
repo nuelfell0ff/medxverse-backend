@@ -63,3 +63,19 @@ The module can later be extended with:
 - prescription-frequency rules
 - automated case creation
 - scheduled rule execution
+
+
+## Authentication / tenant-scope fix
+
+All routes now use the shared MedXVerse `authenticate` middleware. The controller
+resolves the HMO tenant from the authenticated user context (`hmoId`,
+`organizationId`, `accountId`, `id`, `_id`, or `userId`) instead of trusting a
+client-supplied tenant ID.
+
+This fixes the previous `400 HMO context is required` responses from:
+- GET `/hmo-utilization/summary`
+- GET `/hmo-utilization/events`
+- GET `/hmo-utilization/alerts`
+
+The frontend should continue calling these endpoints normally with its Bearer
+access token.

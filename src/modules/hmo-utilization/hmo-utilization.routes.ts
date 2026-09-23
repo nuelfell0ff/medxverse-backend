@@ -1,8 +1,16 @@
 import { Router } from 'express';
 import { HMOUtilizationController } from './hmo-utilization.controller.js';
+import { authenticate } from '../../middlewares/auth.middleware.js';
 
 const router = Router();
 const controller = new HMOUtilizationController();
+
+/**
+ * Every utilization/fraud endpoint is tenant-scoped.
+ * The authentication middleware populates req.user, which the
+ * controller uses to resolve the authenticated HMO ID.
+ */
+router.use(authenticate);
 
 router.get('/summary', controller.summary.bind(controller));
 
