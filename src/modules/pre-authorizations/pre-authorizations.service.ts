@@ -26,8 +26,26 @@ export class PreAuthorizationsService {
 
   private generateRequestNumber(): string {
     const random = Math.floor(100000 + Math.random() * 900000).toString();
-
     return `PA-${Date.now().toString().slice(-6)}-${random}`;
+  }
+
+  private generateAuthorizationCode(): string {
+    const random = Math.floor(100000 + Math.random() * 900000).toString();
+    return `AUTH-${Date.now().toString().slice(-6)}-${random}`;
+  }
+
+  private canTransition(from: PreAuthStatus, to: PreAuthStatus): boolean {
+    if (from === to) return true;
+
+    const transitions: Record<PreAuthStatus, PreAuthStatus[]> = {
+      [PreAuthStatus.NEW_REQUEST]: [PreAuthStatus.PENDING, PreAuthStatus.APPROVED, PreAuthStatus.DECLINED, PreAuthStatus.CANCELLED],
+      [PreAuthStatus.PENDING]: [PreAuthStatus.PENDING, PreAuthStatus.APPROVED, PreAuthStatus.DECLINED, PreAuthStatus.CANCELLED],
+      [PreAuthStatus.APPROVED]: [],
+      [PreAuthStatus.DECLINED]: [],
+      [PreAuthStatus.CANCELLED]: [],
+    };
+
+    return transitions[from].includes(to);
   }
 
   public async createPreAuth(
@@ -93,6 +111,13 @@ export class PreAuthorizationsService {
       status: PreAuthStatus.NEW_REQUEST,
       totalRequestedAmount: totalRequested,
       totalApprovedAmount: 0,
+      history: [
+        {
+          status: PreAuthStatus.NEW_REQUEST,
+          reviewedAt: new Date(),
+          totalApprovedAmount: 0,
+        },
+      ],
     });
   }
 
@@ -252,6 +277,12 @@ export class PreAuthorizationsService {
       throw new Error('status is required');
     }
 
+    if (!this.canTransition(preAuth.status, input.status)) {
+      throw new Error(
+        `Cannot change pre-authorization from ${preAuth.status} to ${input.status}`
+      );
+    }
+
     if (
       input.status === PreAuthStatus.DECLINED &&
       !input.decisionReason?.trim()
@@ -339,29 +370,34 @@ export class PreAuthorizationsService {
       'reviewerId'
     );
 
-    preAuth.reviewedAt = new Date();
+    const reviewedAt = new Date();
+    preAuth.reviewedAt = reviewedAt;
 
-    if (
-      input.status === PreAuthStatus.APPROVED
-    ) {
-      const days = Math.min(
-        365,
-        Math.max(
-          1,
-          Number(input.expiresInDays) || 30
-        )
-      );
+    if (input.status === PreAuthStatus.APPROVED) {
+      const days = Math.min(365, Math.max(1, Number(input.expiresInDays) || 30));
 
       preAuth.expiresAt = new Date(
-        Date.now() +
-          days * 24 * 60 * 60 * 1000
+        Date.now() + days * 24 * 60 * 60 * 1000
       );
+
+      if (!preAuth.authorizationCode) {
+        preAuth.authorizationCode = this.generateAuthorizationCode();
+      }
     } else if (
       input.status === PreAuthStatus.DECLINED ||
       input.status === PreAuthStatus.CANCELLED
     ) {
       preAuth.expiresAt = undefined;
+      preAuth.authorizationCode = undefined;
     }
+
+    preAuth.history.push({
+      status: input.status,
+      reason: preAuth.decisionReason,
+      reviewedBy: preAuth.reviewedBy,
+      reviewedAt,
+      totalApprovedAmount: preAuth.totalApprovedAmount,
+    });
 
     return preAuth.save();
   }

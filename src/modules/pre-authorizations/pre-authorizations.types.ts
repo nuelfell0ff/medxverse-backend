@@ -21,9 +21,18 @@ export interface IProcedureItem {
   approvedAmount?: number;
 }
 
+export interface IPreAuthHistoryEntry {
+  status: PreAuthStatus;
+  reason?: string;
+  reviewedBy?: Types.ObjectId;
+  reviewedAt: Date;
+  totalApprovedAmount: number;
+}
+
 export interface IPreAuthorization {
   hmoId: Types.ObjectId;
   requestNumber: string;
+  authorizationCode?: string;
   memberId: Types.ObjectId;
   providerId: Types.ObjectId;
   diagnosisCode: string;
@@ -38,6 +47,7 @@ export interface IPreAuthorization {
   reviewedBy?: Types.ObjectId;
   reviewedAt?: Date;
   expiresAt?: Date;
+  history: IPreAuthHistoryEntry[];
 }
 
 export interface IPreAuthDocument extends IPreAuthorization, Document {
@@ -57,7 +67,11 @@ export interface CreatePreAuthInput {
 }
 
 export interface ReviewPreAuthInput {
-  status: PreAuthStatus.APPROVED | PreAuthStatus.DECLINED | PreAuthStatus.PENDING | PreAuthStatus.CANCELLED;
+  status:
+    | PreAuthStatus.APPROVED
+    | PreAuthStatus.DECLINED
+    | PreAuthStatus.PENDING
+    | PreAuthStatus.CANCELLED;
   procedures?: {
     code: string;
     approvedAmount: number;
