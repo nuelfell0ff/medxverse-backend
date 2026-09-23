@@ -1,0 +1,15 @@
+import { Router } from 'express';
+import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
+import { eligibilityController } from './eligibility.controller.js';
+
+const router = Router();
+router.use(authenticate);
+router.use(authorize('HMO', 'HMO_ADMIN', 'HMO_CLAIMS_OFFICER', 'HMO_MEDICAL_OFFICER', 'HMO_OFFICER'));
+
+router.get('/stats', eligibilityController.getStats.bind(eligibilityController));
+router.post('/verify', eligibilityController.verify.bind(eligibilityController));
+router.get('/member/:memberId', eligibilityController.getMemberChecks.bind(eligibilityController));
+router.get('/checks/:id', eligibilityController.getCheckById.bind(eligibilityController));
+router.get('/checks', eligibilityController.getChecks.bind(eligibilityController));
+
+export default router;
