@@ -1,106 +1,92 @@
-import { Request, Response, NextFunction } from 'express';
-import { providerService } from './provider.service.js';
-import { ProviderStatus, ProviderType } from './provider.types.js';
+import { Request, Response } from 'express';
+import { hmoProviderService } from './provider.service.js';
+import { AccreditationStatus, CreateProviderInput, ProviderStatus, ProviderType, UpdateProviderAccreditationInput, UpdateProviderStatusInput } from './provider.types.js';
 
-export interface AuthenticatedRequest extends Request {
-  user: {
-    _id: string;
-    hmoId: string;
-    [key: string]: unknown;
-  };
+interface AuthenticatedRequest extends Request {
+  user?: { hmoId?: string; accountId?: string; organizationId?: string; _id?: string; id?: string; account?: { hmoId?: string; accountId?: string; _id?: string; id?: string }; hmo?: { hmoId?: string; _id?: string; id?: string } };
+  account?: { accountId?: string; hmoId?: string; _id?: string; id?: string };
+  hmoId?: string;
 }
 
-export class ProviderController {
-  public async createProvider(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hmoId = authReq.user.hmoId;
+const hmoIdFromRequest = (req: Request): string => {
+  const request = req as AuthenticatedRequest;
+  const user = request.user;
+  const account = request.account;
+  const value = user?.hmoId ?? user?.hmo?.hmoId ?? user?.hmo?._id ?? user?.hmo?.id ?? user?.organizationId ?? user?.account?.hmoId ?? account?.hmoId ?? request.hmoId ?? user?.accountId ?? user?.account?.accountId ?? account?.accountId ?? account?._id ?? account?.id ?? user?.id ?? user?._id;
+  if (!value) throw Object.assign(new Error('HMO context is required'), { statusCode: 403 });
+  return String(value);
+};
 
-      const provider = await providerService.createProvider(hmoId, req.body);
-      res.status(201).json({ success: true, data: provider });
-    } catch (error) {
-      next(error);
-    }
+const body = <T>(value: unknown): T => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {} as T;
+  const record = value as Record<string, unknown>;
+  return record.data && typeof record.data === 'object' && !Array.isArray(record.data) ? record.data as T : record as T;
+};
+
+const queryEnum = <T extends string>(value: unknown, values: readonly T[]): T | undefined => {
+  if (typeof value !== 'string' || !value) return undefined;
+  if (!values.includes(value as T)) throw Object.assign(new Error(`Invalid query value: ${value}`), { statusCode: 400 });
+  return value as T;
+};
+
+export class HMOProviderController {
+  public async create(req: Request, res: Response): Promise<void> {
+    const provider = await hmoProviderService.createProvider(hmoIdFromRequest(req), body<CreateProviderInput>(req.body));
+    res.status(201).json({ success: true, data: provider, message: 'Provider created successfully' });
   }
 
-  public async getProviders(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hmoId = authReq.user.hmoId;
-
-      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
-      const status = req.query.status as ProviderStatus | undefined;
-      const type = req.query.type as ProviderType | undefined;
-      const state = req.query.state as string | undefined;
-      const search = req.query.search as string | undefined;
-
-      const result = await providerService.getProviders(hmoId, {
-        page,
-        limit,
-        status,
-        type,
-        state,
-        search,
-      });
-
-      res.status(200).json({ success: true, data: result });
-    } catch (error) {
-      next(error);
-    }
+  public async list(req: Request, res: Response): Promise<void> {
+    const result = await hmoProviderService.getProviders(hmoIdFromRequest(req), {
+      page: req.query.page as string,
+      limit: req.query.limit as string,
+      search: req.query.search as string,
+      network: req.query.network as string,
+      type: queryEnum(req.query.type, Object.values(ProviderType)),
+      status: queryEnum(req.query.status, Object.values(ProviderStatus)),
+      accreditationStatus: queryEnum(req.query.accreditationStatus, Object.values(AccreditationStatus)),
+    });
+    res.json({ success: true, data: result });
   }
 
-  public async getProviderById(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hmoId = authReq.user.hmoId;
-      const id = req.params.id as string;
-
-      const provider = await providerService.getProviderById(id, hmoId);
-      if (!provider) {
-        res.status(404).json({ success: false, message: 'Provider not found' });
-        return;
-      }
-
-      res.status(200).json({ success: true, data: provider });
-    } catch (error) {
-      next(error);
-    }
+  public async stats(req: Request, res: Response): Promise<void> {
+    res.json({ success: true, data: await hmoProviderService.getStats(hmoIdFromRequest(req)) });
   }
 
-  public async updateProvider(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hmoId = authReq.user.hmoId;
-      const id = req.params.id as string;
+  public async getById(req: Request, res: Response): Promise<void> {
+    const provider = await hmoProviderService.getProviderById(req.params.id, hmoIdFromRequest(req));
+    if (!provider) { res.status(404).json({ success: false, message: 'Provider not found' }); return; }
+    res.json({ success: true, data: provider });
+  }
 
-      const updated = await providerService.updateProvider(id, hmoId, req.body);
-      if (!updated) {
-        res.status(404).json({ success: false, message: 'Provider not found' });
-        return;
-      }
+  public async update(req: Request, res: Response): Promise<void> {
+    const provider = await hmoProviderService.updateProvider(req.params.id, hmoIdFromRequest(req), body(req.body));
+    if (!provider) { res.status(404).json({ success: false, message: 'Provider not found' }); return; }
+    res.json({ success: true, data: provider, message: 'Provider updated successfully' });
+  }
 
-      res.status(200).json({ success: true, data: updated });
-    } catch (error) {
-      next(error);
-    }
+  public async setStatus(req: Request, res: Response): Promise<void> {
+    const input = body<UpdateProviderStatusInput>(req.body);
+    const status = queryEnum(input.status, Object.values(ProviderStatus));
+    if (!status) throw Object.assign(new Error('Provider status is required'), { statusCode: 400 });
+    const provider = await hmoProviderService.updateProviderStatus(req.params.id, hmoIdFromRequest(req), { status, reason: input.reason });
+    if (!provider) { res.status(404).json({ success: false, message: 'Provider not found' }); return; }
+    res.json({ success: true, data: provider, message: 'Provider status updated successfully' });
+  }
+
+  public async accreditation(req: Request, res: Response): Promise<void> {
+    const input = body<UpdateProviderAccreditationInput>(req.body);
+    const status = queryEnum(input.status, Object.values(AccreditationStatus));
+    if (!status) throw Object.assign(new Error('Accreditation status is required'), { statusCode: 400 });
+    const provider = await hmoProviderService.updateAccreditation(req.params.id, hmoIdFromRequest(req), { ...input, status });
+    if (!provider) { res.status(404).json({ success: false, message: 'Provider not found' }); return; }
+    res.json({ success: true, data: provider, message: 'Provider accreditation updated successfully' });
+  }
+
+  public async performance(req: Request, res: Response): Promise<void> {
+    const result = await hmoProviderService.getPerformance(req.params.id, hmoIdFromRequest(req));
+    if (!result) { res.status(404).json({ success: false, message: 'Provider not found' }); return; }
+    res.json({ success: true, data: result });
   }
 }
 
-export const providerController = new ProviderController();
+export const hmoProviderController = new HMOProviderController();

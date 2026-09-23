@@ -1,15 +1,19 @@
-import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
 import { Router } from 'express';
-import { providerController } from './provider.controller.js';
+import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
+import { hmoProviderController } from './provider.controller.js';
 
 const router = Router();
 
 router.use(authenticate);
 router.use(authorize('HMO', 'HMO_ADMIN', 'HMO_CLAIMS_OFFICER', 'HMO_MEDICAL_OFFICER', 'HMO_OFFICER'));
 
-router.post('/', providerController.createProvider);
-router.get('/', providerController.getProviders);
-router.get('/:id', providerController.getProviderById);
-router.patch('/:id', providerController.updateProvider);
+router.get('/stats', (req, res, next) => hmoProviderController.stats(req, res).catch(next));
+router.post('/', (req, res, next) => hmoProviderController.create(req, res).catch(next));
+router.get('/', (req, res, next) => hmoProviderController.list(req, res).catch(next));
+router.get('/:id/performance', (req, res, next) => hmoProviderController.performance(req, res).catch(next));
+router.patch('/:id/status', (req, res, next) => hmoProviderController.setStatus(req, res).catch(next));
+router.patch('/:id/accreditation', (req, res, next) => hmoProviderController.accreditation(req, res).catch(next));
+router.get('/:id', (req, res, next) => hmoProviderController.getById(req, res).catch(next));
+router.patch('/:id', (req, res, next) => hmoProviderController.update(req, res).catch(next));
 
 export default router;
