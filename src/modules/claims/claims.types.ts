@@ -16,6 +16,16 @@ export type ClaimItemCategory =
   | 'ACCOMMODATION'
   | 'OTHER';
 
+export type ClaimEventType =
+  | 'SUBMITTED'
+  | 'UNDER_REVIEW'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'PAID'
+  | 'CANCELLED'
+  | 'APPEAL_SUBMITTED'
+  | 'ADJUSTED';
+
 export interface IClaimItem {
   code?: string;
   description: string;
@@ -26,11 +36,39 @@ export interface IClaimItem {
   approvedAmount?: number;
 }
 
+export interface IClaimEvent {
+  type: ClaimEventType;
+  fromStatus?: ClaimStatus;
+  toStatus?: ClaimStatus;
+  actorId?: Types.ObjectId;
+  reason?: string;
+  notes?: string;
+  createdAt: Date;
+}
+
+export interface IClaimAppeal {
+  reason: string;
+  submittedBy: Types.ObjectId;
+  submittedAt: Date;
+  status: 'PENDING' | 'UPHELD' | 'OVERTURNED';
+  resolution?: string;
+  resolvedBy?: Types.ObjectId;
+  resolvedAt?: Date;
+}
+
+export interface IClaimAdjustment {
+  amount: number;
+  reason: string;
+  adjustedBy: Types.ObjectId;
+  adjustedAt: Date;
+}
+
 export interface IClaim {
   hmoId: Types.ObjectId;
   claimNumber: string;
   memberId: Types.ObjectId;
   providerId: Types.ObjectId;
+  preAuthorizationId?: string;
   diagnosis: string;
   icdCode?: string;
   treatmentDate: Date;
@@ -38,11 +76,18 @@ export interface IClaim {
   items: IClaimItem[];
   totalClaimedAmount: number;
   totalApprovedAmount?: number;
+  adjustedAmount?: number;
+  payableAmount?: number;
   status: ClaimStatus;
   rejectionReason?: string;
   adjudicatedBy?: Types.ObjectId;
   adjudicatedAt?: Date;
   notes?: string;
+  duplicateRisk?: boolean;
+  duplicateOf?: Types.ObjectId;
+  events: IClaimEvent[];
+  appeals: IClaimAppeal[];
+  adjustments: IClaimAdjustment[];
 }
 
 export interface IClaimDocument extends IClaim, Document {
@@ -54,6 +99,7 @@ export interface CreateClaimInput {
   claimNumber: string;
   memberId: string;
   providerId: string;
+  preAuthorizationId?: string;
   diagnosis: string;
   icdCode?: string;
   treatmentDate: Date | string;
@@ -75,6 +121,20 @@ export interface UpdateClaimStatusInput {
     approvedAmount: number;
   }>;
   notes?: string;
+}
+
+export interface SubmitAppealInput {
+  reason: string;
+}
+
+export interface ResolveAppealInput {
+  status: 'UPHELD' | 'OVERTURNED';
+  resolution: string;
+}
+
+export interface CreateAdjustmentInput {
+  amount: number;
+  reason: string;
 }
 
 export interface ClaimQueryFilters {
