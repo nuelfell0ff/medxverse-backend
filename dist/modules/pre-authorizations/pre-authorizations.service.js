@@ -15,6 +15,22 @@ export class PreAuthorizationsService {
         const random = Math.floor(100000 + Math.random() * 900000).toString();
         return `PA-${Date.now().toString().slice(-6)}-${random}`;
     }
+    generateAuthorizationCode() {
+        const random = Math.floor(100000 + Math.random() * 900000).toString();
+        return `AUTH-${Date.now().toString().slice(-6)}-${random}`;
+    }
+    canTransition(from, to) {
+        if (from === to)
+            return true;
+        const transitions = {
+            [PreAuthStatus.NEW_REQUEST]: [PreAuthStatus.PENDING, PreAuthStatus.APPROVED, PreAuthStatus.DECLINED, PreAuthStatus.CANCELLED],
+            [PreAuthStatus.PENDING]: [PreAuthStatus.PENDING, PreAuthStatus.APPROVED, PreAuthStatus.DECLINED, PreAuthStatus.CANCELLED],
+            [PreAuthStatus.APPROVED]: [],
+            [PreAuthStatus.DECLINED]: [],
+            [PreAuthStatus.CANCELLED]: [],
+        };
+        return transitions[from].includes(to);
+    }
     async createPreAuth(input) {
         if (!input.memberId) {
             throw new Error('memberId is required');
@@ -61,6 +77,13 @@ export class PreAuthorizationsService {
             status: PreAuthStatus.NEW_REQUEST,
             totalRequestedAmount: totalRequested,
             totalApprovedAmount: 0,
+            history: [
+                {
+                    status: PreAuthStatus.NEW_REQUEST,
+                    reviewedAt: new Date(),
+                    totalApprovedAmount: 0,
+                },
+            ],
         });
     }
     async getPreAuths(hmoId, query) {
@@ -146,6 +169,9 @@ export class PreAuthorizationsService {
         if (!input.status) {
             throw new Error('status is required');
         }
+        if (!this.canTransition(preAuth.status, input.status)) {
+            throw new Error(`Cannot change pre-authorization from ${preAuth.status} to ${input.status}`);
+        }
         if (input.status === PreAuthStatus.DECLINED &&
             !input.decisionReason?.trim()) {
             throw new Error('decisionReason is required when declining a pre-authorization');
@@ -199,16 +225,27 @@ export class PreAuthorizationsService {
         preAuth.decisionReason =
             input.decisionReason?.trim() || undefined;
         preAuth.reviewedBy = this.objectId(reviewerId, 'reviewerId');
-        preAuth.reviewedAt = new Date();
+        const reviewedAt = new Date();
+        preAuth.reviewedAt = reviewedAt;
         if (input.status === PreAuthStatus.APPROVED) {
             const days = Math.min(365, Math.max(1, Number(input.expiresInDays) || 30));
-            preAuth.expiresAt = new Date(Date.now() +
-                days * 24 * 60 * 60 * 1000);
+            preAuth.expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+            if (!preAuth.authorizationCode) {
+                preAuth.authorizationCode = this.generateAuthorizationCode();
+            }
         }
         else if (input.status === PreAuthStatus.DECLINED ||
             input.status === PreAuthStatus.CANCELLED) {
             preAuth.expiresAt = undefined;
+            preAuth.authorizationCode = undefined;
         }
+        preAuth.history.push({
+            status: input.status,
+            reason: preAuth.decisionReason,
+            reviewedBy: preAuth.reviewedBy,
+            reviewedAt,
+            totalApprovedAmount: preAuth.totalApprovedAmount,
+        });
         return preAuth.save();
     }
     async getPreAuthStats(hmoId) {

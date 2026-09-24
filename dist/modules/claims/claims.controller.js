@@ -1,9 +1,8 @@
 import { claimsService } from './claims.service.js';
 const getAuthUser = (req) => {
     const user = req.user;
-    if (!user?.hmoId) {
+    if (!user?.hmoId)
         throw new Error('Authenticated HMO context is missing');
-    }
     return user;
 };
 export class ClaimsController {
@@ -61,6 +60,48 @@ export class ClaimsController {
                 return;
             }
             res.status(200).json({ success: true, data: updated });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async submitAppeal(req, res, next) {
+        try {
+            const user = getAuthUser(req);
+            const updated = await claimsService.submitAppeal(req.params.id, user.hmoId, user._id, req.body);
+            if (!updated) {
+                res.status(404).json({ success: false, message: 'Claim not found' });
+                return;
+            }
+            res.status(201).json({ success: true, data: updated });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async resolveAppeal(req, res, next) {
+        try {
+            const user = getAuthUser(req);
+            const updated = await claimsService.resolveAppeal(req.params.id, user.hmoId, user._id, req.body);
+            if (!updated) {
+                res.status(404).json({ success: false, message: 'Claim not found' });
+                return;
+            }
+            res.status(200).json({ success: true, data: updated });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async createAdjustment(req, res, next) {
+        try {
+            const user = getAuthUser(req);
+            const updated = await claimsService.createAdjustment(req.params.id, user.hmoId, user._id, req.body);
+            if (!updated) {
+                res.status(404).json({ success: false, message: 'Claim not found' });
+                return;
+            }
+            res.status(201).json({ success: true, data: updated });
         }
         catch (error) {
             next(error);

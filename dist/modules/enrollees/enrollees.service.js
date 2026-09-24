@@ -1,5 +1,7 @@
 import { Types } from 'mongoose';
 import { EnrolleeModel } from './enrollees.model.js';
+import { EnrolleeCardModel } from './enrollees.card.model.js';
+import { EnrolleeLifecycleModel } from './enrollees.lifecycle.model.js';
 const toObjectId = (value, field) => {
     if (!value || !Types.ObjectId.isValid(value)) {
         throw new Error(`Invalid ${field}`);
@@ -15,8 +17,63 @@ const toDate = (value, field) => {
 };
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const normalizeEmail = (value) => value.trim().toLowerCase();
+const STATUS_TRANSITIONS = {
+    PENDING: ['ACTIVE', 'SUSPENDED', 'TERMINATED'],
+    ACTIVE: ['SUSPENDED', 'TERMINATED'],
+    SUSPENDED: ['ACTIVE', 'TERMINATED'],
+    TERMINATED: [],
+};
+const actorId = (value) => value && Types.ObjectId.isValid(value) ? new Types.ObjectId(value) : undefined;
+const clean = (value) => {
+    const v = value?.trim();
+    return v || undefined;
+};
 export class EnrolleesService {
-    async createEnrollee(hmoId, input) {
+    async recordLifecycle(hmoId, enrolleeId, type, options = {}) {
+        await EnrolleeLifecycleModel.create({
+            hmoId,
+            enrolleeId,
+            type,
+            fromStatus: options.fromStatus,
+            toStatus: options.toStatus,
+            reason: clean(options.reason),
+            actorId: actorId(options.actorId),
+            metadata: options.metadata,
+        });
+    }
+    cardNumber(policyNumber) {
+        return `MXV-${policyNumber.trim().toUpperCase()}`;
+    }
+    async ensureCard(hmoId, enrollee, actor) {
+        let card = await EnrolleeCardModel.findOne({ hmoId, enrolleeId: enrollee._id, status: 'ACTIVE' }).exec();
+        if (!card) {
+            card = await EnrolleeCardModel.create({
+                hmoId,
+                enrolleeId: enrollee._id,
+                cardNumber: this.cardNumber(enrollee.policyNumber),
+                status: 'ACTIVE',
+                issuedAt: new Date(),
+                expiresAt: enrollee.endDate,
+            });
+            await this.recordLifecycle(hmoId, enrollee._id, 'CARD_ISSUED', {
+                actorId: actor,
+                metadata: { cardNumber: card.cardNumber },
+            });
+        }
+        else if (card.expiresAt?.getTime() !== enrollee.endDate?.getTime()) {
+            card.expiresAt = enrollee.endDate;
+            await card.save();
+        }
+        return {
+            cardNumber: card.cardNumber,
+            status: card.status,
+            enrolleeId: String(enrollee._id),
+            policyNumber: enrollee.policyNumber,
+            issuedAt: card.issuedAt,
+            expiresAt: card.expiresAt,
+        };
+    }
+    async createEnrollee(hmoId, input, actor) {
         const hmoObjectId = toObjectId(hmoId, 'HMO ID');
         if (!input.policyNumber?.trim())
             throw new Error('Policy number is required');
@@ -56,7 +113,7 @@ export class EnrolleesService {
             }
         }
         try {
-            return await EnrolleeModel.create({
+            const enrollee = await EnrolleeModel.create({
                 hmoId: hmoObjectId,
                 policyNumber: input.policyNumber.trim().toUpperCase(),
                 firstName: input.firstName.trim(),
@@ -81,6 +138,13 @@ export class EnrolleesService {
                 endDate,
                 photoUrl: input.photoUrl?.trim() || undefined,
             });
+            await this.recordLifecycle(hmoObjectId, enrollee._id, 'ENROLLED', {
+                toStatus: enrollee.status,
+                actorId: actor,
+                metadata: { benefitPlanId: String(enrollee.benefitPlanId), relationship: enrollee.relationship },
+            });
+            await this.ensureCard(hmoObjectId, enrollee, actor);
+            return enrollee;
         }
         catch (error) {
             const mongoError = error;
@@ -143,7 +207,7 @@ export class EnrolleesService {
             .populate('primaryMemberId', 'firstName lastName policyNumber email phone status')
             .exec();
     }
-    async updateEnrollee(id, hmoId, input) {
+    async updateEnrollee(id, hmoId, input, actor) {
         const updateData = {};
         if (input.firstName !== undefined)
             updateData.firstName = input.firstName.trim();
@@ -225,15 +289,21 @@ export class EnrolleesService {
         if (nextRelationship !== 'PRIMARY' && !nextPrimaryMemberId) {
             throw new Error('A primary member is required for a dependent enrollee');
         }
+        const hmoObjectId = toObjectId(hmoId, 'HMO ID');
         try {
-            return await EnrolleeModel.findOneAndUpdate({
+            const updated = await EnrolleeModel.findOneAndUpdate({
                 _id: toObjectId(id, 'enrollee ID'),
-                hmoId: toObjectId(hmoId, 'HMO ID'),
+                hmoId: hmoObjectId,
             }, { $set: updateData }, { new: true, runValidators: true })
                 .populate('benefitPlanId')
                 .populate('primaryProviderId')
                 .populate('primaryMemberId', 'firstName lastName policyNumber email phone status')
                 .exec();
+            if (updated) {
+                await this.recordLifecycle(hmoObjectId, updated._id, 'UPDATED', { actorId: actor });
+                await this.ensureCard(hmoObjectId, updated, actor);
+            }
+            return updated;
         }
         catch (error) {
             const mongoError = error;
@@ -243,14 +313,59 @@ export class EnrolleesService {
             throw error;
         }
     }
-    async updateEnrolleeStatus(id, hmoId, status) {
-        if (!['ACTIVE', 'SUSPENDED', 'TERMINATED', 'PENDING'].includes(status)) {
+    async updateEnrolleeStatus(id, hmoId, input, actor) {
+        if (!Object.keys(STATUS_TRANSITIONS).includes(input.status)) {
             throw new Error('Invalid enrollee status');
         }
-        return EnrolleeModel.findOneAndUpdate({
-            _id: toObjectId(id, 'enrollee ID'),
-            hmoId: toObjectId(hmoId, 'HMO ID'),
-        }, { $set: { status } }, { new: true, runValidators: true }).exec();
+        const hmoObjectId = toObjectId(hmoId, 'HMO ID');
+        const enrolleeId = toObjectId(id, 'enrollee ID');
+        const current = await EnrolleeModel.findOne({ _id: enrolleeId, hmoId: hmoObjectId }).exec();
+        if (!current)
+            return null;
+        if (current.status === input.status)
+            return current;
+        if (!STATUS_TRANSITIONS[current.status].includes(input.status)) {
+            throw new Error(`Invalid enrollee status transition: ${current.status} -> ${input.status}`);
+        }
+        if ((input.status === 'SUSPENDED' || input.status === 'TERMINATED') && !input.reason?.trim()) {
+            throw new Error(`A ${input.status.toLowerCase()} reason is required`);
+        }
+        const updated = await EnrolleeModel.findOneAndUpdate({ _id: enrolleeId, hmoId: hmoObjectId }, { $set: { status: input.status } }, { new: true, runValidators: true }).exec();
+        if (!updated)
+            return null;
+        const eventType = input.status === 'TERMINATED' ? 'TERMINATED' : input.status === 'SUSPENDED' ? 'SUSPENDED' : input.status === 'ACTIVE' ? (current.status === 'SUSPENDED' ? 'REACTIVATED' : 'ACTIVATED') : 'UPDATED';
+        await this.recordLifecycle(hmoObjectId, updated._id, eventType, {
+            fromStatus: current.status, toStatus: updated.status, reason: input.reason, actorId: actor,
+        });
+        if (updated.status === 'ACTIVE') {
+            await this.ensureCard(hmoObjectId, updated, actor);
+        }
+        else {
+            await EnrolleeCardModel.updateMany({ hmoId: hmoObjectId, enrolleeId: updated._id, status: 'ACTIVE' }, { $set: { status: 'REVOKED' } }).exec();
+        }
+        return updated;
+    }
+    async renewEnrollee(id, hmoId, input, actor) {
+        const hmoObjectId = toObjectId(hmoId, 'HMO ID');
+        const enrolleeId = toObjectId(id, 'enrollee ID');
+        const current = await EnrolleeModel.findOne({ _id: enrolleeId, hmoId: hmoObjectId }).exec();
+        if (!current)
+            return null;
+        if (current.status === 'TERMINATED')
+            throw new Error('A terminated enrollee cannot be renewed');
+        const newEndDate = toDate(input.endDate, 'renewal end date');
+        const baseline = current.endDate && current.endDate > new Date() ? current.endDate : new Date();
+        if (newEndDate <= baseline)
+            throw new Error('Renewal end date must extend the current coverage');
+        const updated = await EnrolleeModel.findOneAndUpdate({ _id: enrolleeId, hmoId: hmoObjectId }, { $set: { endDate: newEndDate, status: 'ACTIVE' } }, { new: true, runValidators: true }).exec();
+        if (!updated)
+            return null;
+        await this.recordLifecycle(hmoObjectId, updated._id, 'RENEWED', {
+            fromStatus: current.status, toStatus: updated.status, reason: input.reason, actorId: actor,
+            metadata: { previousEndDate: current.endDate, newEndDate },
+        });
+        await this.ensureCard(hmoObjectId, updated, actor);
+        return updated;
     }
     async getDependents(primaryMemberId, hmoId) {
         return EnrolleeModel.find({
@@ -314,6 +429,31 @@ export class EnrolleesService {
             coverageEndDate: enrollee.endDate,
             reason,
         };
+    }
+    async getCard(id, hmoId, actor) {
+        const hmoObjectId = toObjectId(hmoId, 'HMO ID');
+        const enrollee = await EnrolleeModel.findOne({ _id: toObjectId(id, 'enrollee ID'), hmoId: hmoObjectId }).exec();
+        if (!enrollee)
+            return null;
+        if (enrollee.status !== 'ACTIVE')
+            throw new Error('A digital HMO card is only available for an active enrollee');
+        return this.ensureCard(hmoObjectId, enrollee, actor);
+    }
+    async getLifecycle(id, hmoId) {
+        const events = await EnrolleeLifecycleModel.find({
+            enrolleeId: toObjectId(id, 'enrollee ID'),
+            hmoId: toObjectId(hmoId, 'HMO ID'),
+        }).sort({ createdAt: -1, _id: -1 }).limit(200).lean().exec();
+        return events.map((event) => ({
+            _id: String(event._id),
+            type: event.type,
+            fromStatus: event.fromStatus,
+            toStatus: event.toStatus,
+            reason: event.reason,
+            actorId: event.actorId ? String(event.actorId) : undefined,
+            metadata: event.metadata,
+            createdAt: event.createdAt,
+        }));
     }
 }
 export const enrolleesService = new EnrolleesService();

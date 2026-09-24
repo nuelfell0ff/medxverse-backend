@@ -15,39 +15,19 @@ const normalizeMoney = (value) => {
 };
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const allowedTransitions = {
-    SUBMITTED: [
-        'UNDER_REVIEW',
-        'APPROVED',
-        'REJECTED',
-        'CANCELLED',
-    ],
-    UNDER_REVIEW: [
-        'APPROVED',
-        'REJECTED',
-        'CANCELLED',
-    ],
-    APPROVED: [
-        'PAID',
-        'CANCELLED',
-    ],
+    SUBMITTED: ['UNDER_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED'],
+    UNDER_REVIEW: ['APPROVED', 'REJECTED', 'CANCELLED'],
+    APPROVED: ['PAID', 'CANCELLED'],
     REJECTED: [],
     PAID: [],
     CANCELLED: [],
 };
-/**
- * Runtime-safe ClaimStatus guard.
- *
- * This prevents TypeScript from treating values coming from
- * Mongoose / request payloads as arbitrary `any` values.
- */
-const isClaimStatus = (value) => {
-    return (value === 'SUBMITTED' ||
-        value === 'UNDER_REVIEW' ||
-        value === 'APPROVED' ||
-        value === 'REJECTED' ||
-        value === 'PAID' ||
-        value === 'CANCELLED');
-};
+const isClaimStatus = (value) => value === 'SUBMITTED' ||
+    value === 'UNDER_REVIEW' ||
+    value === 'APPROVED' ||
+    value === 'REJECTED' ||
+    value === 'PAID' ||
+    value === 'CANCELLED';
 export class ClaimsService {
     async createClaim(hmoId, input) {
         const hmoObjectId = toObjectId(hmoId, 'HMO ID');
@@ -63,16 +43,14 @@ export class ClaimsService {
         if (Number.isNaN(treatmentDate.getTime())) {
             throw new Error('Invalid treatment date');
         }
-        if (!Array.isArray(input.items) ||
-            input.items.length === 0) {
+        if (!Array.isArray(input.items) || input.items.length === 0) {
             throw new Error('Claim must contain at least one item');
         }
         const formattedItems = input.items.map((item, index) => {
             if (!item.description?.trim()) {
                 throw new Error(`Claim item ${index + 1}: description is required`);
             }
-            if (!Number.isInteger(item.quantity) ||
-                item.quantity < 1) {
+            if (!Number.isInteger(item.quantity) || item.quantity < 1) {
                 throw new Error(`Claim item ${index + 1}: quantity must be a positive integer`);
             }
             const unitPrice = normalizeMoney(Number(item.unitPrice));
@@ -86,27 +64,55 @@ export class ClaimsService {
             };
         });
         const totalClaimedAmount = normalizeMoney(formattedItems.reduce((sum, item) => sum + item.claimedAmount, 0));
+        // Duplicate detection is non-blocking:
+        // the claim is accepted but flagged for adjudication.
+        const duplicateCandidate = await ClaimModel.findOne({
+            hmoId: hmoObjectId,
+            memberId: memberObjectId,
+            providerId: providerObjectId,
+            treatmentDate: {
+                $gte: new Date(treatmentDate.getFullYear(), treatmentDate.getMonth(), treatmentDate.getDate()),
+                $lt: new Date(treatmentDate.getFullYear(), treatmentDate.getMonth(), treatmentDate.getDate() + 1),
+            },
+            totalClaimedAmount,
+            status: { $ne: 'CANCELLED' },
+        })
+            .sort({ createdAt: -1 })
+            .exec();
         try {
-            return await ClaimModel.create({
+            const claim = await ClaimModel.create({
                 hmoId: hmoObjectId,
-                claimNumber: input.claimNumber
-                    .trim()
-                    .toUpperCase(),
+                claimNumber: input.claimNumber.trim().toUpperCase(),
                 memberId: memberObjectId,
                 providerId: providerObjectId,
+                preAuthorizationId: input.preAuthorizationId?.trim() || undefined,
                 diagnosis: input.diagnosis.trim(),
-                icdCode: input.icdCode?.trim().toUpperCase() ||
-                    undefined,
+                icdCode: input.icdCode?.trim().toUpperCase() || undefined,
                 treatmentDate,
                 submissionDate: new Date(),
                 items: formattedItems,
                 totalClaimedAmount,
+                totalApprovedAmount: undefined,
+                payableAmount: undefined,
                 status: 'SUBMITTED',
+                duplicateRisk: Boolean(duplicateCandidate),
+                duplicateOf: duplicateCandidate?._id,
                 notes: input.notes?.trim() || undefined,
+                events: [
+                    {
+                        type: 'SUBMITTED',
+                        toStatus: 'SUBMITTED',
+                        createdAt: new Date(),
+                    },
+                ],
             });
+            return claim;
         }
         catch (error) {
-            if (error?.code === 11000) {
+            if (typeof error === 'object' &&
+                error !== null &&
+                'code' in error &&
+                error.code === 11000) {
                 throw new Error('A claim with this claim number already exists for this HMO');
             }
             throw error;
@@ -129,8 +135,7 @@ export class ClaimsService {
         if (filters.providerId) {
             query.providerId = toObjectId(filters.providerId, 'provider ID');
         }
-        if (filters.startDate ||
-            filters.endDate) {
+        if (filters.startDate || filters.endDate) {
             const treatmentDate = {};
             if (filters.startDate) {
                 const date = new Date(filters.startDate);
@@ -144,28 +149,20 @@ export class ClaimsService {
                 if (Number.isNaN(date.getTime())) {
                     throw new Error('Invalid end date');
                 }
-                // Make date-only end dates inclusive
-                // through the end of that day.
                 if (/^\d{4}-\d{2}-\d{2}$/.test(String(filters.endDate))) {
                     date.setHours(23, 59, 59, 999);
                 }
                 treatmentDate.$lte = date;
             }
-            query.treatmentDate =
-                treatmentDate;
+            query.treatmentDate = treatmentDate;
         }
         if (filters.search?.trim()) {
             const searchRegex = new RegExp(escapeRegex(filters.search.trim()), 'i');
             query.$or = [
-                {
-                    claimNumber: searchRegex,
-                },
-                {
-                    diagnosis: searchRegex,
-                },
-                {
-                    icdCode: searchRegex,
-                },
+                { claimNumber: searchRegex },
+                { diagnosis: searchRegex },
+                { icdCode: searchRegex },
+                { preAuthorizationId: searchRegex },
             ];
         }
         const [claims, total] = await Promise.all([
@@ -173,6 +170,7 @@ export class ClaimsService {
                 .populate('memberId', 'firstName lastName policyNumber email phone')
                 .populate('providerId', 'name code state')
                 .populate('adjudicatedBy', 'firstName lastName email')
+                .populate('duplicateOf', 'claimNumber status')
                 .sort({
                 createdAt: -1,
                 _id: -1,
@@ -198,6 +196,11 @@ export class ClaimsService {
             .populate('memberId')
             .populate('providerId')
             .populate('adjudicatedBy', 'firstName lastName email')
+            .populate('duplicateOf', 'claimNumber status')
+            .populate('events.actorId', 'firstName lastName email')
+            .populate('appeals.submittedBy', 'firstName lastName email')
+            .populate('appeals.resolvedBy', 'firstName lastName email')
+            .populate('adjustments.adjustedBy', 'firstName lastName email')
             .exec();
     }
     async updateClaimStatus(id, hmoId, userId, input) {
@@ -208,28 +211,17 @@ export class ClaimsService {
         if (!claim) {
             return null;
         }
-        /**
-         * Explicitly narrow the current status.
-         *
-         * This fixes TS7053 when indexing
-         * allowedTransitions.
-         */
         const currentStatus = isClaimStatus(claim.status)
             ? claim.status
             : (() => {
                 throw new Error(`Invalid current claim status: ${String(claim.status)}`);
             })();
-        /**
-         * Explicitly validate the incoming status
-         * before using it in transition logic.
-         */
         const nextStatus = isClaimStatus(input.status)
             ? input.status
             : (() => {
                 throw new Error(`Invalid claim status: ${String(input.status)}`);
             })();
-        const transitions = allowedTransitions[currentStatus];
-        if (!transitions.includes(nextStatus)) {
+        if (!allowedTransitions[currentStatus].includes(nextStatus)) {
             throw new Error(`Invalid claim status transition: ${currentStatus} -> ${nextStatus}`);
         }
         const adjudicatorId = toObjectId(userId, 'user ID');
@@ -246,8 +238,7 @@ export class ClaimsService {
             for (const approved of input.approvedItems) {
                 if (!Number.isInteger(approved.itemIndex) ||
                     approved.itemIndex < 0 ||
-                    approved.itemIndex >=
-                        claim.items.length) {
+                    approved.itemIndex >= claim.items.length) {
                     throw new Error(`Invalid approved item index: ${approved.itemIndex}`);
                 }
                 if (seen.has(approved.itemIndex)) {
@@ -259,8 +250,7 @@ export class ClaimsService {
                 if (amount > claimed) {
                     throw new Error(`Approved amount for item ${approved.itemIndex + 1} cannot exceed claimed amount`);
                 }
-                claim.items[approved.itemIndex].approvedAmount =
-                    amount;
+                claim.items[approved.itemIndex].approvedAmount = amount;
                 totalApproved += amount;
             }
             claim.totalApprovedAmount =
@@ -276,24 +266,158 @@ export class ClaimsService {
         }
         if (nextStatus === 'REJECTED') {
             claim.totalApprovedAmount = 0;
+            claim.payableAmount = 0;
             claim.items.forEach((item) => {
                 item.approvedAmount = 0;
             });
         }
+        if (nextStatus === 'APPROVED') {
+            claim.payableAmount = normalizeMoney(Math.max(0, Number(claim.totalApprovedAmount || 0) -
+                Number(claim.adjustedAmount || 0)));
+        }
+        if (nextStatus === 'PAID' &&
+            claim.status !== 'APPROVED') {
+            throw new Error('Only an approved claim can be marked as paid');
+        }
+        const now = new Date();
         claim.status = nextStatus;
-        claim.adjudicatedBy =
-            adjudicatorId;
-        claim.adjudicatedAt =
-            new Date();
+        claim.adjudicatedBy = adjudicatorId;
+        claim.adjudicatedAt = now;
         if (input.rejectionReason?.trim()) {
             claim.rejectionReason =
                 input.rejectionReason.trim();
         }
         if (input.notes !== undefined) {
             claim.notes =
-                input.notes?.trim() ||
-                    undefined;
+                input.notes?.trim() || undefined;
         }
+        claim.events.push({
+            type: nextStatus,
+            fromStatus: currentStatus,
+            toStatus: nextStatus,
+            actorId: adjudicatorId,
+            reason: input.rejectionReason?.trim() ||
+                undefined,
+            notes: input.notes?.trim() ||
+                undefined,
+            createdAt: now,
+        });
+        return claim.save();
+    }
+    async submitAppeal(id, hmoId, userId, input) {
+        const claim = await ClaimModel.findOne({
+            _id: toObjectId(id, 'claim ID'),
+            hmoId: toObjectId(hmoId, 'HMO ID'),
+        });
+        if (!claim) {
+            return null;
+        }
+        if (claim.status !== 'REJECTED') {
+            throw new Error('Only rejected claims can be appealed');
+        }
+        if (!input.reason?.trim()) {
+            throw new Error('Appeal reason is required');
+        }
+        if (claim.appeals.some((appeal) => appeal.status === 'PENDING')) {
+            throw new Error('This claim already has a pending appeal');
+        }
+        const actorId = toObjectId(userId, 'user ID');
+        const now = new Date();
+        claim.appeals.push({
+            reason: input.reason.trim(),
+            submittedBy: actorId,
+            submittedAt: now,
+            status: 'PENDING',
+        });
+        claim.events.push({
+            type: 'APPEAL_SUBMITTED',
+            actorId,
+            reason: input.reason.trim(),
+            createdAt: now,
+        });
+        return claim.save();
+    }
+    async resolveAppeal(id, hmoId, userId, input) {
+        const claim = await ClaimModel.findOne({
+            _id: toObjectId(id, 'claim ID'),
+            hmoId: toObjectId(hmoId, 'HMO ID'),
+        });
+        if (!claim) {
+            return null;
+        }
+        if (input.status !== 'UPHELD' &&
+            input.status !== 'OVERTURNED') {
+            throw new Error('Invalid appeal resolution');
+        }
+        if (!input.resolution?.trim()) {
+            throw new Error('Appeal resolution is required');
+        }
+        const appeal = claim.appeals.find((item) => item.status === 'PENDING');
+        if (!appeal) {
+            throw new Error('No pending appeal found');
+        }
+        const actorId = toObjectId(userId, 'user ID');
+        const now = new Date();
+        appeal.status = input.status;
+        appeal.resolution =
+            input.resolution.trim();
+        appeal.resolvedBy = actorId;
+        appeal.resolvedAt = now;
+        if (input.status === 'OVERTURNED') {
+            claim.status = 'UNDER_REVIEW';
+            claim.rejectionReason = undefined;
+            claim.events.push({
+                type: 'UNDER_REVIEW',
+                fromStatus: 'REJECTED',
+                toStatus: 'UNDER_REVIEW',
+                actorId,
+                reason: 'Appeal overturned',
+                notes: input.resolution.trim(),
+                createdAt: now,
+            });
+        }
+        return claim.save();
+    }
+    async createAdjustment(id, hmoId, userId, input) {
+        const claim = await ClaimModel.findOne({
+            _id: toObjectId(id, 'claim ID'),
+            hmoId: toObjectId(hmoId, 'HMO ID'),
+        });
+        if (!claim) {
+            return null;
+        }
+        if (!['APPROVED', 'PAID'].includes(claim.status)) {
+            throw new Error('Only approved or paid claims can be adjusted');
+        }
+        const amount = normalizeMoney(Number(input.amount));
+        if (!input.reason?.trim()) {
+            throw new Error('Adjustment reason is required');
+        }
+        const actorId = toObjectId(userId, 'user ID');
+        const currentAdjusted = Number(claim.adjustedAmount || 0);
+        const approved = Number(claim.totalApprovedAmount || 0);
+        if (currentAdjusted + amount >
+            approved) {
+            throw new Error('Total adjustments cannot exceed the approved amount');
+        }
+        const now = new Date();
+        claim.adjustments.push({
+            amount,
+            reason: input.reason.trim(),
+            adjustedBy: actorId,
+            adjustedAt: now,
+        });
+        claim.adjustedAmount =
+            normalizeMoney(currentAdjusted + amount);
+        claim.payableAmount =
+            normalizeMoney(Math.max(0, approved -
+                claim.adjustedAmount));
+        claim.events.push({
+            type: 'ADJUSTED',
+            actorId,
+            reason: input.reason.trim(),
+            createdAt: now,
+        });
         return claim.save();
     }
     async getMemberClaims(memberId, hmoId) {

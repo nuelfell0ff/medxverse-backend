@@ -1,20 +1,20 @@
 import { enrolleesService } from './enrollees.service.js';
 const resolveHmoId = (req) => {
     const auth = req;
-    const hmoId = auth.user?.hmoId ||
-        auth.user?.accountId ||
-        auth.account?.accountId;
+    const hmoId = auth.user?.hmoId || auth.user?.accountId || auth.account?.accountId;
     if (!hmoId) {
-        throw Object.assign(new Error('Authenticated HMO account could not be resolved'), {
-            statusCode: 401,
-        });
+        throw Object.assign(new Error('Authenticated HMO account could not be resolved'), { statusCode: 401 });
     }
     return hmoId;
+};
+const resolveActorId = (req) => {
+    const auth = req;
+    return auth.user?._id;
 };
 export class EnrolleesController {
     async createEnrollee(req, res, next) {
         try {
-            const enrollee = await enrolleesService.createEnrollee(resolveHmoId(req), req.body);
+            const enrollee = await enrolleesService.createEnrollee(resolveHmoId(req), req.body, resolveActorId(req));
             res.status(201).json({ success: true, data: enrollee });
         }
         catch (error) {
@@ -63,7 +63,7 @@ export class EnrolleesController {
     }
     async updateEnrollee(req, res, next) {
         try {
-            const updated = await enrolleesService.updateEnrollee(String(req.params.id), resolveHmoId(req), req.body);
+            const updated = await enrolleesService.updateEnrollee(String(req.params.id), resolveHmoId(req), req.body, resolveActorId(req));
             if (!updated) {
                 res.status(404).json({ success: false, message: 'Enrollee not found' });
                 return;
@@ -81,7 +81,7 @@ export class EnrolleesController {
                 res.status(400).json({ success: false, message: 'Status is required' });
                 return;
             }
-            const updated = await enrolleesService.updateEnrolleeStatus(String(req.params.id), resolveHmoId(req), status);
+            const updated = await enrolleesService.updateEnrolleeStatus(String(req.params.id), resolveHmoId(req), { status, reason: req.body?.reason }, resolveActorId(req));
             if (!updated) {
                 res.status(404).json({ success: false, message: 'Enrollee not found' });
                 return;
@@ -96,6 +96,41 @@ export class EnrolleesController {
         try {
             const dependents = await enrolleesService.getDependents(String(req.params.id), resolveHmoId(req));
             res.status(200).json({ success: true, data: dependents });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async renewEnrollee(req, res, next) {
+        try {
+            const updated = await enrolleesService.renewEnrollee(String(req.params.id), resolveHmoId(req), req.body, resolveActorId(req));
+            if (!updated) {
+                res.status(404).json({ success: false, message: 'Enrollee not found' });
+                return;
+            }
+            res.status(200).json({ success: true, data: updated, message: 'Enrollee renewed successfully' });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async getCard(req, res, next) {
+        try {
+            const card = await enrolleesService.getCard(String(req.params.id), resolveHmoId(req), resolveActorId(req));
+            if (!card) {
+                res.status(404).json({ success: false, message: 'Enrollee not found' });
+                return;
+            }
+            res.status(200).json({ success: true, data: card });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
+    async getLifecycle(req, res, next) {
+        try {
+            const events = await enrolleesService.getLifecycle(String(req.params.id), resolveHmoId(req));
+            res.status(200).json({ success: true, data: events });
         }
         catch (error) {
             next(error);
