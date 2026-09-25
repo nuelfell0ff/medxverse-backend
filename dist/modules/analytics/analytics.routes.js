@@ -1,17 +1,25 @@
 import { Router } from 'express';
-import { HMOAnalyticsController as C } from './analytics.controller.js';
-export const hmoAnalyticsRouter = Router();
-// Mount this router behind the existing JWT/auth middleware used by HMO modules.
-// Example: app.use('/api/v1/hmo-analytics', authenticate, hmoAnalyticsRouter)
-hmoAnalyticsRouter.get('/summary', C.summary);
-hmoAnalyticsRouter.post('/reports', C.report);
-hmoAnalyticsRouter.get('/reports', C.reports);
-hmoAnalyticsRouter.get('/reports/:id', C.reportById);
-hmoAnalyticsRouter.get('/audit', C.audit);
-hmoAnalyticsRouter.get('/consents', C.consents);
-hmoAnalyticsRouter.post('/consents', C.grantConsent);
-hmoAnalyticsRouter.patch('/consents/:id/revoke', C.revokeConsent);
-hmoAnalyticsRouter.post('/compliance/reports', C.complianceGenerate);
-hmoAnalyticsRouter.get('/compliance/reports', C.complianceList);
-hmoAnalyticsRouter.patch('/compliance/reports/:id/status', C.complianceStatus);
-export default hmoAnalyticsRouter;
+import { authenticate, authorize } from '../../middlewares/auth.middleware.js';
+import { HMOAnalyticsController } from './analytics.controller.js';
+const router = Router();
+router.use(authenticate);
+router.use(authorize('HMO', 'HMO_ADMIN', 'HMO_CLAIMS_OFFICER', 'HMO_MEDICAL_OFFICER', 'HMO_OFFICER'));
+// Dashboard / analytics summary
+router.get('/summary', HMOAnalyticsController.summary);
+// Generate a new analytics report
+router.post('/reports', HMOAnalyticsController.report);
+// List generated analytics reports
+router.get('/reports', HMOAnalyticsController.reports);
+// Get a specific analytics report
+router.get('/reports/:id', HMOAnalyticsController.reportById);
+// Audit logs
+router.get('/audit', HMOAnalyticsController.audit);
+// Consent management
+router.get('/consents', HMOAnalyticsController.consents);
+router.post('/consents', HMOAnalyticsController.grantConsent);
+router.patch('/consents/:id/revoke', HMOAnalyticsController.revokeConsent);
+// Compliance reports
+router.post('/compliance', HMOAnalyticsController.complianceGenerate);
+router.get('/compliance', HMOAnalyticsController.complianceList);
+router.patch('/compliance/:id/status', HMOAnalyticsController.complianceStatus);
+export default router;
