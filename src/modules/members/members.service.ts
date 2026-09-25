@@ -1,5 +1,7 @@
-import mongoose, { Types } from 'mongoose';
-import { MemberModel } from './members.model.js';
+import {
+  EnrolleesService,
+  enrolleesService,
+} from '../enrollees/enrollees.service.js';
 import {
   CreateMemberInput,
   IMemberDocument,
@@ -9,147 +11,147 @@ import {
   UpdateMemberInput,
 } from './members.types.js';
 
+/**
+ * Compatibility facade for the legacy /members API.
+ *
+ * IMPORTANT:
+ * Members and Enrollees intentionally share the same HMSMember persistence
+ * record. The Enrollee Registry is the source of truth for creation,
+ * validation, lifecycle, eligibility, cards and audit history.
+ *
+ * Do not put independent member-creation logic here. Doing so would bypass
+ * enrollee lifecycle/card/audit behavior and would create two competing
+ * enrollment paths.
+ */
 export class MembersService {
+  private readonly enrolleeService: EnrolleesService;
+
+  public constructor(service: EnrolleesService = enrolleesService) {
+    this.enrolleeService = service;
+  }
+
   public async createMember(
     hmoId: string,
-    input: CreateMemberInput
+    input: CreateMemberInput,
+    actorId?: string,
   ): Promise<IMemberDocument> {
-    const memberData = {
-      ...input,
-      hmoId: new Types.ObjectId(hmoId),
-      benefitPlanId: new Types.ObjectId(input.benefitPlanId),
-      primaryProviderId: input.primaryProviderId
-        ? new Types.ObjectId(input.primaryProviderId)
-        : undefined,
-      primaryMemberId: input.primaryMemberId
-        ? new Types.ObjectId(input.primaryMemberId)
-        : undefined,
-    };
-
-    return await MemberModel.create(memberData);
+    return this.enrolleeService.createEnrollee(
+      hmoId,
+      input,
+      actorId,
+    ) as Promise<IMemberDocument>;
   }
 
   public async getMembers(
     hmoId: string,
-    filters: MemberQueryFilters
+    filters: MemberQueryFilters,
   ): Promise<PaginatedMembersResult> {
-    const page = Math.max(1, filters.page || 1);
-    const limit = Math.max(1, Math.min(100, filters.limit || 20));
-    const skip = (page - 1) * limit;
-
-    const query: Record<string, unknown> = {
-      hmoId: new Types.ObjectId(hmoId),
-    };
-
-    if (filters.status) {
-      query.status = filters.status;
-    }
-
-    if (filters.benefitPlanId) {
-      query.benefitPlanId = new Types.ObjectId(filters.benefitPlanId);
-    }
-
-    if (filters.relationship) {
-      query.relationship = filters.relationship;
-    }
-
-    if (filters.search) {
-      const searchRegex = new RegExp(filters.search, 'i');
-      query.$or = [
-        { firstName: searchRegex },
-        { lastName: searchRegex },
-        { policyNumber: searchRegex },
-        { email: searchRegex },
-        { phone: searchRegex },
-      ];
-    }
-
-    const [members, total] = await Promise.all([
-      MemberModel.find(query)
-        .populate('benefitPlanId', 'name code category')
-        .populate('primaryProviderId', 'name code state')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
-      MemberModel.countDocuments(query),
-    ]);
+    const result = await this.enrolleeService.getEnrollees(
+      hmoId,
+      filters,
+    );
 
     return {
-      members,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
+      members: result.enrollees as IMemberDocument[],
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: result.totalPages,
     };
   }
 
-  public async getMemberById(id: string, hmoId: string): Promise<IMemberDocument | null> {
-    return await MemberModel.findOne({
-      _id: new Types.ObjectId(id),
-      hmoId: new Types.ObjectId(hmoId),
-    })
-      .populate('benefitPlanId')
-      .populate('primaryProviderId')
-      .populate('primaryMemberId', 'firstName lastName policyNumber email')
-      .exec();
+  public async getMemberById(
+    id: string,
+    hmoId: string,
+  ): Promise<IMemberDocument | null> {
+    return this.enrolleeService.getEnrolleeById(
+      id,
+      hmoId,
+    ) as Promise<IMemberDocument | null>;
   }
 
   public async updateMember(
     id: string,
     hmoId: string,
-    input: UpdateMemberInput
+    input: UpdateMemberInput,
+    actorId?: string,
   ): Promise<IMemberDocument | null> {
-    const updateData: Record<string, unknown> = { ...input };
-
-    if (input.benefitPlanId) {
-      updateData.benefitPlanId = new Types.ObjectId(input.benefitPlanId);
-    }
-    if (input.primaryProviderId) {
-      updateData.primaryProviderId = new Types.ObjectId(input.primaryProviderId);
-    }
-    if (input.primaryMemberId) {
-      updateData.primaryMemberId = new Types.ObjectId(input.primaryMemberId);
-    }
-
-    return await MemberModel.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(id),
-        hmoId: new Types.ObjectId(hmoId),
-      },
-      { $set: updateData },
-      { new: true, runValidators: true }
-    )
-      .populate('benefitPlanId')
-      .populate('primaryProviderId')
-      .exec();
+    return this.enrolleeService.updateEnrollee(
+      id,
+      hmoId,
+      input,
+      actorId,
+    ) as Promise<IMemberDocument | null>;
   }
 
   public async updateMemberStatus(
     id: string,
     hmoId: string,
-    status: MemberStatus
+    status: MemberStatus,
+    reason?: string,
+    actorId?: string,
   ): Promise<IMemberDocument | null> {
-    return await MemberModel.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(id),
-        hmoId: new Types.ObjectId(hmoId),
-      },
-      { $set: { status } },
-      { new: true }
-    ).exec();
+    return this.enrolleeService.updateEnrolleeStatus(
+      id,
+      hmoId,
+      { status, reason },
+      actorId,
+    ) as Promise<IMemberDocument | null>;
   }
 
   public async getDependents(
     primaryMemberId: string,
-    hmoId: string
+    hmoId: string,
   ): Promise<IMemberDocument[]> {
-    return await MemberModel.find({
-      primaryMemberId: new Types.ObjectId(primaryMemberId),
-      hmoId: new Types.ObjectId(hmoId),
-    })
-      .populate('benefitPlanId', 'name code')
-      .exec();
+    return this.enrolleeService.getDependents(
+      primaryMemberId,
+      hmoId,
+    ) as Promise<IMemberDocument[]>;
+  }
+
+  public async checkEligibility(
+    id: string,
+    hmoId: string,
+    onDate?: Date,
+  ) {
+    return this.enrolleeService.checkEligibility(
+      id,
+      hmoId,
+      onDate,
+    );
+  }
+
+  public async renewMember(
+    id: string,
+    hmoId: string,
+    input: { endDate: Date | string; reason?: string },
+    actorId?: string,
+  ): Promise<IMemberDocument | null> {
+    return this.enrolleeService.renewEnrollee(
+      id,
+      hmoId,
+      input,
+      actorId,
+    ) as Promise<IMemberDocument | null>;
+  }
+
+  public async getCard(
+    id: string,
+    hmoId: string,
+    actorId?: string,
+  ) {
+    return this.enrolleeService.getCard(
+      id,
+      hmoId,
+      actorId,
+    );
+  }
+
+  public async getLifecycle(
+    id: string,
+    hmoId: string,
+  ) {
+    return this.enrolleeService.getLifecycle(id, hmoId);
   }
 }
 

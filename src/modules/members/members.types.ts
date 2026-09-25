@@ -12,6 +12,11 @@ export interface IMemberAddress {
   country?: string;
 }
 
+/**
+ * A Member is the same persisted HMSMember identity used by the Enrollee
+ * Registry. The Member API is a compatibility-facing name for consumers that
+ * still call this resource "member".
+ */
 export interface IMember {
   hmoId: Types.ObjectId;
   policyNumber: string;
@@ -71,13 +76,13 @@ export interface UpdateMemberInput {
   maritalStatus?: MaritalStatus;
   address?: IMemberAddress;
   benefitPlanId?: string;
-  primaryProviderId?: string;
+  primaryProviderId?: string | null;
   relationship?: RelationshipType;
-  primaryMemberId?: string;
+  primaryMemberId?: string | null;
   status?: MemberStatus;
   startDate?: Date | string;
-  endDate?: Date | string;
-  photoUrl?: string;
+  endDate?: Date | string | null;
+  photoUrl?: string | null;
 }
 
 export interface MemberQueryFilters {
