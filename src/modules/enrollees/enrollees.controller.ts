@@ -53,7 +53,7 @@ export class EnrolleesController {
         page,
         limit,
         status: req.query.status as EnrolleeStatus | undefined,
-        benefitPlanId: req.query.benefitPlanId as string | undefined,
+        healthPlanId: req.query.healthPlanId as string | undefined,
         relationship: req.query.relationship as EnrolleeRelationship | undefined,
         search: req.query.search as string | undefined,
       });

@@ -29,7 +29,7 @@ export interface IEnrollee {
   dateOfBirth: Date;
   maritalStatus?: EnrolleeMaritalStatus;
   address?: IEnrolleeAddress;
-  benefitPlanId: Types.ObjectId;
+  healthPlanId: Types.ObjectId;
   primaryProviderId?: Types.ObjectId;
   relationship: EnrolleeRelationship;
   primaryMemberId?: Types.ObjectId;
@@ -55,7 +55,7 @@ export interface CreateEnrolleeInput {
   dateOfBirth: Date | string;
   maritalStatus?: EnrolleeMaritalStatus;
   address?: IEnrolleeAddress;
-  benefitPlanId: string;
+  healthPlanId?: string;
   primaryProviderId?: string;
   relationship?: EnrolleeRelationship;
   primaryMemberId?: string;
@@ -75,7 +75,7 @@ export interface UpdateEnrolleeInput {
   dateOfBirth?: Date | string;
   maritalStatus?: EnrolleeMaritalStatus;
   address?: IEnrolleeAddress;
-  benefitPlanId?: string;
+  healthPlanId?: string;
   primaryProviderId?: string | null;
   relationship?: EnrolleeRelationship;
   primaryMemberId?: string | null;
@@ -89,7 +89,7 @@ export interface EnrolleeQueryFilters {
   page?: number;
   limit?: number;
   status?: EnrolleeStatus;
-  benefitPlanId?: string;
+  healthPlanId?: string;
   relationship?: EnrolleeRelationship;
   search?: string;
 }
@@ -118,7 +118,7 @@ export interface EnrolleeEligibilityResult {
   status: EnrolleeStatus;
   policyNumber: string;
   enrolleeId: string;
-  benefitPlanId: string;
+  healthPlanId: string;
   coverageStartDate: Date;
   coverageEndDate?: Date;
   reason?: string;

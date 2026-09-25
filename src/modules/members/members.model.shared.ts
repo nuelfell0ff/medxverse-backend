@@ -38,9 +38,9 @@ const MemberSchema = new Schema<IMemberDocument>(
       default: 'SINGLE',
     },
     address: { type: MemberAddressSchema },
-    benefitPlanId: {
+    healthPlanId: {
       type: Schema.Types.ObjectId,
-      ref: 'BenefitPlan',
+      ref: 'HealthPlan',
       required: true,
       index: true,
     },

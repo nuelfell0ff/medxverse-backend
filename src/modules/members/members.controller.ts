@@ -81,7 +81,7 @@ export class MembersController {
           page,
           limit,
           status: req.query.status as MemberStatus | undefined,
-          benefitPlanId: req.query.benefitPlanId as string | undefined,
+          healthPlanId: req.query.healthPlanId as string | undefined,
           relationship: req.query.relationship as RelationshipType | undefined,
           search: req.query.search as string | undefined,
         },

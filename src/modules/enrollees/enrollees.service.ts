@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
 
 import { EnrolleeModel } from './enrollees.model.js';
-import { BenefitDefinitionModel } from '../health-plans/health-plans.model.js';
+import { HealthPlanModel } from '../health-plans/health-plans.model.js';
 import { EnrolleeCardModel } from './enrollees.card.model.js';
 import { EnrolleeLifecycleModel } from './enrollees.lifecycle.model.js';
 import {
@@ -74,19 +74,24 @@ export class EnrolleesService {
     });
   }
 
-  private async validateBenefitPlan(
-    benefitPlanId: string,
+  private async validateHealthPlan(
+    healthPlanId: string,
     hmoId: Types.ObjectId,
   ): Promise<Types.ObjectId> {
-    const id = toObjectId(benefitPlanId, 'benefit plan ID');
-    const benefit = await BenefitDefinitionModel.findOne({
+    const id = toObjectId(healthPlanId, 'health plan ID');
+
+    const plan = await HealthPlanModel.findOne({
       _id: id,
       hmoId,
       status: 'ACTIVE',
-    }).select('_id status');
+    }).select('_id status benefitIds effectiveFrom effectiveTo');
 
-    if (!benefit) {
-      throw new Error('Active benefit not found for this HMO');
+    if (!plan) {
+      throw new Error('Active health plan not found for this HMO');
+    }
+
+    if (!plan.benefitIds?.length) {
+      throw new Error('The selected health plan has no benefits attached');
     }
 
     return id;
@@ -137,12 +142,9 @@ export class EnrolleesService {
     if (!input.email?.trim()) throw new Error('Email is required');
     if (!input.phone?.trim()) throw new Error('Phone number is required');
     if (!input.gender) throw new Error('Gender is required');
-    if (!input.benefitPlanId) throw new Error('Benefit plan is required');
 
     const dateOfBirth = toDate(input.dateOfBirth, 'date of birth');
     if (dateOfBirth > new Date()) throw new Error('Date of birth cannot be in the future');
-
-    const benefitPlanId = await this.validateBenefitPlan(input.benefitPlanId, hmoObjectId);
 
     const startDate = input.startDate ? toDate(input.startDate, 'start date') : new Date();
     const endDate = input.endDate ? toDate(input.endDate, 'end date') : undefined;
@@ -155,17 +157,34 @@ export class EnrolleesService {
       throw new Error('A primary member is required for a dependent enrollee');
     }
 
+    let healthPlanId: Types.ObjectId;
+
     if (input.primaryMemberId) {
       const primaryMemberId = toObjectId(input.primaryMemberId, 'primary member ID');
       const primary = await EnrolleeModel.findOne({
         _id: primaryMemberId,
         hmoId: hmoObjectId,
-      }).select('_id relationship');
+      }).select('_id relationship healthPlanId');
 
       if (!primary) throw new Error('Primary member not found for this HMO');
       if (primary.relationship !== 'PRIMARY') {
         throw new Error('A dependent must be linked to a primary member');
       }
+      if (!primary.healthPlanId) {
+        throw new Error('The primary member does not have a health plan assigned');
+      }
+
+      healthPlanId = primary.healthPlanId;
+
+      if (input.healthPlanId) {
+        const requestedHealthPlanId = await this.validateHealthPlan(input.healthPlanId, hmoObjectId);
+        if (!requestedHealthPlanId.equals(healthPlanId)) {
+          throw new Error('A dependent must use the same health plan as the primary member');
+        }
+      }
+    } else {
+      if (!input.healthPlanId) throw new Error('Health plan is required for a primary member');
+      healthPlanId = await this.validateHealthPlan(input.healthPlanId, hmoObjectId);
     }
 
     try {
@@ -181,7 +200,7 @@ export class EnrolleesService {
         dateOfBirth,
         maritalStatus: input.maritalStatus,
         address: input.address,
-        benefitPlanId,
+        healthPlanId,
         primaryProviderId: input.primaryProviderId
           ? toObjectId(input.primaryProviderId, 'primary provider ID')
           : undefined,
@@ -198,7 +217,7 @@ export class EnrolleesService {
       await this.recordLifecycle(hmoObjectId, enrollee._id, 'ENROLLED', {
         toStatus: enrollee.status,
         actorId: actor,
-        metadata: { benefitPlanId: String(enrollee.benefitPlanId), relationship: enrollee.relationship },
+        metadata: { healthPlanId: String(enrollee.healthPlanId), relationship: enrollee.relationship },
       });
       await this.ensureCard(hmoObjectId, enrollee, actor);
       return enrollee;
@@ -224,8 +243,8 @@ export class EnrolleesService {
 
     if (filters.status) query.status = filters.status;
     if (filters.relationship) query.relationship = filters.relationship;
-    if (filters.benefitPlanId) {
-      query.benefitPlanId = toObjectId(filters.benefitPlanId, 'benefit plan ID');
+    if (filters.healthPlanId) {
+      query.healthPlanId = toObjectId(filters.healthPlanId, 'health plan ID');
     }
 
     if (filters.search?.trim()) {
@@ -242,7 +261,14 @@ export class EnrolleesService {
 
     const [enrollees, total] = await Promise.all([
       EnrolleeModel.find(query)
-        .populate('benefitPlanId', 'name code category status')
+        .populate({
+          path: 'healthPlanId',
+          select: 'name code type status tier currency benefitIds effectiveFrom effectiveTo',
+          populate: {
+            path: 'benefitIds',
+            select: 'code name description category status defaultRule',
+          },
+        })
         .populate('primaryProviderId', 'name code state')
         .populate('primaryMemberId', 'firstName lastName policyNumber email')
         .sort({ createdAt: -1, _id: -1 })
@@ -269,7 +295,13 @@ export class EnrolleesService {
       _id: toObjectId(id, 'enrollee ID'),
       hmoId: toObjectId(hmoId, 'HMO ID'),
     })
-      .populate('benefitPlanId')
+      .populate({
+        path: 'healthPlanId',
+        populate: {
+          path: 'benefitIds',
+          select: 'code name description category status defaultRule',
+        },
+      })
       .populate('primaryProviderId')
       .populate('primaryMemberId', 'firstName lastName policyNumber email phone status')
       .exec();
@@ -309,8 +341,8 @@ export class EnrolleesService {
       updateData.endDate = input.endDate === null ? undefined : toDate(input.endDate, 'end date');
     }
 
-    if (input.benefitPlanId !== undefined) {
-      updateData.benefitPlanId = await this.validateBenefitPlan(input.benefitPlanId, toObjectId(hmoId, 'HMO ID'));
+    if (input.healthPlanId !== undefined) {
+      updateData.healthPlanId = await this.validateHealthPlan(input.healthPlanId, toObjectId(hmoId, 'HMO ID'));
     }
 
     if (input.primaryProviderId !== undefined) {
@@ -363,6 +395,27 @@ export class EnrolleesService {
       throw new Error('A primary member is required for a dependent enrollee');
     }
 
+    if (nextRelationship !== 'PRIMARY' && nextPrimaryMemberId) {
+      const primary = await EnrolleeModel.findOne({
+        _id: nextPrimaryMemberId,
+        hmoId: toObjectId(hmoId, 'HMO ID'),
+      }).select('_id relationship healthPlanId');
+
+      if (!primary) throw new Error('Primary member not found for this HMO');
+      if (primary.relationship !== 'PRIMARY') {
+        throw new Error('A dependent must be linked to a primary member');
+      }
+      if (!primary.healthPlanId) {
+        throw new Error('The primary member does not have a health plan assigned');
+      }
+
+      const requestedHealthPlanId = updateData.healthPlanId as Types.ObjectId | undefined;
+      if (requestedHealthPlanId && !requestedHealthPlanId.equals(primary.healthPlanId)) {
+        throw new Error('A dependent must use the same health plan as the primary member');
+      }
+      updateData.healthPlanId = primary.healthPlanId;
+    }
+
     const hmoObjectId = toObjectId(hmoId, 'HMO ID');
     try {
       const updated = await EnrolleeModel.findOneAndUpdate(
@@ -373,13 +426,59 @@ export class EnrolleesService {
         { $set: updateData },
         { new: true, runValidators: true }
       )
-        .populate('benefitPlanId')
+        .populate({
+        path: 'healthPlanId',
+        populate: {
+          path: 'benefitIds',
+          select: 'code name description category status defaultRule',
+        },
+      })
         .populate('primaryProviderId')
         .populate('primaryMemberId', 'firstName lastName policyNumber email phone status')
         .exec();
 
       if (updated) {
-        await this.recordLifecycle(hmoObjectId, updated._id, 'UPDATED', { actorId: actor });
+        const healthPlanChanged =
+          current.healthPlanId?.toString() !== updated.healthPlanId?.toString();
+
+        // Dependants inherit the primary member's health plan. If a primary
+        // member changes plan, keep all of that member's dependants aligned.
+        if (updated.relationship === 'PRIMARY' && healthPlanChanged) {
+          const dependants = await EnrolleeModel.find({
+            hmoId: hmoObjectId,
+            primaryMemberId: updated._id,
+          }).select('_id');
+
+          if (dependants.length) {
+            await EnrolleeModel.updateMany(
+              {
+                hmoId: hmoObjectId,
+                primaryMemberId: updated._id,
+              },
+              { $set: { healthPlanId: updated.healthPlanId } },
+              { runValidators: true },
+            ).exec();
+
+            await Promise.all(
+              dependants.map((dependant) =>
+                this.recordLifecycle(hmoObjectId, dependant._id, 'PLAN_CHANGED', {
+                  actorId: actor,
+                  metadata: {
+                    inheritedFromPrimaryMemberId: String(updated._id),
+                    healthPlanId: String(updated.healthPlanId),
+                  },
+                }),
+              ),
+            );
+          }
+        }
+
+        await this.recordLifecycle(hmoObjectId, updated._id, healthPlanChanged ? 'PLAN_CHANGED' : 'UPDATED', {
+          actorId: actor,
+          metadata: healthPlanChanged
+            ? { healthPlanId: String(updated.healthPlanId) }
+            : undefined,
+        });
         await this.ensureCard(hmoObjectId, updated, actor);
       }
       return updated;
@@ -476,7 +575,14 @@ export class EnrolleesService {
       primaryMemberId: toObjectId(primaryMemberId, 'primary member ID'),
       hmoId: toObjectId(hmoId, 'HMO ID'),
     })
-      .populate('benefitPlanId', 'name code category status')
+      .populate({
+          path: 'healthPlanId',
+          select: 'name code type status tier currency benefitIds effectiveFrom effectiveTo',
+          populate: {
+            path: 'benefitIds',
+            select: 'code name description category status defaultRule',
+          },
+        })
       .populate('primaryProviderId', 'name code state')
       .sort({ createdAt: -1 })
       .exec();
@@ -514,7 +620,7 @@ export class EnrolleesService {
     const enrollee = await EnrolleeModel.findOne({
       _id: toObjectId(id, 'enrollee ID'),
       hmoId: toObjectId(hmoId, 'HMO ID'),
-    }).select('_id policyNumber benefitPlanId status startDate endDate');
+    }).select('_id policyNumber healthPlanId status startDate endDate');
 
     if (!enrollee) throw new Error('Enrollee not found');
 
@@ -538,7 +644,7 @@ export class EnrolleesService {
       status: enrollee.status,
       policyNumber: enrollee.policyNumber,
       enrolleeId: String(enrollee._id),
-      benefitPlanId: String(enrollee.benefitPlanId),
+      healthPlanId: String(enrollee.healthPlanId),
       coverageStartDate: enrollee.startDate,
       coverageEndDate: enrollee.endDate,
       reason,

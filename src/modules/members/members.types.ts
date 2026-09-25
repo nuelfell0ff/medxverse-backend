@@ -29,7 +29,7 @@ export interface IMember {
   dateOfBirth: Date;
   maritalStatus?: MaritalStatus;
   address?: IMemberAddress;
-  benefitPlanId: Types.ObjectId;
+  healthPlanId: Types.ObjectId;
   primaryProviderId?: Types.ObjectId;
   relationship: RelationshipType;
   primaryMemberId?: Types.ObjectId;
@@ -55,7 +55,7 @@ export interface CreateMemberInput {
   dateOfBirth: Date | string;
   maritalStatus?: MaritalStatus;
   address?: IMemberAddress;
-  benefitPlanId: string;
+  healthPlanId?: string;
   primaryProviderId?: string;
   relationship?: RelationshipType;
   primaryMemberId?: string;
@@ -75,7 +75,7 @@ export interface UpdateMemberInput {
   dateOfBirth?: Date | string;
   maritalStatus?: MaritalStatus;
   address?: IMemberAddress;
-  benefitPlanId?: string;
+  healthPlanId?: string;
   primaryProviderId?: string | null;
   relationship?: RelationshipType;
   primaryMemberId?: string | null;
@@ -89,7 +89,7 @@ export interface MemberQueryFilters {
   page?: number;
   limit?: number;
   status?: MemberStatus;
-  benefitPlanId?: string;
+  healthPlanId?: string;
   relationship?: RelationshipType;
   search?: string;
 }
