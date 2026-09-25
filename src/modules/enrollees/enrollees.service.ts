@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 
 import { EnrolleeModel } from './enrollees.model.js';
+import { BenefitDefinitionModel } from '../health-plans/health-plans.model.js';
 import { EnrolleeCardModel } from './enrollees.card.model.js';
 import { EnrolleeLifecycleModel } from './enrollees.lifecycle.model.js';
 import {
@@ -73,6 +74,24 @@ export class EnrolleesService {
     });
   }
 
+  private async validateBenefitPlan(
+    benefitPlanId: string,
+    hmoId: Types.ObjectId,
+  ): Promise<Types.ObjectId> {
+    const id = toObjectId(benefitPlanId, 'benefit plan ID');
+    const benefit = await BenefitDefinitionModel.findOne({
+      _id: id,
+      hmoId,
+      status: 'ACTIVE',
+    }).select('_id status');
+
+    if (!benefit) {
+      throw new Error('Active benefit not found for this HMO');
+    }
+
+    return id;
+  }
+
   private cardNumber(policyNumber: string): string {
     return `MXV-${policyNumber.trim().toUpperCase()}`;
   }
@@ -123,6 +142,8 @@ export class EnrolleesService {
     const dateOfBirth = toDate(input.dateOfBirth, 'date of birth');
     if (dateOfBirth > new Date()) throw new Error('Date of birth cannot be in the future');
 
+    const benefitPlanId = await this.validateBenefitPlan(input.benefitPlanId, hmoObjectId);
+
     const startDate = input.startDate ? toDate(input.startDate, 'start date') : new Date();
     const endDate = input.endDate ? toDate(input.endDate, 'end date') : undefined;
 
@@ -160,7 +181,7 @@ export class EnrolleesService {
         dateOfBirth,
         maritalStatus: input.maritalStatus,
         address: input.address,
-        benefitPlanId: toObjectId(input.benefitPlanId, 'benefit plan ID'),
+        benefitPlanId,
         primaryProviderId: input.primaryProviderId
           ? toObjectId(input.primaryProviderId, 'primary provider ID')
           : undefined,
@@ -289,7 +310,7 @@ export class EnrolleesService {
     }
 
     if (input.benefitPlanId !== undefined) {
-      updateData.benefitPlanId = toObjectId(input.benefitPlanId, 'benefit plan ID');
+      updateData.benefitPlanId = await this.validateBenefitPlan(input.benefitPlanId, toObjectId(hmoId, 'HMO ID'));
     }
 
     if (input.primaryProviderId !== undefined) {

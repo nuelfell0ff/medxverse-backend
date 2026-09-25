@@ -328,6 +328,11 @@ export class HealthPlansService {
       input.defaultRule || {}
     );
 
+    const status = input.status ?? BenefitStatus.DRAFT;
+    if (!Object.values(BenefitStatus).includes(status)) {
+      throw error('Invalid benefit status');
+    }
+
     try {
       return await BenefitDefinitionModel.create({
         hmoId: owner,
@@ -335,9 +340,7 @@ export class HealthPlansService {
         name,
         description: clean(input.description),
         category: input.category,
-        status:
-          input.status ??
-          BenefitStatus.DRAFT,
+        status,
         defaultRule: rule,
       });
     } catch (err: unknown) {
@@ -510,6 +513,9 @@ export class HealthPlansService {
     }
 
     if (input.status !== undefined) {
+      if (!Object.values(BenefitStatus).includes(input.status)) {
+        throw error('Invalid benefit status');
+      }
       update.status = input.status;
     }
 
