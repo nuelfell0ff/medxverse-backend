@@ -45,6 +45,7 @@ import eligibilityRoutes from '../modules/eligibility/eligibility.routes.js';
 import hmoBillingRoutes from '../modules/hmo-billing/hmo-billing.routes.js';
 import hmoUtilizationRoutes from '../modules/hmo-utilization/hmo-utilization.routes.js';
 import hmoPortalsRoutes from '../modules/hmo-portals/hmo-portals.routes.js';
+import analyticsRoutes from '../modules/analytics/analytics.routes.js';
 
 const v1Router = Router();
 
@@ -95,5 +96,6 @@ v1Router.use('/eligibility', eligibilityRoutes);
 v1Router.use('/hmo-billing', hmoBillingRoutes);
 v1Router.use('/hmo-utilization', hmoUtilizationRoutes);
 v1Router.use('/hmo-portals', hmoPortalsRoutes);
+v1Router.use('/analytics', analyticsRoutes);
 
 export default v1Router;
