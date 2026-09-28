@@ -113,7 +113,6 @@ export interface IProvider {
 export interface IProviderDocument extends IProvider, Document {}
 
 export interface CreateProviderInput {
-  code: string;
   name: string;
   type: ProviderType;
   status?: ProviderStatus;
