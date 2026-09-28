@@ -16,7 +16,10 @@ export interface VerifyEligibilityInput {
   memberId: string;
   providerId?: string;
   serviceCategory: EligibilityServiceCategory;
-  /** @deprecated Service code is resolved automatically from the selected plan benefit. */
+  /**
+   * Code of the benefit explicitly selected by the HMO officer.
+   * The code must belong to a benefit attached to the enrollee's health plan.
+   */
   serviceCode?: string;
   /** @deprecated Service description is resolved from the selected plan benefit when available. */
   serviceDescription?: string;

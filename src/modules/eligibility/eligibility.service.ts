@@ -154,10 +154,10 @@ export class EligibilityService {
     let benefit: AnyRecord | null = null;
 
     for (const association of associations) {
-      const candidate = await BenefitDefinitionModel.findOne({
+      const candidate = (await BenefitDefinitionModel.findOne({
         _id: association.benefitId,
         hmoId: tenantId,
-      }).lean().exec();
+      }).lean().exec()) as unknown as AnyRecord | null;
 
       if (!candidate) continue;
       if (benefitCategoryMatches(candidate, input.serviceCategory)) {
