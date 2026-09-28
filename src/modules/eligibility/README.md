@@ -29,3 +29,13 @@ The service uses the existing Enrollee, Claims, HMO Provider, Health Plan, Plan 
 ## Important model-loading requirement
 
 The HMO health-plan module must be loaded before the eligibility service is called so the `HealthPlan`, `PlanBenefit`, and `BenefitDefinition` Mongoose models are registered.
+
+
+## Service code handling
+
+The eligibility service does not require the user to type a service code. Once the
+enrollee's Health Plan and matching PlanBenefit/BenefitDefinition are resolved,
+the service automatically derives the persisted `serviceCode` from the selected
+benefit's `code`, and the persisted description from the benefit `name` or
+`description`. The optional `serviceCode` field remains in the input type only
+for backward compatibility with older clients.

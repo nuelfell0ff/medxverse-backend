@@ -16,7 +16,9 @@ export interface VerifyEligibilityInput {
   memberId: string;
   providerId?: string;
   serviceCategory: EligibilityServiceCategory;
+  /** @deprecated Service code is resolved automatically from the selected plan benefit. */
   serviceCode?: string;
+  /** @deprecated Service description is resolved from the selected plan benefit when available. */
   serviceDescription?: string;
   serviceDate?: string | Date;
   requestedAmount?: number;

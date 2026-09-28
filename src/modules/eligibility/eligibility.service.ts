@@ -171,6 +171,18 @@ export class EligibilityService {
       reasons.push('No benefit under the enrollee health plan covers the requested service category.');
     }
 
+    // Service identity is derived from the selected benefit under the
+    // enrollee's health plan. The caller no longer needs to type a service
+    // code manually.
+    const resolvedServiceCode =
+      benefit?.code ? String(benefit.code).trim().toUpperCase() : undefined;
+
+    const resolvedServiceDescription =
+      benefit?.name ||
+      benefit?.description ||
+      input.serviceDescription?.trim() ||
+      undefined;
+
     const rule = selectedAssociation?.rule || {};
     const amount = Number(input.requestedAmount || 0);
 
@@ -312,8 +324,9 @@ export class EligibilityService {
       memberId: enrolleeId,
       providerId: input.providerId ? objectId(input.providerId, 'provider ID') : undefined,
       serviceCategory: input.serviceCategory,
-      serviceCode: input.serviceCode?.trim().toUpperCase() || undefined,
-      serviceDescription: input.serviceDescription?.trim() || undefined,
+      // Always persist the service code resolved from the plan benefit.
+      serviceCode: resolvedServiceCode,
+      serviceDescription: resolvedServiceDescription,
       serviceDate,
       requestedAmount: input.requestedAmount,
       networkId: input.networkId?.trim() || undefined,
