@@ -45,7 +45,6 @@ export interface IEnrolleeDocument extends IEnrollee, Document {
 }
 
 export interface CreateEnrolleeInput {
-  policyNumber: string;
   firstName: string;
   lastName: string;
   otherNames?: string;

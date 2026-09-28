@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { randomBytes } from 'node:crypto';
 
 import { EnrolleeModel } from './enrollees.model.js';
 import { HealthPlanModel } from '../health-plans/health-plans.model.js';
@@ -97,6 +98,23 @@ export class EnrolleesService {
     return id;
   }
 
+  /**
+   * Policy numbers are system-generated. Clients must never supply or edit
+   * enrollee policy numbers manually.
+   */
+  private async generatePolicyNumber(hmoId: Types.ObjectId): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const year = new Date().getFullYear();
+      const suffix = randomBytes(4).toString('hex').toUpperCase();
+      const policyNumber = `MXV-${year}-${suffix}`;
+
+      const exists = await EnrolleeModel.exists({ hmoId, policyNumber });
+      if (!exists) return policyNumber;
+    }
+
+    throw new Error('Unable to generate a unique policy number');
+  }
+
   private cardNumber(policyNumber: string): string {
     return `MXV-${policyNumber.trim().toUpperCase()}`;
   }
@@ -136,7 +154,6 @@ export class EnrolleesService {
   ): Promise<IEnrolleeDocument> {
     const hmoObjectId = toObjectId(hmoId, 'HMO ID');
 
-    if (!input.policyNumber?.trim()) throw new Error('Policy number is required');
     if (!input.firstName?.trim()) throw new Error('First name is required');
     if (!input.lastName?.trim()) throw new Error('Last name is required');
     if (!input.email?.trim()) throw new Error('Email is required');
@@ -187,10 +204,12 @@ export class EnrolleesService {
       healthPlanId = await this.validateHealthPlan(input.healthPlanId, hmoObjectId);
     }
 
+    const policyNumber = await this.generatePolicyNumber(hmoObjectId);
+
     try {
       const enrollee = await EnrolleeModel.create({
         hmoId: hmoObjectId,
-        policyNumber: input.policyNumber.trim().toUpperCase(),
+        policyNumber,
         firstName: input.firstName.trim(),
         lastName: input.lastName.trim(),
         otherNames: input.otherNames?.trim() || undefined,
@@ -224,7 +243,7 @@ export class EnrolleesService {
     } catch (error: unknown) {
       const mongoError = error as { code?: number };
       if (mongoError.code === 11000) {
-        throw new Error('A member with this policy number already exists for this HMO');
+        throw new Error('A unique enrollee policy number could not be generated');
       }
       throw error;
     }
@@ -485,7 +504,7 @@ export class EnrolleesService {
     } catch (error: unknown) {
       const mongoError = error as { code?: number };
       if (mongoError.code === 11000) {
-        throw new Error('A member with this policy number already exists for this HMO');
+        throw new Error('A unique enrollee policy number could not be generated');
       }
       throw error;
     }
