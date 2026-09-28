@@ -117,7 +117,6 @@ export interface IHealthPlan {
 export interface IHealthPlanDocument extends IHealthPlan, Document {}
 
 export interface CreateBenefitDefinitionInput {
-  code: string;
   name: string;
   description?: string;
   category: BenefitCategory;
@@ -126,7 +125,6 @@ export interface CreateBenefitDefinitionInput {
 }
 
 export interface UpdateBenefitDefinitionInput {
-  code?: string;
   name?: string;
   description?: string;
   category?: BenefitCategory;
@@ -135,7 +133,6 @@ export interface UpdateBenefitDefinitionInput {
 }
 
 export interface CreateHealthPlanInput {
-  code: string;
   name: string;
   description?: string;
   type: HealthPlanType;
@@ -152,7 +149,6 @@ export interface CreateHealthPlanInput {
 }
 
 export interface UpdateHealthPlanInput {
-  code?: string;
   name?: string;
   description?: string;
   type?: HealthPlanType;
