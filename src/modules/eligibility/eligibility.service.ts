@@ -153,6 +153,8 @@ export class EligibilityService {
     let selectedAssociation: AnyRecord | null = null;
     let benefit: AnyRecord | null = null;
 
+    const requestedServiceCode = input.serviceCode?.trim().toUpperCase();
+
     for (const association of associations) {
       const candidate = (await BenefitDefinitionModel.findOne({
         _id: association.benefitId,
@@ -160,20 +162,49 @@ export class EligibilityService {
       }).lean().exec()) as unknown as AnyRecord | null;
 
       if (!candidate) continue;
+
+      const candidateCode = candidate.code
+        ? String(candidate.code).trim().toUpperCase()
+        : undefined;
+
+      // The frontend explicitly selects a benefit from the enrollee's
+      // health-plan benefits. When a serviceCode is supplied, it is the
+      // authoritative benefit selection and MUST be matched to the
+      // PlanBenefit association. Do not silently substitute another benefit
+      // merely because it has the same category.
+      if (requestedServiceCode) {
+        if (candidateCode === requestedServiceCode) {
+          selectedAssociation = association.toObject
+            ? association.toObject()
+            : association;
+          benefit = candidate;
+          break;
+        }
+        continue;
+      }
+
+      // Backward compatibility for older clients that did not send a
+      // serviceCode: fall back to category matching.
       if (benefitCategoryMatches(candidate, input.serviceCategory)) {
-        selectedAssociation = association.toObject ? association.toObject() : association;
+        selectedAssociation = association.toObject
+          ? association.toObject()
+          : association;
         benefit = candidate;
         break;
       }
     }
 
     if (!selectedAssociation || !benefit) {
-      reasons.push('No benefit under the enrollee health plan covers the requested service category.');
+      reasons.push(
+        requestedServiceCode
+          ? `The selected benefit (${requestedServiceCode}) is not attached to the enrollee's health plan.`
+          : 'No benefit under the enrollee health plan covers the requested service category.'
+      );
     }
 
-    // Service identity is derived from the selected benefit under the
-    // enrollee's health plan. The caller no longer needs to type a service
-    // code manually.
+    // Service identity is always resolved from the selected benefit under
+    // the enrollee's health plan. The caller never gets to invent a service
+    // code independently of the plan.
     const resolvedServiceCode =
       benefit?.code ? String(benefit.code).trim().toUpperCase() : undefined;
 
@@ -251,7 +282,7 @@ export class EligibilityService {
     const covered = Boolean(rule.covered);
 
     const benefitEvaluation: BenefitEvaluation = {
-      category: input.serviceCategory,
+      category: (benefit?.category || input.serviceCategory) as EligibilityServiceCategory,
       covered,
       annualLimit,
       annualUsed: categoryUsed,
