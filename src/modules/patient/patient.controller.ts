@@ -103,6 +103,27 @@ export class PatientController {
     } catch (error: unknown) { next(error); }
   }
 
+  static async getPatientRegistry(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as unknown as AuthenticatedRequest<{ id: string }>;
+      const hospitalId = getHospitalId(authReq.user);
+      if (!hospitalId) {
+        res.status(400).json({ success: false, message: 'Hospital ID not found in authentication context.' });
+        return;
+      }
+
+      const data = await PatientService.getPatientRegistry(
+        hospitalId,
+        req.params.id,
+        actor(authReq)
+      );
+
+      res.status(200).json({ success: true, data });
+    } catch (error: unknown) {
+      next(error);
+    }
+  }
+
   static async getEHR(req: Request<{ id: string }>, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as unknown as AuthenticatedRequest<{ id: string }, any, any, { includeSensitive?: string }>;

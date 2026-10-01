@@ -14,6 +14,30 @@ import {
   EhrAuditLogModel,
   PatientEhrViewModel,
 } from './patient.model.js';
+// Register the clinical module models before the patient registry queries them.
+// These are side-effect imports only; the patient module remains the owner of the
+// cross-module registry API.
+import '../admissions/admissions.model.js';
+import '../ambulance/ambulance.model.js';
+import '../appointment/appointment.model.js';
+import '../bed-ward/bed-ward.model.js';
+import '../billing/billing.model.js';
+import '../blood-bank/blood-bank.model.js';
+import '../consultation/consultation.model.js';
+import '../dental/dental.model.js';
+import '../dietary/dietary.model.js';
+import '../emergency/emergency.model.js';
+import '../eye-clinic/eye-clinic.model.js';
+import '../icu/icu.model.js';
+import '../lab/lab.model.js';
+import '../mch/mch.model.js';
+import '../mental-health/mental-health.model.js';
+import '../ot/ot.model.js';
+import '../outpatient/outpatient.model.js';
+import '../pharmacy/pharmacy.model.js';
+import '../radiology/radiology.model.js';
+import '../surgery/surgery.model.js';
+import '../telemedicine/telemedicine.model.js';
 import {
   CreatePatientDTO,
   UpdatePatientDTO,
@@ -28,6 +52,9 @@ import {
   PatientEhrChart,
   FhirResourceType,
   IClinicalSummaryItem,
+  PatientRegistry,
+  PatientRegistrySection,
+  PatientRegistryOverview,
 } from './patient.types.js';
 
 type AnyRecord = Record<string, any>;
@@ -44,6 +71,63 @@ const RESOURCE_MODELS: Record<Exclude<FhirResourceType, 'Patient'>, any> = {
 };
 
 const RESTRICTED_CODES = new Set(['MENTAL_HEALTH', 'HIV', 'HIV_STATUS', 'PSYCHIATRIC']);
+
+type RegistrySource = {
+  key: string;
+  label: string;
+  modelNames: string[];
+  limit?: number;
+};
+
+const PATIENT_REGISTRY_SOURCES: RegistrySource[] = [
+  { key: 'admissions', label: 'Admissions', modelNames: ['InpatientAdmission'] },
+  { key: 'ambulance', label: 'Ambulance', modelNames: ['TripRequest'] },
+  { key: 'appointments', label: 'Appointments', modelNames: ['Appointment', 'QueueTicket', 'ReminderLog', 'NoShowRiskScore'] },
+  { key: 'bedWard', label: 'Bed & Ward', modelNames: ['BedAssignment', 'BedStatusEvent', 'TransferRequest'] },
+  { key: 'billing', label: 'Billing', modelNames: ['BillingAccount', 'BillingCharge', 'BillingPayment', 'BillingRefund', 'PaymentPlan'], limit: 100 },
+  { key: 'bloodBank', label: 'Blood Bank', modelNames: ['TransfusionRequest'] },
+  { key: 'consultations', label: 'Consultations', modelNames: ['Consultation'] },
+  { key: 'dental', label: 'Dental', modelNames: ['DentalChart', 'DentalProcedure'] },
+  { key: 'dietary', label: 'Dietary', modelNames: ['DietaryOrder', 'MealDelivery'] },
+  { key: 'emergency', label: 'Emergency', modelNames: ['EDVisit', 'TriageAssessment', 'BayAssignment', 'EDOrder', 'DispositionRecord'] },
+  { key: 'eyeClinic', label: 'Eye Clinic', modelNames: ['EyeExam', 'OpticalPrescription'] },
+  { key: 'icu', label: 'ICU', modelNames: ['ICUAdmission', 'DeviceReading', 'FlowsheetEntry', 'ICUScore', 'FamilyCommunicationLog'] },
+  { key: 'laboratory', label: 'Laboratory', modelNames: ['LabOrder'] },
+  { key: 'mch', label: 'Maternal & Child Health', modelNames: ['MchRecord'] },
+  { key: 'mentalHealth', label: 'Mental Health', modelNames: ['MentalHealthAssessment', 'PsychotherapySession'] },
+  { key: 'ot', label: 'Operating Theatre', modelNames: ['SurgicalCase'] },
+  { key: 'outpatient', label: 'Outpatient', modelNames: ['Outpatient'] },
+  { key: 'pharmacy', label: 'Pharmacy', modelNames: ['Prescription', 'DispenseRecord', 'ControlledSubstanceLog'] },
+  { key: 'radiology', label: 'Radiology', modelNames: ['RadiologyOrder'] },
+  { key: 'surgery', label: 'Surgery', modelNames: ['SurgeryCase'] },
+  { key: 'telemedicine', label: 'Telemedicine', modelNames: ['TelemedicineSession', 'TelemedicineMessage'] },
+];
+
+const REGISTRY_DATE_FIELDS = [
+  'createdAt',
+  'updatedAt',
+  'date',
+  'serviceDate',
+  'appointmentDate',
+  'scheduledAt',
+  'admittedAt',
+  'dischargedAt',
+  'arrivalAt',
+  'assessedAt',
+  'performedAt',
+  'procedureDate',
+  'studyDate',
+  'examinationStartedAt',
+  'completedAt',
+  'resultedAt',
+  'dispensedAt',
+  'prescribedAt',
+  'sessionDate',
+  'deliveryDate',
+  'chargeDate',
+  'paymentDate',
+];
+
 
 export class PatientService {
   private static generateMRN(): string {
@@ -1044,6 +1128,272 @@ export class PatientService {
     } finally {
       await session.endSession();
     }
+  }
+
+  /**
+   * Builds the cross-module patient registry used by the patient workspace.
+   *
+   * The patient record is the canonical identity; clinical modules remain the
+   * source of truth for their own data. This method only reads those records
+   * and presents them as one patient-centric view.
+   */
+  static async getPatientRegistry(
+    hospitalId: string,
+    patientId: string,
+    actor: Actor
+  ): Promise<PatientRegistry> {
+    const patient = await this.assertPatient(hospitalId, patientId);
+    const ehr = await this.getEHRChart(hospitalId, patientId, actor);
+
+    const sections: PatientRegistrySection[] = [];
+    const allItems: IClinicalSummaryItem[] = [];
+
+    const toDate = (row: AnyRecord): Date | string | undefined => {
+      for (const field of REGISTRY_DATE_FIELDS) {
+        const value = row[field];
+        if (value) return value;
+      }
+      return undefined;
+    };
+
+    const firstValue = (row: AnyRecord, keys: string[]): unknown => {
+      for (const key of keys) {
+        const value = row[key];
+        if (value !== undefined && value !== null && value !== '') return value;
+      }
+      return undefined;
+    };
+
+    const buildTitle = (section: RegistrySource, row: AnyRecord): string => {
+      const title = firstValue(row, [
+        'procedureName',
+        'testName',
+        'serviceName',
+        'medicationName',
+        'drugName',
+        'chiefComplaint',
+        'admissionReason',
+        'primaryDiagnosis',
+        'diagnosis',
+        'reasonForVisit',
+        'visitReason',
+        'title',
+        'subject',
+        'description',
+        'name',
+        'visitNumber',
+        'appointmentNumber',
+        'prescriptionNumber',
+        'orderNumber',
+        'caseNumber',
+        'sessionId',
+        'code',
+      ]);
+
+      if (title) return String(title);
+
+      if (section.key === 'pharmacy' && Array.isArray(row.medications) && row.medications.length) {
+        return row.medications
+          .map((item: AnyRecord) => item.medicationName || item.drugName)
+          .filter(Boolean)
+          .join(', ') || section.label;
+      }
+
+      return section.label;
+    };
+
+    const buildSummary = (section: RegistrySource, row: AnyRecord): string | undefined => {
+      const summary = firstValue(row, [
+        'impression',
+        'findings',
+        'resultSummary',
+        'result',
+        'clinicalNotes',
+        'consultationNotes',
+        'nursingNotes',
+        'dischargeSummary',
+        'notes',
+        'reason',
+        'assessment',
+        'treatmentPlan',
+        'instructions',
+        'chiefComplaint',
+      ]);
+
+      if (summary) return typeof summary === 'string' ? summary : JSON.stringify(summary);
+
+      if (section.key === 'pharmacy' && Array.isArray(row.medications)) {
+        const medicationLines = row.medications
+          .map((item: AnyRecord) => {
+            const name = item.medicationName || item.drugName;
+            if (!name) return undefined;
+            const dose = item.dosage || item.dose;
+            const frequency = item.frequency;
+            const duration = item.duration;
+            return [name, dose, frequency, duration].filter(Boolean).join(' • ');
+          })
+          .filter(Boolean);
+
+        if (medicationLines.length) return medicationLines.join(' | ');
+      }
+
+      return undefined;
+    };
+
+    const querySource = async (source: RegistrySource): Promise<IClinicalSummaryItem[]> => {
+      const results: IClinicalSummaryItem[] = [];
+
+      for (const modelName of source.modelNames) {
+        const model = mongoose.models[modelName];
+        if (!model) continue;
+
+        try {
+          const rows: AnyRecord[] = await model.find({
+            hospitalId: new Types.ObjectId(hospitalId),
+            patientId: new Types.ObjectId(patientId),
+          }).sort({ createdAt: -1, updatedAt: -1 }).limit(source.limit || 100).lean().exec();
+
+          for (const row of rows) {
+            results.push({
+              id: row._id ? String(row._id) : undefined,
+              resourceType: source.key,
+              date: toDate(row),
+              title: buildTitle(source, row),
+              status: row.status || row.resultStatus || row.queueStatus || row.orderStatus,
+              summary: buildSummary(source, row),
+              details: row,
+            });
+          }
+        } catch {
+          // One optional module must never prevent the patient registry from loading.
+        }
+      }
+
+      return results.sort(
+        (a, b) => new Date(String(b.date || 0)).getTime() - new Date(String(a.date || 0)).getTime()
+      );
+    };
+
+    const sourceResults = await Promise.all(
+      PATIENT_REGISTRY_SOURCES.map(async (source) => ({
+        source,
+        items: await querySource(source),
+      }))
+    );
+
+    for (const { source, items } of sourceResults) {
+      sections.push({
+        key: source.key,
+        label: source.label,
+        count: items.length,
+        items,
+      });
+      allItems.push(...items);
+    }
+
+    // Include the canonical EHR timeline in the same patient-centric timeline.
+    const ehrItems: IClinicalSummaryItem[] = ehr.timeline.map((event) => ({
+      id: String(event.resourceId || event.eventId || ''),
+      resourceType: String(event.resourceType || 'EHR'),
+      date: event.occurredAt as Date | string | undefined,
+      title: String(
+        (event.resource as AnyRecord)?.code?.coding?.[0]?.display ||
+        (event.resource as AnyRecord)?.description ||
+        event.resourceType ||
+        'Clinical event'
+      ),
+      status: (event.resource as AnyRecord)?.status as string | undefined,
+      summary: (event.resource as AnyRecord)?.note?.[0]?.text as string | undefined,
+      details: event.resource as Record<string, unknown>,
+    }));
+
+    const timeline = [...allItems, ...ehrItems].sort(
+      (a, b) => new Date(String(b.date || 0)).getTime() - new Date(String(a.date || 0)).getTime()
+    );
+
+    const findSection = (key: string) => sections.find((section) => section.key === key)?.items || [];
+
+    const activeAdmissions = findSection('admissions').filter((item) =>
+      ['ADMITTED', 'ACTIVE', 'IN_PROGRESS'].includes(String(item.status || '').toUpperCase())
+    );
+
+    const activeIcuAdmissions = findSection('icu').filter((item) =>
+      String(item.title).toLowerCase().includes('icu') ||
+      ['ADMITTED', 'ACTIVE', 'IN_PROGRESS'].includes(String(item.status || '').toUpperCase())
+    );
+
+    const recentDiagnoses = [
+      ...ehr.resources.Condition.map((resource) => this.resourceSummary('Condition', resource)),
+      ...findSection('outpatient'),
+      ...findSection('consultations'),
+    ].filter((item) =>
+      /diagnos|condition|assessment/i.test(`${item.title} ${item.summary || ''}`)
+    ).slice(0, 20);
+
+    const recentProcedures = [
+      ...ehr.resources.Procedure.map((resource) => this.resourceSummary('Procedure', resource)),
+      ...findSection('surgery'),
+      ...findSection('ot'),
+      ...findSection('dental'),
+    ].slice(0, 20);
+
+    const recentLaboratory = [
+      ...ehr.resources.Observation.map((resource) => this.resourceSummary('Observation', resource)),
+      ...findSection('laboratory'),
+    ].slice(0, 20);
+
+    const recentRadiology = findSection('radiology').slice(0, 20);
+
+    const upcomingAppointments = findSection('appointments').filter((item) => {
+      const date = item.date ? new Date(String(item.date)).getTime() : 0;
+      return date >= Date.now();
+    }).slice(0, 20);
+
+    const medicationItems = [
+      ...ehr.resources.MedicationStatement.map((resource) => this.resourceSummary('MedicationStatement', resource)),
+      ...findSection('pharmacy'),
+    ].filter((item) => {
+      const status = String(item.status || '').toUpperCase();
+      return !status || !['CANCELLED', 'DISCONTINUED', 'COMPLETED', 'STOPPED', 'REVOKED'].includes(status);
+    }).slice(0, 50);
+
+    const latestVitals = [...(patient.vitalsHistory || [])]
+      .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime())[0];
+
+    const overview: PatientRegistryOverview = {
+      totalClinicalRecords: timeline.length,
+      activeMedications: medicationItems,
+      activeAdmissions,
+      activeIcuAdmissions,
+      recentDiagnoses,
+      recentProcedures,
+      recentLaboratory,
+      recentRadiology,
+      upcomingAppointments,
+      latestVitals: latestVitals ? {
+        ...latestVitals,
+        recordedBy: String(latestVitals.recordedBy),
+        encounterId: latestVitals.encounterId ? String(latestVitals.encounterId) : undefined,
+      } : undefined,
+    };
+
+    await this.audit(
+      hospitalId,
+      patientId,
+      actor,
+      'READ',
+      ['PATIENT_REGISTRY'],
+      true,
+      'Cross-module patient registry requested.'
+    );
+
+    return {
+      patient,
+      overview,
+      sections,
+      ehr,
+      timeline,
+    };
   }
 
   static async getClinicalSummary(

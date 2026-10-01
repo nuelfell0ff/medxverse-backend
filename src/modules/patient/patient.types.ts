@@ -320,3 +320,32 @@ export interface PatientEhrChart {
   timeline: Record<string, unknown>[];
   resourceCount: number;
 }
+
+
+export interface PatientRegistrySection {
+  key: string;
+  label: string;
+  count: number;
+  items: IClinicalSummaryItem[];
+}
+
+export interface PatientRegistryOverview {
+  totalClinicalRecords: number;
+  activeMedications: IClinicalSummaryItem[];
+  activeAdmissions: IClinicalSummaryItem[];
+  activeIcuAdmissions: IClinicalSummaryItem[];
+  recentDiagnoses: IClinicalSummaryItem[];
+  recentProcedures: IClinicalSummaryItem[];
+  recentLaboratory: IClinicalSummaryItem[];
+  recentRadiology: IClinicalSummaryItem[];
+  upcomingAppointments: IClinicalSummaryItem[];
+  latestVitals?: Record<string, unknown>;
+}
+
+export interface PatientRegistry {
+  patient: IPatientDocument;
+  overview: PatientRegistryOverview;
+  sections: PatientRegistrySection[];
+  ehr: PatientEhrChart;
+  timeline: IClinicalSummaryItem[];
+}

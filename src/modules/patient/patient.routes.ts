@@ -15,6 +15,7 @@ router.post('/', authorize(
 
 router.get('/', PatientController.list);
 router.get('/:id/clinical-summary', PatientController.getClinicalSummary);
+router.get('/:id/registry', PatientController.getPatientRegistry);
 router.get('/:id/ehr', PatientController.getEHR);
 router.get('/:id', PatientController.getById);
 
