@@ -279,6 +279,8 @@ export interface IConsentRecordDocument extends IConsentRecord, Document {
 export interface IClinicalSummaryItem {
   id?: string;
   resourceType: FhirResourceType | string;
+  sourceModel?: string;
+  moduleKey?: string;
   date?: Date | string;
   title: string;
   status?: string;
