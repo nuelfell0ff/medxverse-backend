@@ -246,7 +246,7 @@ function sanitizeRegistryStaff(value: unknown): unknown {
 
 function sanitizeRegistryDetails(row: AnyRecord, modelName: string): AnyRecord {
   return {
-    ...sanitizeRegistryStaff(row),
+    ...(sanitizeRegistryStaff(row) as AnyRecord),
     _registryModel: modelName,
   };
 }
@@ -1292,6 +1292,7 @@ export class PatientService {
   ): Promise<PatientRegistry> {
     const patient = await this.assertPatient(hospitalId, patientId);
     const ehr = await this.getEHRChart(hospitalId, patientId, actor);
+    const sanitizedEhr = sanitizeRegistryStaff(ehr) as PatientEhrChart;
     const patientObjectId = new Types.ObjectId(patientId);
     const hospitalObjectId = new Types.ObjectId(hospitalId);
     const sections: PatientRegistrySection[] = [];
@@ -1420,7 +1421,7 @@ export class PatientService {
       allItems.push(...section.items);
     }
 
-    const ehrItems: IClinicalSummaryItem[] = ehr.timeline.map((event) => ({
+    const ehrItems: IClinicalSummaryItem[] = sanitizedEhr.timeline.map((event) => ({
       id: String(event.resourceId || event.eventId || ''),
       resourceType: String(event.resourceType || 'EHR'),
       date: event.occurredAt as Date | string | undefined,
@@ -1446,15 +1447,15 @@ export class PatientService {
       ['ADMITTED', 'ACTIVE', 'IN_PROGRESS'].includes(String(item.status || '').toUpperCase())
     );
     const recentDiagnoses = [
-      ...ehr.resources.Condition.map((resource) => this.resourceSummary('Condition', resource)),
+      ...sanitizedEhr.resources.Condition.map((resource) => this.resourceSummary('Condition', resource)),
       ...findSection('outpatient'), ...findSection('consultations'),
     ].filter((item) => /diagnos|condition|assessment/i.test(`${item.title} ${item.summary || ''}`)).slice(0, 50);
     const recentProcedures = [
-      ...ehr.resources.Procedure.map((resource) => this.resourceSummary('Procedure', resource)),
+      ...sanitizedEhr.resources.Procedure.map((resource) => this.resourceSummary('Procedure', resource)),
       ...findSection('surgery'), ...findSection('ot'), ...findSection('dental'),
     ].slice(0, 50);
     const recentLaboratory = [
-      ...ehr.resources.Observation.map((resource) => this.resourceSummary('Observation', resource)),
+      ...sanitizedEhr.resources.Observation.map((resource) => this.resourceSummary('Observation', resource)),
       ...findSection('laboratory'),
     ].slice(0, 50);
     const recentRadiology = findSection('radiology').slice(0, 50);
@@ -1463,7 +1464,7 @@ export class PatientService {
       return date >= Date.now();
     }).slice(0, 50);
     const medicationItems = [
-      ...ehr.resources.MedicationStatement.map((resource) => this.resourceSummary('MedicationStatement', resource)),
+      ...sanitizedEhr.resources.MedicationStatement.map((resource) => this.resourceSummary('MedicationStatement', resource)),
       ...findSection('pharmacy'),
     ].filter((item) => {
       const status = String(item.status || '').toUpperCase();
@@ -1500,7 +1501,7 @@ export class PatientService {
       'Comprehensive cross-module patient registry requested.'
     );
 
-    return { patient, overview, sections, ehr, timeline };
+    return { patient, overview, sections, ehr: sanitizedEhr, timeline };
   }
 
   static async getClinicalSummary(
