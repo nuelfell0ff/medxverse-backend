@@ -215,6 +215,42 @@ function registryRefPaths(model: any): string[] {
   return Array.from(paths);
 }
 
+const REGISTRY_STAFF_FIELDS = /doctor|physician|surgeon|nurse|clinician|provider|staff|assignedTo|performedBy|createdBy|approvedBy|orderingDoctor/i;
+
+function registryPersonName(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const person = value as AnyRecord;
+  const fullName = [person.firstName, person.otherNames, person.lastName]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
+  return fullName || person.name || person.fullName || person.displayName || person.username;
+}
+
+function sanitizeRegistryStaff(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => sanitizeRegistryStaff(item));
+  if (!value || typeof value !== 'object') return value;
+
+  const source = value as AnyRecord;
+  const result: AnyRecord = {};
+  Object.entries(source).forEach(([key, nestedValue]) => {
+    if (REGISTRY_STAFF_FIELDS.test(key)) {
+      result[key] = registryPersonName(nestedValue) || (typeof nestedValue === 'string' ? nestedValue : 'Linked staff member');
+      return;
+    }
+    result[key] = sanitizeRegistryStaff(nestedValue);
+  });
+  return result;
+}
+
+function sanitizeRegistryDetails(row: AnyRecord, modelName: string): AnyRecord {
+  return {
+    ...sanitizeRegistryStaff(row),
+    _registryModel: modelName,
+  };
+}
+
 async function registryPopulate(model: any, query: any): Promise<any[]> {
   let cursor = query;
 
@@ -1357,9 +1393,9 @@ export class PatientService {
           title: buildTitle(descriptor.label, descriptor.modelName, row),
           status: row.status || row.resultStatus || row.queueStatus || row.orderStatus || row.paymentStatus || row.claimStatus,
           summary: buildSummary(row),
-          // Complete source document, including populated staff/providers and
-          // all module-specific fields (e.g. operative notes and billing).
-          details: { ...row, _registryModel: descriptor.modelName },
+          // Keep staff/provider references readable without exposing the
+          // populated provider document in the patient registry response.
+          details: sanitizeRegistryDetails(row, descriptor.modelName),
         }));
 
         return { descriptor, items };
