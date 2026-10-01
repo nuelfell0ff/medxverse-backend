@@ -217,9 +217,26 @@ function registryRefPaths(model: any): string[] {
 
 async function registryPopulate(model: any, query: any): Promise<any[]> {
   let cursor = query;
+
   for (const path of registryRefPaths(model)) {
-    try { cursor = cursor.populate(path); } catch { /* legacy path */ }
+    try {
+      const schemaType = model.schema.path(path);
+      const ref = schemaType?.options?.ref || schemaType?.caster?.options?.ref;
+
+      // A few HMO/claims schemas use the historical ref name "Provider",
+      // while the current provider module registers the model as HMOProvider.
+      // Populate those references explicitly so the registry returns the
+      // provider's readable name instead of a Mongo ObjectId.
+      if (ref === 'Provider' && !mongoose.models.Provider && mongoose.models.HMOProvider) {
+        cursor = cursor.populate({ path, model: 'HMOProvider' });
+      } else {
+        cursor = cursor.populate(path);
+      }
+    } catch {
+      // Population is best-effort. The source record must still be returned.
+    }
   }
+
   return cursor.lean().exec();
 }
 
