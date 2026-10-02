@@ -141,7 +141,10 @@ const PATIENT_REGISTRY_SOURCES: RegistrySource[] = [
   // must not appear as duplicate appointments in the patient view.
   { key: 'appointments', label: 'Appointments', modelNames: ['Appointment'] },
   { key: 'bedWard', label: 'Bed & Ward', modelNames: ['BedAssignment', 'BedStatusEvent', 'TransferRequest'] },
-  { key: 'billing', label: 'Billing', modelNames: ['BillingAccount', 'BillingCharge', 'BillingPayment', 'BillingRefund', 'PaymentPlan'], limit: 100 },
+  // BillingAccount is the parent container for the patient's charges and
+  // payments, not a billable event. Returning it alongside its children makes
+  // one billing action appear twice in the patient registry.
+  { key: 'billing', label: 'Billing', modelNames: ['BillingCharge', 'BillingPayment', 'BillingRefund', 'PaymentPlan'], limit: 100 },
   { key: 'bloodBank', label: 'Blood Bank', modelNames: ['TransfusionRequest'] },
   { key: 'consultations', label: 'Consultations', modelNames: ['Consultation'] },
   { key: 'dental', label: 'Dental', modelNames: ['DentalChart', 'DentalProcedure'] },
@@ -195,6 +198,7 @@ const REGISTRY_EXCLUDED_MODELS = new Set([
   'QueueTicket',
   'ReminderLog',
   'NoShowRiskScore',
+  'BillingAccount',
 ]);
 
 function registryHumanize(value: string): string {
@@ -237,6 +241,8 @@ function registryPersonName(value: unknown): string | undefined {
     .trim();
 
   return fullName || person.name || person.fullName || person.displayName || person.username ||
+    person.accountName || person.organizationName || person.facilityName || person.departmentName ||
+    person.wardName || person.roomName || person.label ||
     registryPersonName(person.profile) || registryPersonName(person.user);
 }
 
@@ -272,6 +278,57 @@ async function resolveRegistryPersonName(
   return name;
 }
 
+const REGISTRY_LINK_FIELDS = /^(?:hospital|patient|billingAccount|account|department|ward|bed|room|doctor|physician|surgeon|nurse|clinician|provider|staff|assignedTo|performedBy|createdBy|approvedBy|receivedBy|requestedBy|reconciledBy|user|member|enrollee)(?:Id|By)?$/i;
+
+function isRegistryLinkField(fieldKey: string): boolean {
+  return fieldKey !== '_id' && (REGISTRY_LINK_FIELDS.test(fieldKey) || /(?:Id|By)$/i.test(fieldKey));
+}
+
+async function resolveRegistryLinkedName(
+  value: unknown,
+  fieldKey: string,
+  hospitalId: Types.ObjectId,
+  cache: Map<string, string>
+): Promise<string | undefined> {
+  const directName = registryPersonName(value);
+  if (directName) return directName;
+
+  const id = registryReferenceId(value);
+  if (!id) return undefined;
+  if (cache.has(id)) return cache.get(id);
+
+  if (REGISTRY_STAFF_FIELDS.test(fieldKey)) {
+    return resolveRegistryPersonName(value, hospitalId, cache);
+  }
+
+  const objectId = new Types.ObjectId(id);
+  const candidates = fieldKey.toLowerCase().includes('patient')
+    ? [PatientModel]
+    : Object.values(mongoose.models);
+  const nameFields = [
+    'name', 'fullName', 'displayName', 'accountName', 'organizationName', 'facilityName',
+    'hospitalName', 'departmentName', 'wardName', 'roomName', 'label', 'firstName', 'lastName',
+  ];
+
+  for (const model of candidates) {
+    try {
+      if (!model?.schema?.path('_id')) continue;
+      const selectable = nameFields.filter((field) => model.schema.path(field));
+      if (!selectable.length) continue;
+      const found = await model.findById(objectId).select(selectable.join(' ')).lean().exec();
+      const name = registryPersonName(found);
+      if (name) {
+        cache.set(id, name);
+        return name;
+      }
+    } catch {
+      // A reference can point to a model unavailable in this deployment.
+    }
+  }
+
+  return undefined;
+}
+
 async function sanitizeRegistryStaff(
   value: unknown,
   hospitalId: Types.ObjectId,
@@ -293,9 +350,9 @@ async function sanitizeRegistryStaff(
   const source = value as AnyRecord;
   const result: AnyRecord = {};
   for (const [key, nestedValue] of Object.entries(source)) {
-    if (REGISTRY_STAFF_FIELDS.test(key)) {
-      result[key] = await resolveRegistryPersonName(nestedValue, hospitalId, cache) ||
-        (typeof nestedValue === 'string' && !Types.ObjectId.isValid(nestedValue) ? nestedValue : 'Linked staff member');
+    if (REGISTRY_STAFF_FIELDS.test(key) || isRegistryLinkField(key)) {
+      result[key] = await resolveRegistryLinkedName(nestedValue, key, hospitalId, cache) ||
+        (typeof nestedValue === 'string' && !Types.ObjectId.isValid(nestedValue) ? nestedValue : 'Linked record');
       continue;
     }
     result[key] = await sanitizeRegistryStaff(nestedValue, hospitalId, cache, seen);
