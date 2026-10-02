@@ -20,6 +20,11 @@ export interface AuthenticatedRequest extends Request {
 
 const auth = (req: Request) => (req as AuthenticatedRequest).user;
 
+function normalizeCareLevel(value: unknown): CareLevel {
+  if (value === 'LEVEL_1_ICU') return CareLevel.LEVEL_1_HIGH_DEPENDENCY;
+  return value as CareLevel;
+}
+
 export class ICUController {
   public async createAdmission(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -36,7 +41,7 @@ export class ICUController {
         patientId: req.body.patientId,
         wardId: req.body.wardId,
         bedNumber: req.body.bedNumber,
-        careLevel: req.body.careLevel as CareLevel,
+        careLevel: normalizeCareLevel(req.body.careLevel),
         primaryDiagnosis: req.body.primaryDiagnosis,
         admissionReason: req.body.admissionReason,
         attendingPhysicianId: req.body.attendingPhysicianId,
