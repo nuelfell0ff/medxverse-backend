@@ -136,7 +136,10 @@ type RegistrySource = {
 const PATIENT_REGISTRY_SOURCES: RegistrySource[] = [
   { key: 'admissions', label: 'Admissions', modelNames: ['InpatientAdmission'] },
   { key: 'ambulance', label: 'Ambulance', modelNames: ['TripRequest'] },
-  { key: 'appointments', label: 'Appointments', modelNames: ['Appointment', 'QueueTicket', 'ReminderLog', 'NoShowRiskScore'] },
+  // The patient registry should show booked appointments only. Queue tickets,
+  // reminders, and risk scores are operational children of an appointment and
+  // must not appear as duplicate appointments in the patient view.
+  { key: 'appointments', label: 'Appointments', modelNames: ['Appointment'] },
   { key: 'bedWard', label: 'Bed & Ward', modelNames: ['BedAssignment', 'BedStatusEvent', 'TransferRequest'] },
   { key: 'billing', label: 'Billing', modelNames: ['BillingAccount', 'BillingCharge', 'BillingPayment', 'BillingRefund', 'PaymentPlan'], limit: 100 },
   { key: 'bloodBank', label: 'Blood Bank', modelNames: ['TransfusionRequest'] },
@@ -186,7 +189,13 @@ const REGISTRY_DATE_FIELDS = [
 /** Schema-driven registry helpers: every registered model with patientId is
  * included automatically, so adding a new HMS module does not require another
  * patient-registry patch. */
-const REGISTRY_EXCLUDED_MODELS = new Set(['Patient', 'PatientEhrView']);
+const REGISTRY_EXCLUDED_MODELS = new Set([
+  'Patient',
+  'PatientEhrView',
+  'QueueTicket',
+  'ReminderLog',
+  'NoShowRiskScore',
+]);
 
 function registryHumanize(value: string): string {
   return value
@@ -300,8 +309,11 @@ async function sanitizeRegistryDetails(
   hospitalId: Types.ObjectId,
   cache: Map<string, string>
 ): Promise<AnyRecord> {
+  const sanitized = await sanitizeRegistryStaff(row, hospitalId, cache) as AnyRecord;
+  if (modelName === 'Appointment') delete sanitized.occupiedSlotKeys;
+
   return {
-    ...(await sanitizeRegistryStaff(row, hospitalId, cache) as AnyRecord),
+    ...sanitized,
     _registryModel: modelName,
   };
 }
