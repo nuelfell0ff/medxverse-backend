@@ -243,7 +243,7 @@ function registryPersonName(value: unknown): string | undefined {
 
   return fullName || person.name || person.fullName || person.displayName || person.username ||
     person.accountName || person.organizationName || person.facilityName || person.departmentName ||
-    person.wardName || person.roomName || person.label ||
+    person.wardName || person.roomName || person.billingId || person.code || person.label ||
     registryPersonName(person.profile) || registryPersonName(person.user);
 }
 
@@ -322,6 +322,20 @@ async function resolveRegistryLinkedName(
     }
   }
 
+  if (normalizedField === 'billingaccountid') {
+    const billingAccount = mongoose.models.BillingAccount
+      ? await mongoose.models.BillingAccount.findById(objectId)
+        .select('billingId accountName')
+        .lean()
+        .exec()
+      : undefined;
+    const billingId = registryPersonName(billingAccount);
+    if (billingId) {
+      cache.set(id, billingId);
+      return billingId;
+    }
+  }
+
   if (REGISTRY_STAFF_FIELDS.test(fieldKey)) {
     return resolveRegistryPersonName(value, hospitalId, cache);
   }
@@ -331,7 +345,7 @@ async function resolveRegistryLinkedName(
     : Object.values(mongoose.models);
   const nameFields = [
     'name', 'fullName', 'displayName', 'accountName', 'organizationName', 'facilityName',
-    'hospitalName', 'departmentName', 'wardName', 'roomName', 'label', 'firstName', 'lastName',
+    'hospitalName', 'departmentName', 'wardName', 'roomName', 'billingId', 'code', 'label', 'firstName', 'lastName',
   ];
 
   for (const model of candidates) {
