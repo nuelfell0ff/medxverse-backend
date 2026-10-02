@@ -413,6 +413,11 @@ async function registryPopulate(model: any, query: any): Promise<any[]> {
       // provider's readable name instead of a Mongo ObjectId.
       if (ref === 'Provider' && !mongoose.models.Provider && mongoose.models.HMOProvider) {
         cursor = cursor.populate({ path, model: 'HMOProvider' });
+      } else if (ref && !mongoose.models[ref]) {
+        // Some legacy schemas refer to renamed or optional models (for
+        // example Charge -> BillingCharge). Do not let one unavailable
+        // population target hide the complete patient record.
+        continue;
       } else {
         cursor = cursor.populate(path);
       }
