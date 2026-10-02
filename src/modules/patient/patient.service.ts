@@ -90,6 +90,8 @@ import '../staff/staff.model.js';
 import '../surgery/surgery.model.js';
 import '../tariffs/tariffs.model.js';
 import '../telemedicine/telemedicine.model.js';
+import { Staff } from '../staff/staff.model.js';
+import { HMOProviderModel } from '../provider/provider.model.js';
 import {
   CreatePatientDTO,
   UpdatePatientDTO,
@@ -220,19 +222,57 @@ const REGISTRY_STAFF_FIELDS = /doctor|physician|surgeon|nurse|clinician|provider
 function registryPersonName(value: unknown): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const person = value as AnyRecord;
-  const fullName = [person.firstName, person.otherNames, person.lastName]
+  const fullName = [person.firstName, person.middleName, person.otherNames, person.lastName]
     .filter(Boolean)
     .join(' ')
     .trim();
 
-  return fullName || person.name || person.fullName || person.displayName || person.username;
+  return fullName || person.name || person.fullName || person.displayName || person.username ||
+    registryPersonName(person.profile) || registryPersonName(person.user);
 }
 
-function sanitizeRegistryStaff(value: unknown, seen = new WeakSet<object>()): unknown {
+function registryReferenceId(value: unknown): string | undefined {
+  if (typeof value === 'string' && Types.ObjectId.isValid(value)) return value;
+  if (!value || typeof value !== 'object') return undefined;
+  const reference = (value as AnyRecord)._id || (value as AnyRecord).id || (value as AnyRecord).$oid;
+  return typeof reference === 'string' && Types.ObjectId.isValid(reference) ? reference : undefined;
+}
+
+async function resolveRegistryPersonName(
+  value: unknown,
+  hospitalId: Types.ObjectId,
+  cache: Map<string, string>
+): Promise<string | undefined> {
+  const directName = registryPersonName(value);
+  if (directName) return directName;
+
+  const id = registryReferenceId(value);
+  if (!id) return undefined;
+  if (cache.has(id)) return cache.get(id);
+
+  const [staff, provider] = await Promise.all([
+    Staff.findOne({ _id: new Types.ObjectId(id), hospitalId })
+      .select('firstName middleName otherNames lastName')
+      .lean()
+      .exec(),
+    HMOProviderModel.findById(new Types.ObjectId(id)).select('name').lean().exec(),
+  ]);
+
+  const name = registryPersonName(staff) || registryPersonName(provider);
+  if (name) cache.set(id, name);
+  return name;
+}
+
+async function sanitizeRegistryStaff(
+  value: unknown,
+  hospitalId: Types.ObjectId,
+  cache: Map<string, string>,
+  seen = new WeakSet<object>()
+): Promise<unknown> {
   if (Array.isArray(value)) {
     if (seen.has(value)) return '[Circular]';
     seen.add(value);
-    return value.map((item) => sanitizeRegistryStaff(item, seen));
+    return Promise.all(value.map((item) => sanitizeRegistryStaff(item, hospitalId, cache, seen)));
   }
   if (!value || typeof value !== 'object') return value;
 
@@ -243,19 +283,25 @@ function sanitizeRegistryStaff(value: unknown, seen = new WeakSet<object>()): un
 
   const source = value as AnyRecord;
   const result: AnyRecord = {};
-  Object.entries(source).forEach(([key, nestedValue]) => {
+  for (const [key, nestedValue] of Object.entries(source)) {
     if (REGISTRY_STAFF_FIELDS.test(key)) {
-      result[key] = registryPersonName(nestedValue) || (typeof nestedValue === 'string' ? nestedValue : 'Linked staff member');
-      return;
+      result[key] = await resolveRegistryPersonName(nestedValue, hospitalId, cache) ||
+        (typeof nestedValue === 'string' && !Types.ObjectId.isValid(nestedValue) ? nestedValue : 'Linked staff member');
+      continue;
     }
-    result[key] = sanitizeRegistryStaff(nestedValue, seen);
-  });
+    result[key] = await sanitizeRegistryStaff(nestedValue, hospitalId, cache, seen);
+  }
   return result;
 }
 
-function sanitizeRegistryDetails(row: AnyRecord, modelName: string): AnyRecord {
+async function sanitizeRegistryDetails(
+  row: AnyRecord,
+  modelName: string,
+  hospitalId: Types.ObjectId,
+  cache: Map<string, string>
+): Promise<AnyRecord> {
   return {
-    ...(sanitizeRegistryStaff(row) as AnyRecord),
+    ...(await sanitizeRegistryStaff(row, hospitalId, cache) as AnyRecord),
     _registryModel: modelName,
   };
 }
@@ -1300,10 +1346,11 @@ export class PatientService {
     actor: Actor
   ): Promise<PatientRegistry> {
     const patient = await this.assertPatient(hospitalId, patientId);
-    const ehr = await this.getEHRChart(hospitalId, patientId, actor);
-    const sanitizedEhr = sanitizeRegistryStaff(ehr) as PatientEhrChart;
     const patientObjectId = new Types.ObjectId(patientId);
     const hospitalObjectId = new Types.ObjectId(hospitalId);
+    const registryNameCache = new Map<string, string>();
+    const ehr = await this.getEHRChart(hospitalId, patientId, actor);
+    const sanitizedEhr = await sanitizeRegistryStaff(ehr, hospitalObjectId, registryNameCache) as PatientEhrChart;
     const sections: PatientRegistrySection[] = [];
     const allItems: IClinicalSummaryItem[] = [];
 
@@ -1394,7 +1441,7 @@ export class PatientService {
           model.find(filter).sort({ createdAt: -1, updatedAt: -1 })
         );
 
-        const items: IClinicalSummaryItem[] = rows.map((row) => ({
+        const items: IClinicalSummaryItem[] = await Promise.all(rows.map(async (row) => ({
           id: row._id ? String(row._id) : undefined,
           resourceType: descriptor.key,
           sourceModel: descriptor.modelName,
@@ -1405,8 +1452,8 @@ export class PatientService {
           summary: buildSummary(row),
           // Keep staff/provider references readable without exposing the
           // populated provider document in the patient registry response.
-          details: sanitizeRegistryDetails(row, descriptor.modelName),
-        }));
+          details: await sanitizeRegistryDetails(row, descriptor.modelName, hospitalObjectId, registryNameCache),
+        })));
 
         return { descriptor, items };
       } catch {
