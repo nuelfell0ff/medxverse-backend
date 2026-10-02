@@ -16,15 +16,33 @@ export class AdmissionsController {
       const authReq = req as AuthenticatedRequest;
       const hospitalId = authReq.user.hospitalId;
 
-      const { patientId, admittingDoctorId, wardId, bedNumber, bedType, admissionReason } = req.body;
+      const {
+        patientId,
+        admittingDoctorId,
+        attendingPhysicianId,
+        wardId,
+        bedNumber,
+        bedType,
+        admissionReason,
+      } = req.body;
+
+      if (!patientId || !wardId || !bedNumber || !admissionReason) {
+        res.status(400).json({
+          success: false,
+          message: 'Patient, ward, bed number, and admission reason are required.',
+        });
+        return;
+      }
+
+      const doctorId = admittingDoctorId || attendingPhysicianId || authReq.user._id;
 
       const admission = await admissionsService.admitPatient({
         hospitalId,
         patientId,
-        admittingDoctorId: admittingDoctorId || authReq.user._id,
+        admittingDoctorId: doctorId,
         wardId,
         bedNumber,
-        bedType: bedType as BedType,
+        bedType: (bedType || BedType.ICU) as BedType,
         admissionReason,
       });
 

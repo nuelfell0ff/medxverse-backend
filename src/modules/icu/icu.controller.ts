@@ -24,6 +24,14 @@ export class ICUController {
   public async createAdmission(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const user = auth(req);
+      if (!req.body.patientId || !req.body.wardId || !req.body.bedNumber || !req.body.careLevel || !req.body.primaryDiagnosis || !req.body.admissionReason) {
+        res.status(400).json({
+          success: false,
+          message: 'Patient, ICU ward, bed number, care level, primary diagnosis, and admission reason are required.',
+        });
+        return;
+      }
+
       const admission = await icuService.createAdmission(user.hospitalId, {
         patientId: req.body.patientId,
         wardId: req.body.wardId,
