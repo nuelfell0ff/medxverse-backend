@@ -92,6 +92,7 @@ import '../tariffs/tariffs.model.js';
 import '../telemedicine/telemedicine.model.js';
 import { Staff } from '../staff/staff.model.js';
 import { HMOProviderModel } from '../provider/provider.model.js';
+import { Account } from '../auth/auth.model.js';
 import {
   CreatePatientDTO,
   UpdatePatientDTO,
@@ -297,11 +298,34 @@ async function resolveRegistryLinkedName(
   if (!id) return undefined;
   if (cache.has(id)) return cache.get(id);
 
+  const normalizedField = fieldKey.toLowerCase();
+  const objectId = new Types.ObjectId(id);
+
+  if (normalizedField === 'hospitalid' || normalizedField === 'accountid') {
+    const account = await Account.findById(objectId).select('name').lean().exec();
+    const accountName = registryPersonName(account);
+    if (accountName) {
+      cache.set(id, accountName);
+      return accountName;
+    }
+  }
+
+  if (normalizedField === 'patientid') {
+    const patient = await PatientModel.findById(objectId)
+      .select('firstName otherNames middleName lastName')
+      .lean()
+      .exec();
+    const patientName = registryPersonName(patient);
+    if (patientName) {
+      cache.set(id, patientName);
+      return patientName;
+    }
+  }
+
   if (REGISTRY_STAFF_FIELDS.test(fieldKey)) {
     return resolveRegistryPersonName(value, hospitalId, cache);
   }
 
-  const objectId = new Types.ObjectId(id);
   const candidates = fieldKey.toLowerCase().includes('patient')
     ? [PatientModel]
     : Object.values(mongoose.models);
