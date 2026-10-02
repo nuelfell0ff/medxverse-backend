@@ -156,11 +156,16 @@ const PATIENT_REGISTRY_SOURCES: RegistrySource[] = [
   { key: 'laboratory', label: 'Laboratory', modelNames: ['LabOrder'] },
   { key: 'mch', label: 'Maternal & Child Health', modelNames: ['MchRecord'] },
   { key: 'mentalHealth', label: 'Mental Health', modelNames: ['MentalHealthAssessment', 'PsychotherapySession'] },
-  { key: 'ot', label: 'Operating Theatre', modelNames: ['SurgicalCase'] },
+  // Both OT (SurgicalCase) and Surgery (SurgeryCase) represent the same
+  // clinical event from different modules. Merging them under one key prevents
+  // a single surgery appearing as two separate cards in the patient registry.
+  { key: 'surgery', label: 'Surgery & OT', modelNames: ['SurgeryCase', 'SurgicalCase'] },
   { key: 'outpatient', label: 'Outpatient', modelNames: ['Outpatient'] },
-  { key: 'pharmacy', label: 'Pharmacy', modelNames: ['Prescription', 'DispenseRecord', 'ControlledSubstanceLog'] },
+  // DispenseRecord is an operational child of Prescription. The Prescription
+  // already carries the DISPENSED status once dispensed, so including
+  // DispenseRecord creates a duplicate pharmacy card for the same event.
+  { key: 'pharmacy', label: 'Pharmacy', modelNames: ['Prescription', 'ControlledSubstanceLog'] },
   { key: 'radiology', label: 'Radiology', modelNames: ['RadiologyOrder'] },
-  { key: 'surgery', label: 'Surgery', modelNames: ['SurgeryCase'] },
   { key: 'telemedicine', label: 'Telemedicine', modelNames: ['TelemedicineSession', 'TelemedicineMessage'] },
 ];
 
@@ -200,6 +205,12 @@ const REGISTRY_EXCLUDED_MODELS = new Set([
   'ReminderLog',
   'NoShowRiskScore',
   'BillingAccount',
+  // DispenseRecord is an operational child of Prescription; excluded to prevent
+  // duplicate pharmacy cards (one prescription + one dispense) for the same event.
+  'DispenseRecord',
+  // SurgicalCase is included under the merged 'surgery' key alongside SurgeryCase.
+  // Listing it here prevents the auto-discover loop from adding it a second time.
+  // (It is already handled explicitly in PATIENT_REGISTRY_SOURCES.)
 ]);
 
 function registryHumanize(value: string): string {
@@ -266,15 +277,22 @@ async function resolveRegistryPersonName(
   if (!id) return undefined;
   if (cache.has(id)) return cache.get(id);
 
-  const [staff, provider] = await Promise.all([
+  // Try Staff first (most clinical staff), then Account (some modules store
+  // the Account _id instead of the Staff _id — e.g. radiology orderingDoctorId),
+  // then HMO providers as a last resort.
+  const [staff, account, provider] = await Promise.all([
     Staff.findOne({ _id: new Types.ObjectId(id), hospitalId })
-      .select('firstName middleName otherNames lastName')
+      .select('firstName middleName otherNames lastName name')
+      .lean()
+      .exec(),
+    Account.findById(new Types.ObjectId(id))
+      .select('name firstName lastName email')
       .lean()
       .exec(),
     HMOProviderModel.findById(new Types.ObjectId(id)).select('name').lean().exec(),
   ]);
 
-  const name = registryPersonName(staff) || registryPersonName(provider);
+  const name = registryPersonName(staff) || registryPersonName(account) || registryPersonName(provider);
   if (name) cache.set(id, name);
   return name;
 }
@@ -798,7 +816,25 @@ export class PatientService {
     }
 
     const [patients, total] = await Promise.all([
-      PatientModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      PatientModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        // Only fetch the fields the patient list view needs. Crucially this
+        // avoids loading the unbounded vitalsHistory embedded array and any
+        // other large sub-documents for every patient in the result set.
+        .select(
+          '_id firstName otherNames lastName mrn universalPatientId gender ' +
+          'dateOfBirth phone email bloodGroup genotype allergies ' +
+          'isFlagged flagReason active createdAt ' +
+          'vitalsHistory._id vitalsHistory.recordedAt vitalsHistory.systolicBp ' +
+          'vitalsHistory.diastolicBp vitalsHistory.temperature vitalsHistory.pulseRate'
+        )
+        // lean() returns plain JavaScript objects instead of full Mongoose
+        // Document instances — significantly faster for read-only list views.
+        .lean()
+        .exec(),
       PatientModel.countDocuments(filter).exec(),
     ]);
 
