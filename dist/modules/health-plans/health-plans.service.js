@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { Types } from 'mongoose';
 import { BenefitCategory, BenefitStatus, HealthPlanStatus, HealthPlanType, } from './health-plans.types.js';
 import { BenefitDefinitionModel, HealthPlanModel, PlanBenefitModel, } from './health-plans.model.js';
@@ -44,6 +45,37 @@ const date = (value, field) => {
     return result;
 };
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * Generate an internal, human-readable code. Codes are never supplied by
+ * the client; they are created by the backend and remain immutable.
+ */
+const generatedCode = (prefix) => {
+    const date = new Date();
+    const stamp = [
+        date.getUTCFullYear(),
+        String(date.getUTCMonth() + 1).padStart(2, '0'),
+        String(date.getUTCDate()).padStart(2, '0'),
+    ].join('');
+    return `${prefix}-${stamp}-${randomBytes(4).toString('hex').toUpperCase()}`;
+};
+const createUniqueBenefitCode = async (hmoId) => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+        const code = generatedCode('BEN');
+        const exists = await BenefitDefinitionModel.exists({ hmoId, code });
+        if (!exists)
+            return code;
+    }
+    throw error('Unable to generate a unique benefit code', 500);
+};
+const createUniquePlanCode = async (hmoId) => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+        const code = generatedCode('HP');
+        const exists = await HealthPlanModel.exists({ hmoId, code });
+        if (!exists)
+            return code;
+    }
+    throw error('Unable to generate a unique health plan code', 500);
+};
 const validateRule = (input, fallback) => {
     const covered = input.covered ??
         fallback?.covered ??
@@ -150,11 +182,8 @@ export class HealthPlansService {
         if (!input || typeof input !== 'object') {
             throw error('Request body is required');
         }
-        const code = clean(input.code)?.toUpperCase();
+        const code = await createUniqueBenefitCode(owner);
         const name = clean(input.name);
-        if (!code) {
-            throw error('Benefit code is required');
-        }
         if (!name) {
             throw error('Benefit name is required');
         }
@@ -162,6 +191,10 @@ export class HealthPlansService {
             throw error('Invalid benefit category');
         }
         const rule = validateRule(input.defaultRule || {});
+        const status = input.status ?? BenefitStatus.DRAFT;
+        if (!Object.values(BenefitStatus).includes(status)) {
+            throw error('Invalid benefit status');
+        }
         try {
             return await BenefitDefinitionModel.create({
                 hmoId: owner,
@@ -169,8 +202,7 @@ export class HealthPlansService {
                 name,
                 description: clean(input.description),
                 category: input.category,
-                status: input.status ??
-                    BenefitStatus.DRAFT,
+                status,
                 defaultRule: rule,
             });
         }
@@ -234,13 +266,6 @@ export class HealthPlansService {
         if (!current)
             return null;
         const update = {};
-        if (input.code !== undefined) {
-            const code = clean(input.code)?.toUpperCase();
-            if (!code) {
-                throw error('Benefit code cannot be empty');
-            }
-            update.code = code;
-        }
         if (input.name !== undefined) {
             const name = clean(input.name);
             if (!name) {
@@ -259,6 +284,9 @@ export class HealthPlansService {
                 input.category;
         }
         if (input.status !== undefined) {
+            if (!Object.values(BenefitStatus).includes(input.status)) {
+                throw error('Invalid benefit status');
+            }
             update.status = input.status;
         }
         if (input.defaultRule !== undefined) {
@@ -292,11 +320,8 @@ export class HealthPlansService {
         if (!input || typeof input !== 'object') {
             throw error('Request body is required');
         }
-        const code = clean(input.code)?.toUpperCase();
+        const code = await createUniquePlanCode(owner);
         const name = clean(input.name);
-        if (!code) {
-            throw error('Plan code is required');
-        }
         if (!name) {
             throw error('Plan name is required');
         }
@@ -455,13 +480,6 @@ export class HealthPlansService {
         if (!current)
             return null;
         const update = {};
-        if (input.code !== undefined) {
-            const code = clean(input.code)?.toUpperCase();
-            if (!code) {
-                throw error('Plan code cannot be empty');
-            }
-            update.code = code;
-        }
         if (input.name !== undefined) {
             const name = clean(input.name);
             if (!name) {

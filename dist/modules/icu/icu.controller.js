@@ -1,14 +1,27 @@
 import { icuService } from './icu.service.js';
+import { CareLevel, } from './icu.types.js';
 const auth = (req) => req.user;
+function normalizeCareLevel(value) {
+    if (value === 'LEVEL_1_ICU')
+        return CareLevel.LEVEL_1_HIGH_DEPENDENCY;
+    return value;
+}
 export class ICUController {
     async createAdmission(req, res, next) {
         try {
             const user = auth(req);
+            if (!req.body.patientId || !req.body.wardId || !req.body.bedNumber || !req.body.careLevel || !req.body.primaryDiagnosis || !req.body.admissionReason) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Patient, ICU ward, bed number, care level, primary diagnosis, and admission reason are required.',
+                });
+                return;
+            }
             const admission = await icuService.createAdmission(user.hospitalId, {
                 patientId: req.body.patientId,
                 wardId: req.body.wardId,
                 bedNumber: req.body.bedNumber,
-                careLevel: req.body.careLevel,
+                careLevel: normalizeCareLevel(req.body.careLevel),
                 primaryDiagnosis: req.body.primaryDiagnosis,
                 admissionReason: req.body.admissionReason,
                 attendingPhysicianId: req.body.attendingPhysicianId,

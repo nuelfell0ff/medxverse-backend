@@ -29,7 +29,7 @@ export class EnrolleesController {
                 page,
                 limit,
                 status: req.query.status,
-                benefitPlanId: req.query.benefitPlanId,
+                healthPlanId: req.query.healthPlanId,
                 relationship: req.query.relationship,
                 search: req.query.search,
             });

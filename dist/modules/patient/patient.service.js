@@ -1,6 +1,84 @@
 import crypto from 'node:crypto';
 import mongoose, { Types } from 'mongoose';
 import { PatientModel, EncounterModel, ObservationModel, ConditionModel, MedicationStatementModel, DocumentReferenceModel, ProcedureModel, ClaimModel, EhrEventModel, ConsentRecordModel, EhrAuditLogModel, PatientEhrViewModel, } from './patient.model.js';
+// Register HMS model definitions before the patient registry queries them.
+// These are side-effect imports only; the patient module remains the owner of the
+// cross-module registry API. The registry itself is schema-driven and discovers
+// every registered model that carries a patientId field.
+import '../admissions/admissions.model.js';
+import '../ambulance/ambulance.model.js';
+import '../appointment/appointment.model.js';
+import '../bed-ward/bed-ward.model.js';
+import '../billing/billing.model.js';
+import '../blood-bank/blood-bank.model.js';
+import '../consultation/consultation.model.js';
+import '../dental/dental.model.js';
+import '../dietary/dietary.model.js';
+import '../emergency/emergency.model.js';
+import '../eye-clinic/eye-clinic.model.js';
+import '../icu/icu.model.js';
+import '../lab/lab.model.js';
+import '../mch/mch.model.js';
+import '../mental-health/mental-health.model.js';
+import '../ot/ot.model.js';
+import '../outpatient/outpatient.model.js';
+import '../pharmacy/pharmacy.model.js';
+import '../radiology/radiology.model.js';
+import '../surgery/surgery.model.js';
+import '../telemedicine/telemedicine.model.js';
+import '../administration/administration.model.js';
+import '../admissions/admissions.model.js';
+import '../ambulance/ambulance.model.js';
+import '../analytics/analytics.model.js';
+import '../appointment/appointment.model.js';
+import '../auth/auth.model.js';
+import '../bed-ward/bed-ward.model.js';
+import '../benefits/benefits.model.js';
+import '../billing/billing.model.js';
+import '../blood-bank/blood-bank.model.js';
+import '../claims/claims.model.js';
+import '../consultation/consultation.model.js';
+import '../dental/dental.model.js';
+import '../dietary/dietary.model.js';
+import '../eligibility/eligibility.model.js';
+import '../emergency/emergency.model.js';
+import '../enrollees/enrollees.card.model.js';
+import '../enrollees/enrollees.lifecycle.model.js';
+import '../enrollees/enrollees.model.js';
+import '../eye-clinic/eye-clinic.model.js';
+import '../health-plans/health-plans.model.js';
+import '../hmo/hmo.model.js';
+import '../hmo-billing/hmo-billing.model.js';
+import '../hmo-portals/hmo-portals.model.js';
+import '../hmo-utilization/hmo-utilization.model.js';
+import '../hms-dashboard/hms-dashboard.model.js';
+import '../hms-notifications/notifications.model.js';
+import '../hms-reports/reports.model.js';
+import '../icu/icu.model.js';
+import '../inventory/inventory.model.js';
+import '../lab/lab.extended.model.js';
+import '../lab/lab.model.js';
+import '../lexi-ai/lexi.model.js';
+import '../mch/mch.model.js';
+import '../members/members.model.js';
+import '../mental-health/mental-health.model.js';
+import '../notifications/notifications.model.js';
+import '../ot/ot.model.js';
+import '../outpatient/outpatient.model.js';
+import '../pharmacy/pharmacy.model.js';
+import '../pre-authorizations/pre-authorizations.model.js';
+import '../provider/provider.model.js';
+import '../radiology/radiology.model.js';
+import '../reports/reports.model.js';
+import '../rostering/rostering.model.js';
+import '../settings/settings.model.js';
+import '../staff/staff.model.js';
+import '../surgery/surgery.model.js';
+import '../tariffs/tariffs.model.js';
+import '../telemedicine/telemedicine.model.js';
+import { Staff } from '../staff/staff.model.js';
+import { HMOProviderModel } from '../provider/provider.model.js';
+import { Account } from '../auth/auth.model.js';
 const RESOURCE_MODELS = {
     Encounter: EncounterModel,
     Observation: ObservationModel,
@@ -11,6 +89,290 @@ const RESOURCE_MODELS = {
     Claim: ClaimModel,
 };
 const RESTRICTED_CODES = new Set(['MENTAL_HEALTH', 'HIV', 'HIV_STATUS', 'PSYCHIATRIC']);
+const PATIENT_REGISTRY_SOURCES = [
+    { key: 'admissions', label: 'Admissions', modelNames: ['InpatientAdmission'] },
+    { key: 'ambulance', label: 'Ambulance', modelNames: ['TripRequest'] },
+    // The patient registry should show booked appointments only. Queue tickets,
+    // reminders, and risk scores are operational children of an appointment and
+    // must not appear as duplicate appointments in the patient view.
+    { key: 'appointments', label: 'Appointments', modelNames: ['Appointment'] },
+    { key: 'bedWard', label: 'Bed & Ward', modelNames: ['BedAssignment', 'BedStatusEvent', 'TransferRequest'] },
+    // BillingAccount is the parent container for the patient's charges and
+    // payments, not a billable event. Returning it alongside its children makes
+    // one billing action appear twice in the patient registry.
+    { key: 'billing', label: 'Billing', modelNames: ['BillingCharge', 'BillingPayment', 'BillingRefund', 'PaymentPlan'], limit: 100 },
+    { key: 'bloodBank', label: 'Blood Bank', modelNames: ['TransfusionRequest'] },
+    { key: 'consultations', label: 'Consultations', modelNames: ['Consultation'] },
+    { key: 'dental', label: 'Dental', modelNames: ['DentalChart', 'DentalProcedure'] },
+    { key: 'dietary', label: 'Dietary', modelNames: ['DietaryOrder', 'MealDelivery'] },
+    { key: 'emergency', label: 'Emergency', modelNames: ['EDVisit', 'TriageAssessment', 'BayAssignment', 'EDOrder', 'DispositionRecord'] },
+    { key: 'eyeClinic', label: 'Eye Clinic', modelNames: ['EyeExam', 'OpticalPrescription'] },
+    { key: 'icu', label: 'ICU', modelNames: ['ICUAdmission', 'DeviceReading', 'FlowsheetEntry', 'ICUScore', 'FamilyCommunicationLog'] },
+    { key: 'laboratory', label: 'Laboratory', modelNames: ['LabOrder'] },
+    { key: 'mch', label: 'Maternal & Child Health', modelNames: ['MchRecord'] },
+    { key: 'mentalHealth', label: 'Mental Health', modelNames: ['MentalHealthAssessment', 'PsychotherapySession'] },
+    // Both OT (SurgicalCase) and Surgery (SurgeryCase) represent the same
+    // clinical event from different modules. Merging them under one key prevents
+    // a single surgery appearing as two separate cards in the patient registry.
+    { key: 'surgery', label: 'Surgery & OT', modelNames: ['SurgeryCase', 'SurgicalCase'] },
+    { key: 'outpatient', label: 'Outpatient', modelNames: ['Outpatient'] },
+    // DispenseRecord is an operational child of Prescription. The Prescription
+    // already carries the DISPENSED status once dispensed, so including
+    // DispenseRecord creates a duplicate pharmacy card for the same event.
+    { key: 'pharmacy', label: 'Pharmacy', modelNames: ['Prescription', 'ControlledSubstanceLog'] },
+    { key: 'radiology', label: 'Radiology', modelNames: ['RadiologyOrder'] },
+    { key: 'telemedicine', label: 'Telemedicine', modelNames: ['TelemedicineSession', 'TelemedicineMessage'] },
+];
+const REGISTRY_DATE_FIELDS = [
+    'createdAt',
+    'updatedAt',
+    'date',
+    'serviceDate',
+    'appointmentDate',
+    'scheduledAt',
+    'admittedAt',
+    'dischargedAt',
+    'arrivalAt',
+    'assessedAt',
+    'performedAt',
+    'procedureDate',
+    'studyDate',
+    'examinationStartedAt',
+    'completedAt',
+    'resultedAt',
+    'dispensedAt',
+    'prescribedAt',
+    'sessionDate',
+    'deliveryDate',
+    'chargeDate',
+    'paymentDate',
+];
+/** Schema-driven registry helpers: every registered model with patientId is
+ * included automatically, so adding a new HMS module does not require another
+ * patient-registry patch. */
+const REGISTRY_EXCLUDED_MODELS = new Set([
+    'Patient',
+    'PatientEhrView',
+    'QueueTicket',
+    'ReminderLog',
+    'NoShowRiskScore',
+    'BillingAccount',
+    // DispenseRecord is an operational child of Prescription; excluded to prevent
+    // duplicate pharmacy cards (one prescription + one dispense) for the same event.
+    'DispenseRecord',
+    // SurgicalCase is included under the merged 'surgery' key alongside SurgeryCase.
+    // Listing it here prevents the auto-discover loop from adding it a second time.
+    // (It is already handled explicitly in PATIENT_REGISTRY_SOURCES.)
+]);
+function registryHumanize(value) {
+    return value
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replace(/[-_]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+function registryRefPaths(model) {
+    const paths = new Set();
+    try {
+        model.schema.eachPath((path, schemaType) => {
+            const options = schemaType?.options || {};
+            const ref = options.ref || schemaType?.caster?.options?.ref;
+            const refPath = options.refPath || schemaType?.caster?.options?.refPath;
+            // Do not populate the patient/hospital themselves or Account records.
+            // Account documents can contain authentication/security fields; the
+            // registry only needs linked clinical staff/providers and catalogue data.
+            if (path === 'patientId' || path === 'hospitalId')
+                return;
+            if (ref === 'Patient' || ref === 'Account')
+                return;
+            if (ref || refPath)
+                paths.add(path);
+        });
+    }
+    catch {
+        // Population is optional; source records must still be returned.
+    }
+    return Array.from(paths);
+}
+const REGISTRY_STAFF_FIELDS = /doctor|physician|surgeon|nurse|clinician|provider|staff|assignedTo|performedBy|createdBy|approvedBy|orderingDoctor/i;
+function registryPersonName(value) {
+    if (!value || typeof value !== 'object')
+        return undefined;
+    const person = value;
+    const fullName = [person.firstName, person.middleName, person.otherNames, person.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+    return fullName || person.name || person.fullName || person.displayName || person.username ||
+        person.accountName || person.organizationName || person.facilityName || person.departmentName ||
+        person.wardName || person.roomName || person.billingId || person.code || person.label ||
+        registryPersonName(person.profile) || registryPersonName(person.user);
+}
+function registryReferenceId(value) {
+    if (typeof value === 'string' && Types.ObjectId.isValid(value))
+        return value;
+    if (!value || typeof value !== 'object')
+        return undefined;
+    const reference = value._id || value.id || value.$oid;
+    return typeof reference === 'string' && Types.ObjectId.isValid(reference) ? reference : undefined;
+}
+async function resolveRegistryPersonName(value, hospitalId, cache) {
+    const directName = registryPersonName(value);
+    if (directName)
+        return directName;
+    const id = registryReferenceId(value);
+    if (!id)
+        return undefined;
+    if (cache.has(id)) {
+        const cached = cache.get(id);
+        return cached || undefined;
+    }
+    // Try Staff first (most clinical staff), then Account (some modules store
+    // the Account _id instead of the Staff _id — e.g. radiology orderingDoctorId),
+    // then HMO providers as a last resort.
+    const [staff, account, provider] = await Promise.all([
+        Staff.findOne({ _id: new Types.ObjectId(id), hospitalId })
+            .select('firstName middleName otherNames lastName name')
+            .lean()
+            .exec(),
+        Account.findById(new Types.ObjectId(id))
+            .select('name firstName lastName email')
+            .lean()
+            .exec(),
+        HMOProviderModel.findById(new Types.ObjectId(id)).select('name').lean().exec(),
+    ]);
+    const name = registryPersonName(staff) || registryPersonName(account) || registryPersonName(provider);
+    // Cache both positive and negative results to prevent re-querying this ID
+    cache.set(id, name || '');
+    return name;
+}
+const REGISTRY_LINK_FIELDS = /^(?:hospital|patient|billingAccount|account|department|ward|bed|room|doctor|physician|surgeon|nurse|clinician|provider|staff|assignedTo|performedBy|createdBy|approvedBy|receivedBy|requestedBy|reconciledBy|user|member|enrollee)(?:Id|By)?$/i;
+function isRegistryLinkField(fieldKey) {
+    return fieldKey !== '_id' && (REGISTRY_LINK_FIELDS.test(fieldKey) || /(?:Id|By)$/i.test(fieldKey));
+}
+async function resolveRegistryLinkedName(value, fieldKey, hospitalId, cache) {
+    const directName = registryPersonName(value);
+    if (directName)
+        return directName;
+    const id = registryReferenceId(value);
+    if (!id)
+        return undefined;
+    if (cache.has(id)) {
+        const cached = cache.get(id);
+        return cached || undefined;
+    }
+    const normalizedField = fieldKey.toLowerCase();
+    const objectId = new Types.ObjectId(id);
+    let resolvedName;
+    if (normalizedField === 'hospitalid' || normalizedField === 'accountid') {
+        const account = await Account.findById(objectId).select('name').lean().exec();
+        resolvedName = registryPersonName(account);
+    }
+    else if (normalizedField === 'patientid') {
+        const patient = await PatientModel.findById(objectId)
+            .select('firstName otherNames middleName lastName')
+            .lean()
+            .exec();
+        resolvedName = registryPersonName(patient);
+    }
+    else if (normalizedField === 'billingaccountid') {
+        const billingAccount = mongoose.models.BillingAccount
+            ? await mongoose.models.BillingAccount.findById(objectId)
+                .select('billingId accountName')
+                .lean()
+                .exec()
+            : undefined;
+        resolvedName = registryPersonName(billingAccount);
+    }
+    else if (REGISTRY_STAFF_FIELDS.test(fieldKey)) {
+        resolvedName = await resolveRegistryPersonName(value, hospitalId, cache);
+    }
+    else if (/department/i.test(fieldKey) && mongoose.models.Department) {
+        const dept = await mongoose.models.Department.findById(objectId).select('name code').lean().exec();
+        resolvedName = registryPersonName(dept);
+    }
+    else if (/ward/i.test(fieldKey) && mongoose.models.Ward) {
+        const ward = await mongoose.models.Ward.findById(objectId).select('name code').lean().exec();
+        resolvedName = registryPersonName(ward);
+    }
+    else if (/bed/i.test(fieldKey) && mongoose.models.Bed) {
+        const bed = await mongoose.models.Bed.findById(objectId).select('bedNumber name').lean().exec();
+        resolvedName = registryPersonName(bed);
+    }
+    else if (/room/i.test(fieldKey) && mongoose.models.Room) {
+        const room = await mongoose.models.Room.findById(objectId).select('name roomNumber').lean().exec();
+        resolvedName = registryPersonName(room);
+    }
+    // Always cache (even empty string) to avoid querying again for the same ID
+    cache.set(id, resolvedName || '');
+    return resolvedName;
+}
+async function sanitizeRegistryStaff(value, hospitalId, cache, seen = new WeakSet()) {
+    if (Array.isArray(value)) {
+        if (seen.has(value))
+            return '[Circular]';
+        seen.add(value);
+        return Promise.all(value.map((item) => sanitizeRegistryStaff(item, hospitalId, cache, seen)));
+    }
+    if (!value || typeof value !== 'object')
+        return value;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null)
+        return value;
+    if (seen.has(value))
+        return '[Circular]';
+    seen.add(value);
+    const source = value;
+    const result = {};
+    for (const [key, nestedValue] of Object.entries(source)) {
+        if (REGISTRY_STAFF_FIELDS.test(key) || isRegistryLinkField(key)) {
+            result[key] = await resolveRegistryLinkedName(nestedValue, key, hospitalId, cache) ||
+                (typeof nestedValue === 'string' && !Types.ObjectId.isValid(nestedValue) ? nestedValue : 'Linked record');
+            continue;
+        }
+        result[key] = await sanitizeRegistryStaff(nestedValue, hospitalId, cache, seen);
+    }
+    return result;
+}
+async function sanitizeRegistryDetails(row, modelName, hospitalId, cache) {
+    const sanitized = await sanitizeRegistryStaff(row, hospitalId, cache);
+    if (modelName === 'Appointment')
+        delete sanitized.occupiedSlotKeys;
+    return {
+        ...sanitized,
+        _registryModel: modelName,
+    };
+}
+async function registryPopulate(model, query) {
+    let cursor = query;
+    for (const path of registryRefPaths(model)) {
+        try {
+            const schemaType = model.schema.path(path);
+            const ref = schemaType?.options?.ref || schemaType?.caster?.options?.ref;
+            // A few HMO/claims schemas use the historical ref name "Provider",
+            // while the current provider module registers the model as HMOProvider.
+            // Populate those references explicitly so the registry returns the
+            // provider's readable name instead of a Mongo ObjectId.
+            if (ref === 'Provider' && !mongoose.models.Provider && mongoose.models.HMOProvider) {
+                cursor = cursor.populate({ path, model: 'HMOProvider' });
+            }
+            else if (ref && !mongoose.models[ref]) {
+                // Some legacy schemas refer to renamed or optional models (for
+                // example Charge -> BillingCharge). Do not let one unavailable
+                // population target hide the complete patient record.
+                continue;
+            }
+            else {
+                cursor = cursor.populate(path);
+            }
+        }
+        catch {
+            // Population is best-effort. The source record must still be returned.
+        }
+    }
+    return cursor.lean().exec();
+}
 export class PatientService {
     static generateMRN() {
         return `MRN-${crypto.randomInt(100000, 1000000)}`;
@@ -272,7 +634,23 @@ export class PatientService {
             ];
         }
         const [patients, total] = await Promise.all([
-            PatientModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+            PatientModel
+                .find(filter)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                // Only fetch the fields the patient list view needs. Crucially this
+                // avoids loading the unbounded vitalsHistory embedded array and any
+                // other large sub-documents for every patient in the result set.
+                .select('_id firstName otherNames lastName mrn universalPatientId gender ' +
+                'dateOfBirth phone email bloodGroup genotype allergies ' +
+                'isFlagged flagReason active createdAt ' +
+                'vitalsHistory._id vitalsHistory.recordedAt vitalsHistory.systolicBp ' +
+                'vitalsHistory.diastolicBp vitalsHistory.temperature vitalsHistory.pulseRate')
+                // lean() returns plain JavaScript objects instead of full Mongoose
+                // Document instances — significantly faster for read-only list views.
+                .lean()
+                .exec(),
             PatientModel.countDocuments(filter).exec(),
         ]);
         return { patients, total, page, limit, pages: Math.ceil(total / limit) };
@@ -800,6 +1178,202 @@ export class PatientService {
         finally {
             await session.endSession();
         }
+    }
+    /**
+     * Builds the cross-module patient registry used by the patient workspace.
+     *
+     * The patient record is the canonical identity; clinical modules remain the
+     * source of truth for their own data. This method only reads those records
+     * and presents them as one patient-centric view.
+     */
+    static async getPatientRegistry(hospitalId, patientId, actor) {
+        const patient = await this.assertPatient(hospitalId, patientId);
+        const patientObjectId = new Types.ObjectId(patientId);
+        const hospitalObjectId = new Types.ObjectId(hospitalId);
+        const registryNameCache = new Map();
+        const ehr = await this.getEHRChart(hospitalId, patientId, actor);
+        const sanitizedEhr = await sanitizeRegistryStaff(ehr, hospitalObjectId, registryNameCache);
+        const sections = [];
+        const allItems = [];
+        const toDate = (row) => {
+            for (const field of REGISTRY_DATE_FIELDS) {
+                if (row[field])
+                    return row[field];
+            }
+            return undefined;
+        };
+        const firstValue = (row, keys) => {
+            for (const key of keys) {
+                const value = row[key];
+                if (value !== undefined && value !== null && value !== '')
+                    return value;
+            }
+            return undefined;
+        };
+        const buildTitle = (label, modelName, row) => {
+            const title = firstValue(row, [
+                'procedureName', 'testName', 'serviceName', 'medicationName', 'drugName',
+                'chiefComplaint', 'admissionReason', 'primaryDiagnosis', 'diagnosis',
+                'reasonForVisit', 'visitReason', 'title', 'subject', 'description', 'name',
+                'visitNumber', 'appointmentNumber', 'prescriptionNumber', 'orderNumber',
+                'caseNumber', 'sessionId', 'billingId', 'invoiceNumber', 'claimNumber', 'code',
+            ]);
+            if (title)
+                return String(title);
+            if (row.procedure?.name)
+                return String(row.procedure.name);
+            if (Array.isArray(row.medications) && row.medications.length) {
+                const names = row.medications
+                    .map((item) => item.medicationName || item.drugName || item.name)
+                    .filter(Boolean);
+                if (names.length)
+                    return names.join(', ');
+            }
+            return registryHumanize(modelName) || label;
+        };
+        const buildSummary = (row) => {
+            const summary = firstValue(row, [
+                'impression', 'findings', 'resultSummary', 'result', 'clinicalNotes',
+                'consultationNotes', 'nursingNotes', 'dischargeSummary', 'notes', 'reason',
+                'assessment', 'treatmentPlan', 'instructions', 'chiefComplaint', 'postOpNotes',
+                'preOpNotes', 'operativeDiagnosis', 'postOperativeDiagnosis', 'surgicalFindings',
+                'techniqueNotes', 'surgeonNotes', 'complications', 'indication',
+            ]);
+            if (summary !== undefined)
+                return typeof summary === 'string' ? summary : JSON.stringify(summary);
+            if (Array.isArray(row.medications)) {
+                const lines = row.medications.map((item) => {
+                    const name = item.medicationName || item.drugName || item.name;
+                    if (!name)
+                        return undefined;
+                    return [name, item.dosage || item.dose, item.route, item.frequency, item.duration]
+                        .filter(Boolean).join(' • ');
+                }).filter(Boolean);
+                if (lines.length)
+                    return lines.join(' | ');
+            }
+            return undefined;
+        };
+        const knownModelNames = new Set(PATIENT_REGISTRY_SOURCES.flatMap((source) => source.modelNames));
+        const descriptors = [];
+        for (const source of PATIENT_REGISTRY_SOURCES) {
+            for (const modelName of source.modelNames) {
+                descriptors.push({ key: source.key, label: source.label, modelName });
+            }
+        }
+        // Discover every additional patient-aware model already registered by the
+        // application. This catches billing variants, HMO records, reporting
+        // records, future modules and any model omitted from the static catalogue.
+        for (const [modelName, model] of Object.entries(mongoose.models)) {
+            if (REGISTRY_EXCLUDED_MODELS.has(modelName))
+                continue;
+            if (!model?.schema?.path('patientId'))
+                continue;
+            if (knownModelNames.has(modelName))
+                continue;
+            descriptors.push({ key: `module:${modelName}`, label: registryHumanize(modelName), modelName });
+        }
+        const results = await Promise.all(descriptors.map(async (descriptor) => {
+            const model = mongoose.models[descriptor.modelName];
+            if (!model?.schema?.path('patientId'))
+                return { descriptor, items: [] };
+            try {
+                const filter = { patientId: patientObjectId };
+                if (model.schema.path('hospitalId'))
+                    filter.hospitalId = hospitalObjectId;
+                const rows = await registryPopulate(model, model.find(filter).sort({ createdAt: -1, updatedAt: -1 }).limit(100));
+                const items = await Promise.all(rows.map(async (row) => ({
+                    id: row._id ? String(row._id) : undefined,
+                    resourceType: descriptor.key,
+                    sourceModel: descriptor.modelName,
+                    moduleKey: descriptor.key,
+                    date: toDate(row),
+                    title: buildTitle(descriptor.label, descriptor.modelName, row),
+                    status: row.status || row.resultStatus || row.queueStatus || row.orderStatus || row.paymentStatus || row.claimStatus,
+                    summary: buildSummary(row),
+                    // Keep staff/provider references readable without exposing the
+                    // populated provider document in the patient registry response.
+                    details: await sanitizeRegistryDetails(row, descriptor.modelName, hospitalObjectId, registryNameCache),
+                })));
+                return { descriptor, items };
+            }
+            catch {
+                return { descriptor, items: [] };
+            }
+        }));
+        const grouped = new Map();
+        for (const { descriptor, items } of results) {
+            if (!grouped.has(descriptor.key)) {
+                grouped.set(descriptor.key, { key: descriptor.key, label: descriptor.label, count: 0, items: [] });
+            }
+            const section = grouped.get(descriptor.key);
+            section.items.push(...items);
+            section.count = section.items.length;
+        }
+        for (const section of grouped.values()) {
+            section.items.sort((a, b) => new Date(String(b.date || 0)).getTime() - new Date(String(a.date || 0)).getTime());
+            sections.push(section);
+            allItems.push(...section.items);
+        }
+        const ehrItems = sanitizedEhr.timeline.map((event) => ({
+            id: String(event.resourceId || event.eventId || ''),
+            resourceType: String(event.resourceType || 'EHR'),
+            date: event.occurredAt,
+            title: String(event.resource?.code?.coding?.[0]?.display ||
+                event.resource?.description || event.resourceType || 'Clinical event'),
+            status: event.resource?.status,
+            summary: event.resource?.note?.[0]?.text,
+            details: event.resource,
+        }));
+        const timeline = [...allItems, ...ehrItems].sort((a, b) => new Date(String(b.date || 0)).getTime() - new Date(String(a.date || 0)).getTime());
+        const findSection = (key) => sections.find((section) => section.key === key)?.items || [];
+        const activeAdmissions = findSection('admissions').filter((item) => ['ADMITTED', 'ACTIVE', 'IN_PROGRESS'].includes(String(item.status || '').toUpperCase()));
+        const activeIcuAdmissions = findSection('icu').filter((item) => String(item.title).toLowerCase().includes('icu') ||
+            ['ADMITTED', 'ACTIVE', 'IN_PROGRESS'].includes(String(item.status || '').toUpperCase()));
+        const recentDiagnoses = [
+            ...sanitizedEhr.resources.Condition.map((resource) => this.resourceSummary('Condition', resource)),
+            ...findSection('outpatient'), ...findSection('consultations'),
+        ].filter((item) => /diagnos|condition|assessment/i.test(`${item.title} ${item.summary || ''}`)).slice(0, 50);
+        const recentProcedures = [
+            ...sanitizedEhr.resources.Procedure.map((resource) => this.resourceSummary('Procedure', resource)),
+            ...findSection('surgery'), ...findSection('ot'), ...findSection('dental'),
+        ].slice(0, 50);
+        const recentLaboratory = [
+            ...sanitizedEhr.resources.Observation.map((resource) => this.resourceSummary('Observation', resource)),
+            ...findSection('laboratory'),
+        ].slice(0, 50);
+        const recentRadiology = findSection('radiology').slice(0, 50);
+        const upcomingAppointments = findSection('appointments').filter((item) => {
+            const date = item.date ? new Date(String(item.date)).getTime() : 0;
+            return date >= Date.now();
+        }).slice(0, 50);
+        const medicationItems = [
+            ...sanitizedEhr.resources.MedicationStatement.map((resource) => this.resourceSummary('MedicationStatement', resource)),
+            ...findSection('pharmacy'),
+        ].filter((item) => {
+            const status = String(item.status || '').toUpperCase();
+            return !status || !['CANCELLED', 'DISCONTINUED', 'COMPLETED', 'STOPPED', 'REVOKED'].includes(status);
+        }).slice(0, 100);
+        const latestVitals = [...(patient.vitalsHistory || [])]
+            .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime())[0];
+        const overview = {
+            totalClinicalRecords: timeline.length,
+            activeMedications: medicationItems,
+            activeAdmissions,
+            activeIcuAdmissions,
+            recentDiagnoses,
+            recentProcedures,
+            recentLaboratory,
+            recentRadiology,
+            upcomingAppointments,
+            latestVitals: latestVitals ? {
+                ...latestVitals,
+                recordedBy: String(latestVitals.recordedBy),
+                encounterId: latestVitals.encounterId ? String(latestVitals.encounterId) : undefined,
+            } : undefined,
+        };
+        await this.audit(hospitalId, patientId, actor, 'READ', ['PATIENT_REGISTRY'], true, 'Comprehensive cross-module patient registry requested.');
+        return { patient, overview, sections, ehr: sanitizedEhr, timeline };
     }
     static async getClinicalSummary(hospitalId, patientId, actor) {
         const chart = await this.getEHRChart(hospitalId, patientId, actor);

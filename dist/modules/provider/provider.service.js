@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { Types } from 'mongoose';
 import { HMOProviderModel } from './provider.model.js';
 import { AccreditationStatus, ProviderStatus, ProviderContractStatus, ProviderPaymentModel, } from './provider.types.js';
@@ -25,6 +26,11 @@ const date = (value, field) => {
     return result;
 };
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const generateProviderCode = (type) => {
+    const prefix = type.replace(/[^A-Z]/g, '').slice(0, 4).padEnd(3, 'PRV');
+    return `PRV-${prefix}-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`;
+};
+const generateContractNumber = () => `CTR-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`;
 const normaliseAccreditation = (input, fallback) => {
     const result = {
         status: input?.status ?? fallback?.status ?? AccreditationStatus.PENDING,
@@ -56,17 +62,24 @@ const parsePage = (value, fallback, max) => {
 export class HMOProviderService {
     async createProvider(hmoId, input) {
         const tenantId = objectId(hmoId, 'hmoId');
-        const code = clean(input.code)?.toUpperCase();
         const name = clean(input.name);
-        if (!code)
-            throw error('Provider code is required');
         if (!name)
             throw error('Provider name is required');
-        const duplicate = await HMOProviderModel.exists({ hmoId: tenantId, code });
-        if (duplicate)
-            throw error(`Provider code ${code} already exists`, 409);
+        if (!input.type)
+            throw error('Provider type is required');
+        // Provider codes and contract numbers are system-generated. The HMO client
+        // must never invent or edit these identifiers.
+        let code = generateProviderCode(input.type);
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+            const duplicate = await HMOProviderModel.exists({ hmoId: tenantId, code });
+            if (!duplicate)
+                break;
+            code = generateProviderCode(input.type);
+        }
         const accreditation = normaliseAccreditation(input.accreditation);
-        const contract = normaliseContract(input.contract);
+        const contractInput = { ...(input.contract ?? {}) };
+        delete contractInput.contractNumber;
+        const contract = normaliseContract({ ...contractInput, contractNumber: generateContractNumber() });
         if (contract.startDate && contract.endDate && contract.endDate < contract.startDate)
             throw error('Contract end date cannot be before start date');
         return HMOProviderModel.create({
@@ -125,15 +138,6 @@ export class HMOProviderService {
         const provider = await HMOProviderModel.findOne({ _id, hmoId: tenantId });
         if (!provider)
             return null;
-        if (input.code !== undefined) {
-            const code = clean(input.code)?.toUpperCase();
-            if (!code)
-                throw error('Provider code cannot be empty');
-            const duplicate = await HMOProviderModel.exists({ hmoId: tenantId, code, _id: { $ne: _id } });
-            if (duplicate)
-                throw error(`Provider code ${code} already exists`, 409);
-            provider.code = code;
-        }
         if (input.name !== undefined)
             provider.name = clean(input.name) ?? (() => { throw error('Provider name cannot be empty'); })();
         if (input.type !== undefined)
@@ -162,8 +166,11 @@ export class HMOProviderService {
             provider.tariffIds = input.tariffIds.filter(Types.ObjectId.isValid).map((item) => new Types.ObjectId(item));
         if (input.accreditation !== undefined)
             provider.accreditation = normaliseAccreditation(input.accreditation, provider.accreditation);
-        if (input.contract !== undefined)
-            provider.contract = normaliseContract(input.contract, provider.contract);
+        if (input.contract !== undefined) {
+            const contractInput = { ...input.contract };
+            delete contractInput.contractNumber;
+            provider.contract = normaliseContract({ ...contractInput, contractNumber: provider.contract.contractNumber ?? generateContractNumber() }, provider.contract);
+        }
         if (provider.contract.startDate && provider.contract.endDate && provider.contract.endDate < provider.contract.startDate)
             throw error('Contract end date cannot be before start date');
         if (input.notes !== undefined)

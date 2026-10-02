@@ -275,7 +275,10 @@ async function resolveRegistryPersonName(
 
   const id = registryReferenceId(value);
   if (!id) return undefined;
-  if (cache.has(id)) return cache.get(id);
+  if (cache.has(id)) {
+    const cached = cache.get(id);
+    return cached || undefined;
+  }
 
   // Try Staff first (most clinical staff), then Account (some modules store
   // the Account _id instead of the Staff _id — e.g. radiology orderingDoctorId),
@@ -293,7 +296,8 @@ async function resolveRegistryPersonName(
   ]);
 
   const name = registryPersonName(staff) || registryPersonName(account) || registryPersonName(provider);
-  if (name) cache.set(id, name);
+  // Cache both positive and negative results to prevent re-querying this ID
+  cache.set(id, name || '');
   return name;
 }
 
@@ -314,75 +318,51 @@ async function resolveRegistryLinkedName(
 
   const id = registryReferenceId(value);
   if (!id) return undefined;
-  if (cache.has(id)) return cache.get(id);
+  if (cache.has(id)) {
+    const cached = cache.get(id);
+    return cached || undefined;
+  }
 
   const normalizedField = fieldKey.toLowerCase();
   const objectId = new Types.ObjectId(id);
+  let resolvedName: string | undefined;
 
   if (normalizedField === 'hospitalid' || normalizedField === 'accountid') {
     const account = await Account.findById(objectId).select('name').lean().exec();
-    const accountName = registryPersonName(account);
-    if (accountName) {
-      cache.set(id, accountName);
-      return accountName;
-    }
-  }
-
-  if (normalizedField === 'patientid') {
+    resolvedName = registryPersonName(account);
+  } else if (normalizedField === 'patientid') {
     const patient = await PatientModel.findById(objectId)
       .select('firstName otherNames middleName lastName')
       .lean()
       .exec();
-    const patientName = registryPersonName(patient);
-    if (patientName) {
-      cache.set(id, patientName);
-      return patientName;
-    }
-  }
-
-  if (normalizedField === 'billingaccountid') {
+    resolvedName = registryPersonName(patient);
+  } else if (normalizedField === 'billingaccountid') {
     const billingAccount = mongoose.models.BillingAccount
       ? await mongoose.models.BillingAccount.findById(objectId)
         .select('billingId accountName')
         .lean()
         .exec()
       : undefined;
-    const billingId = registryPersonName(billingAccount);
-    if (billingId) {
-      cache.set(id, billingId);
-      return billingId;
-    }
+    resolvedName = registryPersonName(billingAccount);
+  } else if (REGISTRY_STAFF_FIELDS.test(fieldKey)) {
+    resolvedName = await resolveRegistryPersonName(value, hospitalId, cache);
+  } else if (/department/i.test(fieldKey) && mongoose.models.Department) {
+    const dept = await mongoose.models.Department.findById(objectId).select('name code').lean().exec();
+    resolvedName = registryPersonName(dept);
+  } else if (/ward/i.test(fieldKey) && mongoose.models.Ward) {
+    const ward = await mongoose.models.Ward.findById(objectId).select('name code').lean().exec();
+    resolvedName = registryPersonName(ward);
+  } else if (/bed/i.test(fieldKey) && mongoose.models.Bed) {
+    const bed = await mongoose.models.Bed.findById(objectId).select('bedNumber name').lean().exec();
+    resolvedName = registryPersonName(bed);
+  } else if (/room/i.test(fieldKey) && mongoose.models.Room) {
+    const room = await mongoose.models.Room.findById(objectId).select('name roomNumber').lean().exec();
+    resolvedName = registryPersonName(room);
   }
 
-  if (REGISTRY_STAFF_FIELDS.test(fieldKey)) {
-    return resolveRegistryPersonName(value, hospitalId, cache);
-  }
-
-  const candidates = fieldKey.toLowerCase().includes('patient')
-    ? [PatientModel]
-    : Object.values(mongoose.models);
-  const nameFields = [
-    'name', 'fullName', 'displayName', 'accountName', 'organizationName', 'facilityName',
-    'hospitalName', 'departmentName', 'wardName', 'roomName', 'billingId', 'code', 'label', 'firstName', 'lastName',
-  ];
-
-  for (const model of candidates) {
-    try {
-      if (!model?.schema?.path('_id')) continue;
-      const selectable = nameFields.filter((field) => model.schema.path(field));
-      if (!selectable.length) continue;
-      const found = await model.findById(objectId).select(selectable.join(' ')).lean().exec();
-      const name = registryPersonName(found);
-      if (name) {
-        cache.set(id, name);
-        return name;
-      }
-    } catch {
-      // A reference can point to a model unavailable in this deployment.
-    }
-  }
-
-  return undefined;
+  // Always cache (even empty string) to avoid querying again for the same ID
+  cache.set(id, resolvedName || '');
+  return resolvedName;
 }
 
 async function sanitizeRegistryStaff(
@@ -1586,7 +1566,7 @@ export class PatientService {
 
         const rows: AnyRecord[] = await registryPopulate(
           model,
-          model.find(filter).sort({ createdAt: -1, updatedAt: -1 })
+          model.find(filter).sort({ createdAt: -1, updatedAt: -1 }).limit(100)
         );
 
         const items: IClinicalSummaryItem[] = await Promise.all(rows.map(async (row) => ({

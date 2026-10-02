@@ -83,6 +83,21 @@ export class PatientController {
             next(error);
         }
     }
+    static async getPatientRegistry(req, res, next) {
+        try {
+            const authReq = req;
+            const hospitalId = getHospitalId(authReq.user);
+            if (!hospitalId) {
+                res.status(400).json({ success: false, message: 'Hospital ID not found in authentication context.' });
+                return;
+            }
+            const data = await PatientService.getPatientRegistry(hospitalId, req.params.id, actor(authReq));
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            next(error);
+        }
+    }
     static async getEHR(req, res, next) {
         try {
             const authReq = req;

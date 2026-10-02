@@ -9,6 +9,7 @@ router.use(authenticate);
 router.post('/', authorize('HOSPITAL', 'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'), PatientController.register);
 router.get('/', PatientController.list);
 router.get('/:id/clinical-summary', PatientController.getClinicalSummary);
+router.get('/:id/registry', PatientController.getPatientRegistry);
 router.get('/:id/ehr', PatientController.getEHR);
 router.get('/:id', PatientController.getById);
 router.patch('/:id', authorize('HOSPITAL', 'HOSPITAL_ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'), PatientController.update);

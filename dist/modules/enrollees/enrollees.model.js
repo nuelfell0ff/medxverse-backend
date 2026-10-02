@@ -1,6 +1,9 @@
-/**
- * The Enrollee Registry is a domain-facing module over the existing HMSMember
- * collection. This keeps memberId references used by Claims and Pre-Auths
- * stable while exposing the HMO-facing /enrollees API.
- */
-export { MemberModel as EnrolleeModel } from '../members/members.model.js';
+import { MemberModel } from '../members/members.model.shared.js';
+// The enrollee registry and legacy member API intentionally share one
+// HMSMember persistence identity. Claims/pre-authorizations already reference
+// HMSMember through memberId, so no second enrollee identity collection is
+// created.
+//
+// Coverage is represented by healthPlanId on HMSMember. The selected HealthPlan
+// owns the benefits available to the enrollee.
+export const EnrolleeModel = MemberModel;
