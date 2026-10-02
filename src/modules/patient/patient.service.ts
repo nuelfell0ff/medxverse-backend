@@ -228,9 +228,18 @@ function registryPersonName(value: unknown): string | undefined {
   return fullName || person.name || person.fullName || person.displayName || person.username;
 }
 
-function sanitizeRegistryStaff(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map((item) => sanitizeRegistryStaff(item));
+function sanitizeRegistryStaff(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    return value.map((item) => sanitizeRegistryStaff(item, seen));
+  }
   if (!value || typeof value !== 'object') return value;
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
 
   const source = value as AnyRecord;
   const result: AnyRecord = {};
@@ -239,7 +248,7 @@ function sanitizeRegistryStaff(value: unknown): unknown {
       result[key] = registryPersonName(nestedValue) || (typeof nestedValue === 'string' ? nestedValue : 'Linked staff member');
       return;
     }
-    result[key] = sanitizeRegistryStaff(nestedValue);
+    result[key] = sanitizeRegistryStaff(nestedValue, seen);
   });
   return result;
 }
