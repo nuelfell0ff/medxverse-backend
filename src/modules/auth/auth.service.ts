@@ -15,6 +15,9 @@ export class AuthService {
     return jwt.sign(
       {
         accountId: account._id.toString(),
+        id: account._id.toString(),
+        userType: 'ACCOUNT',
+
         accountType: account.accountType,
         name: account.name,
         email: account.email,

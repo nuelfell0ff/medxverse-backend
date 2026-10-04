@@ -50,6 +50,12 @@ export class StaffService {
       throw new Error('Invalid hospital ID');
     }
 
+    const email = dto.contact?.email?.trim().toLowerCase();
+    if (email) {
+      const existingEmail = await Staff.findOne({ hospitalId, 'contact.email': email }).select({ _id: 1 }).lean();
+      if (existingEmail) throw new Error('A staff member with this email already exists in this hospital');
+    }
+
     let staffId = await this.generateStaffId(hospitalId);
 
     /**

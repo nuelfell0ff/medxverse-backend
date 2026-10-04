@@ -380,6 +380,7 @@ export interface IStaffCommunication {
  */
 export interface IStaff {
   hospitalId: Types.ObjectId;
+  userAccountId?: Types.ObjectId;
 
   /**
    * Internal hospital-wide staff identifier.
@@ -535,6 +536,7 @@ export type UpdateStaffDTO = Partial<
   Omit<
     IStaff,
     | 'hospitalId'
+    | 'userAccountId'
     | 'staffId'
     | 'createdAt'
     | 'updatedAt'

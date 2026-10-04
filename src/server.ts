@@ -6,11 +6,13 @@ import { attachEmergencyWebSocket } from './modules/emergency/emergency.socket.j
 import { attachBedWardWebSocket } from './modules/bed-ward/bed-ward.socket.js';
 import { initializeBedWardIntegrations } from './modules/bed-ward/bed-ward.integration.js';
 import { attachAppointmentWebSocket } from './modules/appointment/appointment.socket.js';
+import { attachCommunicationWebSocket } from './modules/communication/communication.socket.js';
 
 const server = http.createServer(app);
 attachEmergencyWebSocket(server);
 attachBedWardWebSocket(server);
 attachAppointmentWebSocket(server);
+attachCommunicationWebSocket(server);
 initializeBedWardIntegrations();
 
 const startServer = async (): Promise<void> => {

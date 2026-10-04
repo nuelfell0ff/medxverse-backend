@@ -8,6 +8,8 @@ export enum AccountType {
 // Added missing JWT payload interface
 export interface AuthUserPayload {
   id: string;
+  accountId?: string;
+  userType?: 'ACCOUNT' | 'STAFF';
   email: string;
   accountType: AccountType;
   role?: string;

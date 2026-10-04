@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import authRoutes from '../modules/auth/auth.routes.js';
+import staffAuthRoutes from '../modules/staff-auth/staff-auth.routes.js';
+import communicationRoutes from '../modules/communication/communication.routes.js';
 
 // hospital hms
 import dashboardRoutes from '../modules/dashboard/dashboard.routes.js';
@@ -51,6 +53,8 @@ const v1Router = Router();
 
 // Platform & Onboarding
 v1Router.use('/auth', authRoutes);
+v1Router.use('/auth/staff', staffAuthRoutes);
+v1Router.use('/communication', communicationRoutes);
 
 // hospital hms
 v1Router.use('/dashboard', dashboardRoutes);

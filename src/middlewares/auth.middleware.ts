@@ -10,6 +10,7 @@ export interface AuthRequest extends Request {
     name: string;
     email: string;
     role?: string;
+    userType?: 'ACCOUNT' | 'STAFF';
     [key: string]: unknown;
   };
 
@@ -22,6 +23,7 @@ export interface AuthRequest extends Request {
     name?: string;
     email?: string;
     role?: string;
+    userType?: 'ACCOUNT' | 'STAFF';
     [key: string]: unknown;
   };
 }
@@ -42,6 +44,7 @@ interface JwtPayload {
   name?: string;
   email?: string;
   role?: string;
+  userType?: 'ACCOUNT' | 'STAFF';
 
   [key: string]: unknown;
 }
@@ -143,6 +146,7 @@ export const authenticateAccount = (
       name: String(decoded.name ?? ''),
       email: String(decoded.email ?? ''),
       role: decoded.role ? String(decoded.role) : undefined,
+      userType: decoded.userType || 'ACCOUNT',
     };
 
     /*
@@ -165,6 +169,7 @@ export const authenticateAccount = (
       name: decoded.name ? String(decoded.name) : undefined,
       email: decoded.email ? String(decoded.email) : undefined,
       role: decoded.role ? String(decoded.role) : undefined,
+      userType: decoded.userType || 'ACCOUNT',
     };
 
     next();
