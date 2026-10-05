@@ -23,6 +23,37 @@ export class StaffAuthController {
     }
   }
 
+  static async createManualAccount(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const hospitalId = req.account?.accountId;
+      const staffId = String(req.params.staffId);
+
+      if (!hospitalId) {
+        res.status(401).json({ success: false, message: 'Hospital context is required' });
+        return;
+      }
+
+      const result = await StaffAuthService.createManualAccount(
+        hospitalId,
+        staffId,
+        req.body
+      );
+
+      res.status(201).json({
+        success: true,
+        message: result.reactivated
+          ? 'Staff login account reset and activated successfully'
+          : 'Staff login account created successfully',
+        data: result,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to create staff login account',
+      });
+    }
+  }
+
   static async previewInvitation(req: Request, res: Response): Promise<void> {
     try {
       const result = await StaffAuthService.getInvitation(String(req.params.token));

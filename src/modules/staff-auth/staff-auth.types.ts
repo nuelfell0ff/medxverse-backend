@@ -32,6 +32,10 @@ export interface AcceptStaffInvitationDTO {
   password: string;
 }
 
+export interface CreateStaffAccountDTO {
+  password: string;
+}
+
 export interface StaffLoginDTO {
   email: string;
   password: string;
