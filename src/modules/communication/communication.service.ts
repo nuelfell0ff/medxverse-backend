@@ -36,6 +36,39 @@ async function ensurePatientInHospital(patientId: string, hospitalId: string) {
   return patient;
 }
 
+async function decorateConversationParticipants(conversations: any[]) {
+  const staffIds = [...new Set(
+    conversations.flatMap((conversation: any) => (conversation.participants || []))
+      .map((participant: any) => {
+        const user = participant?.userId;
+        return user && typeof user === 'object' ? String(user.staffId || '') : '';
+      })
+      .filter(Boolean),
+  )];
+
+  if (!staffIds.length) return conversations;
+
+  const staff = await Staff.find({ _id: { $in: staffIds } })
+    .select('firstName lastName staffId role jobTitle profilePhotoUrl')
+    .lean();
+  const byId = new Map(staff.map((member: any) => [String(member._id), member]));
+
+  return conversations.map((conversation: any) => ({
+    ...conversation,
+    participants: (conversation.participants || []).map((participant: any) => {
+      const user = participant?.userId;
+      const member = user && typeof user === 'object' ? byId.get(String(user.staffId)) : undefined;
+      return {
+        ...participant,
+        displayName: member
+          ? `${member.firstName || ''} ${member.lastName || ''}`.trim() || member.jobTitle || member.role || user?.email || 'Staff member'
+          : user?.email || 'Staff member',
+        staff: member,
+      };
+    }),
+  }));
+}
+
 export class CommunicationService {
   static async listInbox(hospitalId: string, userId: string, page = 1, limit = 30) {
     const h = oid(hospitalId, 'hospital ID');
@@ -51,6 +84,7 @@ export class CommunicationService {
         .limit(safeLimit)
         .populate('departmentId', 'name code')
         .populate('patientId', 'firstName lastName mrn phone')
+        .populate('participants.userId', 'email role staffId')
         .lean(),
       Conversation.countDocuments({ hospitalId: h, 'participants.userId': u, archivedAt: { $exists: false } }),
     ]);
@@ -72,8 +106,12 @@ export class CommunicationService {
       : [];
 
     const unreadMap = new Map(unread.map((row: any) => [String(row._id), row.count]));
+    const decoratedItems = await decorateConversationParticipants(
+      items.map((item: any) => ({ ...item, unreadCount: unreadMap.get(String(item._id)) || 0 })),
+    );
+
     return {
-      items: items.map((item: any) => ({ ...item, unreadCount: unreadMap.get(String(item._id)) || 0 })),
+      items: decoratedItems,
       page: safePage,
       limit: safeLimit,
       total,
@@ -259,9 +297,10 @@ export class CommunicationService {
     })
       .populate('departmentId', 'name code')
       .populate('patientId', 'firstName lastName mrn phone gender dateOfBirth')
+      .populate('participants.userId', 'email role staffId')
       .lean();
     if (!conversation) throw new Error('Conversation not found or access denied');
-    return conversation;
+    return (await decorateConversationParticipants([conversation]))[0];
   }
 
   static async listMessages(hospitalId: string, userId: string, conversationId: string, page = 1, limit = 50) {

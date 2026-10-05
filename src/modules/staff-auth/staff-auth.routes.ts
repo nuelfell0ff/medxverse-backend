@@ -8,13 +8,6 @@ const router = Router();
 router.get('/invitation/:token', StaffAuthController.previewInvitation);
 router.post('/invitation/accept', StaffAuthController.acceptInvitation);
 router.post('/login', StaffAuthController.login);
-router.post(
-  '/account/:staffId',
-  protect,
-  restrictTo('HOSPITAL', 'HOSPITAL_ADMIN', 'ADMIN', 'SYSTEM_ADMIN'),
-  StaffAuthController.createManualAccount
-);
-
 
 // Existing hospital administrators can issue invitations from the staff page.
 router.post(

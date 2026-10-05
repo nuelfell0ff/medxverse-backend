@@ -12,7 +12,6 @@ import {
 import { StaffUser } from './staff-user.model.js';
 import {
   AcceptStaffInvitationDTO,
-  CreateStaffAccountDTO,
   StaffAuthResponse,
   StaffLoginDTO,
   StaffUserStatus,
@@ -204,105 +203,6 @@ If you did not expect this invitation, please contact your hospital administrato
         emailResult.sent || env.NODE_ENV === 'production'
           ? undefined
           : inviteUrl,
-    };
-  }
-
-  static async createManualAccount(
-    hospitalId: string,
-    staffId: string,
-    dto: CreateStaffAccountDTO
-  ) {
-    if (!Types.ObjectId.isValid(hospitalId) || !Types.ObjectId.isValid(staffId)) {
-      throw new Error('Invalid hospital or staff ID');
-    }
-
-    if (!passwordIsStrongEnough(dto.password)) {
-      throw new Error(
-        'Password must be at least 8 characters and include uppercase, lowercase, number, and special character'
-      );
-    }
-
-    const [staffResult, hospitalResult] = await Promise.all([
-      Staff.findOne({ _id: staffId, hospitalId }),
-      Account.findOne({
-        _id: hospitalId,
-        accountType: 'HOSPITAL',
-        isActive: true,
-      }).lean(),
-    ]);
-
-    const staff = staffResult as any;
-    const hospital = hospitalResult as any;
-
-    if (!staff) {
-      throw new Error('Staff member not found in this hospital');
-    }
-
-    if (!hospital) {
-      throw new Error('Hospital account not found or inactive');
-    }
-
-    if (!staff.isActive || staff.status === 'TERMINATED') {
-      throw new Error('This staff member is inactive and cannot receive a login account');
-    }
-
-    const email = staff.contact?.email?.trim().toLowerCase();
-    if (!email) {
-      throw new Error(
-        'The staff member must have an email address before a login account can be created. Add the email to the staff profile first.'
-      );
-    }
-
-    const existingUserResult = await StaffUser.findOne({
-      hospitalId,
-      staffId: staff._id,
-    });
-    const existingUser = existingUserResult as any;
-
-    const emailOwner = await StaffUser.findOne({
-      hospitalId,
-      email,
-      ...(existingUser?._id ? { _id: { $ne: existingUser._id } } : {}),
-    }).select('_id staffId').lean();
-
-    if (emailOwner) {
-      throw new Error('Another staff account in this hospital already uses this email address');
-    }
-
-    let user: any;
-
-    if (existingUser) {
-      existingUser.email = email;
-      existingUser.password = dto.password;
-      existingUser.role = staff.role;
-      existingUser.status = StaffUserStatus.ACTIVE;
-      existingUser.isActive = true;
-      await existingUser.save();
-      user = existingUser;
-    } else {
-      user = await StaffUser.create({
-        hospitalId,
-        staffId: staff._id,
-        email,
-        password: dto.password,
-        role: staff.role,
-        status: StaffUserStatus.ACTIVE,
-        isActive: true,
-      });
-    }
-
-    staff.userAccountId = user._id;
-    await staff.save();
-
-    return {
-      staffUserId: user._id.toString(),
-      staffId: staff._id.toString(),
-      email: user.email,
-      role: user.role,
-      firstName: staff.firstName,
-      lastName: staff.lastName,
-      hospitalName: hospital.name,
-      reactivated: Boolean(existingUser),
     };
   }
 
