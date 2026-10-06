@@ -22,6 +22,7 @@ import {
 interface CommunicationSocket extends WebSocket {
   userId?: string;
   hospitalId?: string;
+  isAlive?: boolean;
 }
 
 function tokenFromRequest(
@@ -284,6 +285,48 @@ export function attachCommunicationWebSocket(
         return;
       }
 
+      /*
+       * Use the WebSocket protocol-level heartbeat instead of relying
+       * on application JSON messages. The browser automatically replies
+       * to server ping frames with pong frames, which is supported by
+       * the ws package and by WebSocket-aware proxies.
+       */
+      ws.isAlive = true;
+
+      const heartbeatTimer = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          return;
+        }
+
+        if (ws.isAlive === false) {
+          console.warn(
+            '[Communication WebSocket] Terminating stale connection:',
+            {
+              userId,
+              hospitalId,
+            },
+          );
+
+          ws.terminate();
+          return;
+        }
+
+        ws.isAlive = false;
+
+        try {
+          ws.ping();
+        } catch (error) {
+          console.error(
+            '[Communication WebSocket] Heartbeat ping failed:',
+            error,
+          );
+        }
+      }, 25000);
+
+      ws.on('pong', () => {
+        ws.isAlive = true;
+      });
+
       try {
         console.log(
           '[Communication WebSocket] Checking Staff account...',
@@ -308,6 +351,8 @@ export function attachCommunicationWebSocket(
               hospitalId,
             },
           );
+
+          clearInterval(heartbeatTimer);
 
           ws.close(
             1008,
@@ -411,6 +456,8 @@ export function attachCommunicationWebSocket(
 
             cleanedUp = true;
 
+            clearInterval(heartbeatTimer);
+
             communicationEvents.off(
               'event',
               handler,
@@ -444,7 +491,18 @@ export function attachCommunicationWebSocket(
 
         ws.on(
           'close',
-          () => {
+          (code, reason) => {
+            console.warn(
+              '[Communication WebSocket] CLOSE RECEIVED:',
+              {
+                userId,
+                hospitalId,
+                code,
+                reason: reason.toString() || 'No reason supplied',
+                wasClean: code === 1000,
+              },
+            );
+
             void goOffline();
           },
         );
@@ -465,6 +523,8 @@ export function attachCommunicationWebSocket(
           '[Communication WebSocket] Connection initialization failed:',
           error,
         );
+
+        clearInterval(heartbeatTimer);
 
         ws.close(
           1011,
