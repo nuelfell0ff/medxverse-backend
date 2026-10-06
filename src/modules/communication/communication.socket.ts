@@ -1,10 +1,19 @@
-import type { Server as HttpServer, IncomingMessage } from 'http';
+import type {
+  Server as HttpServer,
+  IncomingMessage,
+} from 'http';
+
 import type { Duplex } from 'stream';
 
-import { WebSocketServer, WebSocket } from 'ws';
+import {
+  WebSocketServer,
+  WebSocket,
+} from 'ws';
 
 import { JwtUtils } from '../../utils/jwt.js';
+
 import { communicationEvents } from './communication.events.js';
+
 import {
   StaffUser,
   StaffPresenceStatus,
@@ -15,7 +24,9 @@ interface CommunicationSocket extends WebSocket {
   hospitalId?: string;
 }
 
-function tokenFromRequest(req: IncomingMessage): string | null {
+function tokenFromRequest(
+  req: IncomingMessage,
+): string | null {
   try {
     const url = new URL(
       req.url || '/',
@@ -63,11 +74,11 @@ function rejectUpgrade(
 }
 
 /**
- * Attaches the Staff communication WebSocket to the same HTTP server
- * that serves the Express API.
+ * Attaches the Staff communication WebSocket to the same
+ * HTTP server that serves the Express API.
  *
- * This is important on Render because WebSocket upgrades must be
- * handled by the HTTP server that is actually listening for requests.
+ * WebSocket upgrades must be handled by the actual HTTP
+ * server that is listening for requests.
  */
 export function attachCommunicationWebSocket(
   server: HttpServer,
@@ -76,112 +87,195 @@ export function attachCommunicationWebSocket(
     noServer: true,
   });
 
-  server.on('upgrade', (request, socket, head) => {
-    let url: URL;
-
-    try {
-      url = new URL(
-        request.url || '/',
-        'http://localhost',
+  server.on(
+    'upgrade',
+    (request, socket, head) => {
+      console.log(
+        '[Communication WebSocket] UPGRADE RECEIVED:',
+        request.url,
       );
-    } catch {
-      rejectUpgrade(
-        socket,
-        400,
-        'Invalid WebSocket request',
+
+      let url: URL;
+
+      try {
+        url = new URL(
+          request.url || '/',
+          'http://localhost',
+        );
+      } catch (error) {
+        console.error(
+          '[Communication WebSocket] Invalid upgrade URL:',
+          error,
+        );
+
+        rejectUpgrade(
+          socket,
+          400,
+          'Invalid WebSocket request',
+        );
+
+        return;
+      }
+
+      /**
+       * Let the other WebSocket modules handle
+       * their own paths.
+       */
+      if (
+        url.pathname !==
+        '/ws/communication'
+      ) {
+        return;
+      }
+
+      console.log(
+        '[Communication WebSocket] Communication path matched.',
       );
-      return;
-    }
 
-    /*
-     * Let the other WebSocket modules handle their own paths.
-     */
-    if (url.pathname !== '/ws/communication') {
-      return;
-    }
+      try {
+        const token = tokenFromRequest(
+          request,
+        );
 
-    try {
-      const token = tokenFromRequest(request);
+        console.log(
+          '[Communication WebSocket] Token received:',
+          Boolean(token),
+        );
 
-      if (!token) {
-        console.warn(
-          '[Communication WebSocket] Upgrade rejected: missing token',
+        if (!token) {
+          console.warn(
+            '[Communication WebSocket] Upgrade rejected: missing token',
+          );
+
+          rejectUpgrade(
+            socket,
+            401,
+            'Missing access token',
+          );
+
+          return;
+        }
+
+        const claims =
+          JwtUtils.verifyAccessToken(token);
+
+        console.log(
+          '[Communication WebSocket] Token verified:',
+          {
+            userType: claims.userType,
+            id: claims.id,
+            accountId: claims.accountId,
+            hospitalId: claims.hospitalId,
+          },
+        );
+
+        if (
+          claims.userType !== 'STAFF' ||
+          !claims.id ||
+          !(
+            claims.accountId ||
+            claims.hospitalId
+          )
+        ) {
+          console.warn(
+            '[Communication WebSocket] Upgrade rejected: invalid staff claims',
+          );
+
+          rejectUpgrade(
+            socket,
+            403,
+            'Staff authentication required',
+          );
+
+          return;
+        }
+
+        const userId = String(
+          claims.id,
+        );
+
+        const hospitalId = String(
+          claims.accountId ||
+            claims.hospitalId,
+        );
+
+        console.log(
+          '[Communication WebSocket] Authentication accepted:',
+          {
+            userId,
+            hospitalId,
+          },
+        );
+
+        console.log(
+          '[Communication WebSocket] Accepting WebSocket upgrade...',
+        );
+
+        wss.handleUpgrade(
+          request,
+          socket,
+          head,
+          (ws) => {
+            console.log(
+              '[Communication WebSocket] WebSocket upgrade completed.',
+            );
+
+            const communicationSocket =
+              ws as CommunicationSocket;
+
+            communicationSocket.userId =
+              userId;
+
+            communicationSocket.hospitalId =
+              hospitalId;
+
+            wss.emit(
+              'connection',
+              communicationSocket,
+              request,
+            );
+          },
+        );
+      } catch (error) {
+        console.error(
+          '[Communication WebSocket] Authentication or upgrade failed:',
+          error,
         );
 
         rejectUpgrade(
           socket,
           401,
-          'Missing access token',
+          'Invalid or expired access token',
         );
-
-        return;
       }
-
-      const claims = JwtUtils.verifyAccessToken(token);
-
-      if (
-        claims.userType !== 'STAFF' ||
-        !claims.id ||
-        !(claims.accountId || claims.hospitalId)
-      ) {
-        console.warn(
-          '[Communication WebSocket] Upgrade rejected: invalid staff claims',
-        );
-
-        rejectUpgrade(
-          socket,
-          403,
-          'Staff authentication required',
-        );
-
-        return;
-      }
-
-      const userId = String(claims.id);
-
-      const hospitalId = String(
-        claims.accountId || claims.hospitalId,
-      );
-
-      wss.handleUpgrade(
-        request,
-        socket,
-        head,
-        (ws) => {
-          const communicationSocket =
-            ws as CommunicationSocket;
-
-          communicationSocket.userId = userId;
-          communicationSocket.hospitalId = hospitalId;
-
-          wss.emit(
-            'connection',
-            communicationSocket,
-            request,
-          );
-        },
-      );
-    } catch (error) {
-      console.error(
-        '[Communication WebSocket] Authentication failed:',
-        error,
-      );
-
-      rejectUpgrade(
-        socket,
-        401,
-        'Invalid or expired access token',
-      );
-    }
-  });
+    },
+  );
 
   wss.on(
     'connection',
-    async (ws: CommunicationSocket) => {
+    async (
+      ws: CommunicationSocket,
+    ) => {
+      console.log(
+        '[Communication WebSocket] Connection event received.',
+      );
+
       const userId = ws.userId;
       const hospitalId = ws.hospitalId;
 
+      console.log(
+        '[Communication WebSocket] Connection context:',
+        {
+          userId,
+          hospitalId,
+        },
+      );
+
       if (!userId || !hospitalId) {
+        console.warn(
+          '[Communication WebSocket] Closing connection: authentication context missing.',
+        );
+
         ws.close(
           1008,
           'Authentication context missing',
@@ -191,17 +285,30 @@ export function attachCommunicationWebSocket(
       }
 
       try {
-        const user = await StaffUser.findOne({
-          _id: userId,
-          hospitalId,
-          isActive: true,
-          status: 'ACTIVE',
-        })
-          .select('_id')
-          .lean()
-          .catch(() => null);
+        console.log(
+          '[Communication WebSocket] Checking Staff account...',
+        );
+
+        const user =
+          await StaffUser.findOne({
+            _id: userId,
+            hospitalId,
+            isActive: true,
+            status: 'ACTIVE',
+          })
+            .select('_id')
+            .lean()
+            .catch(() => null);
 
         if (!user) {
+          console.warn(
+            '[Communication WebSocket] Staff account not found or inactive:',
+            {
+              userId,
+              hospitalId,
+            },
+          );
+
           ws.close(
             1008,
             'Staff account is not active',
@@ -209,6 +316,10 @@ export function attachCommunicationWebSocket(
 
           return;
         }
+
+        console.log(
+          '[Communication WebSocket] Staff account verified.',
+        );
 
         await StaffUser.updateOne(
           {
@@ -224,24 +335,40 @@ export function attachCommunicationWebSocket(
           },
         );
 
-        const handler = (event: any) => {
-          if (event.hospitalId !== hospitalId) {
+        console.log(
+          '[Communication WebSocket] Staff presence set to ONLINE.',
+        );
+
+        const handler = (
+          event: any,
+        ) => {
+          if (
+            event.hospitalId !==
+            hospitalId
+          ) {
             return;
           }
 
           if (
             event.userIds &&
-            !event.userIds.includes(userId)
+            !event.userIds.includes(
+              userId,
+            )
           ) {
             return;
           }
 
-          if (ws.readyState !== WebSocket.OPEN) {
+          if (
+            ws.readyState !==
+            WebSocket.OPEN
+          ) {
             return;
           }
 
           try {
-            ws.send(JSON.stringify(event));
+            ws.send(
+              JSON.stringify(event),
+            );
           } catch (error) {
             console.error(
               '[Communication WebSocket] Failed to send event:',
@@ -257,49 +384,82 @@ export function attachCommunicationWebSocket(
 
         ws.send(
           JSON.stringify({
-            type: 'communication.connected',
+            type:
+              'communication.connected',
             hospitalId,
             userId,
-            occurredAt: new Date().toISOString(),
+            occurredAt:
+              new Date().toISOString(),
           }),
+        );
+
+        console.log(
+          '[Communication WebSocket] Connected successfully:',
+          {
+            userId,
+            hospitalId,
+          },
         );
 
         let cleanedUp = false;
 
-        const goOffline = async () => {
-          if (cleanedUp) {
-            return;
-          }
+        const goOffline =
+          async () => {
+            if (cleanedUp) {
+              return;
+            }
 
-          cleanedUp = true;
+            cleanedUp = true;
 
-          communicationEvents.off(
-            'event',
-            handler,
-          );
+            communicationEvents.off(
+              'event',
+              handler,
+            );
 
-          await StaffUser.updateOne(
-            {
-              _id: userId,
-              hospitalId,
-            },
-            {
-              $set: {
-                presenceStatus:
-                  StaffPresenceStatus.OFFLINE,
-                lastSeenAt: new Date(),
+            await StaffUser.updateOne(
+              {
+                _id: userId,
+                hospitalId,
               },
-            },
-          ).catch(() => undefined);
-        };
+              {
+                $set: {
+                  presenceStatus:
+                    StaffPresenceStatus.OFFLINE,
+                  lastSeenAt:
+                    new Date(),
+                },
+              },
+            ).catch(
+              () => undefined,
+            );
 
-        ws.on('close', () => {
-          void goOffline();
-        });
+            console.log(
+              '[Communication WebSocket] Staff connection closed:',
+              {
+                userId,
+                hospitalId,
+              },
+            );
+          };
 
-        ws.on('error', () => {
-          void goOffline();
-        });
+        ws.on(
+          'close',
+          () => {
+            void goOffline();
+          },
+        );
+
+        ws.on(
+          'error',
+          (error) => {
+            console.error(
+              '[Communication WebSocket] Socket error:',
+              error,
+            );
+
+            void goOffline();
+          },
+        );
       } catch (error) {
         console.error(
           '[Communication WebSocket] Connection initialization failed:',
