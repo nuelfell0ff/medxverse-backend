@@ -1,0 +1,64 @@
+import { Router } from 'express';
+import { authenticate, restrictTo } from '../../middlewares/auth.middleware.js';
+import { PatientAssignmentController } from './patient-assignment.controller.js';
+
+const router = Router();
+
+router.use(authenticate);
+
+router.get('/mine', restrictTo(
+  'HOSPITAL',
+  'HOSPITAL_ADMIN',
+  'DOCTOR',
+  'NURSE',
+  'PHARMACIST',
+  'LAB_TECHNICIAN',
+  'RADIOLOGIST',
+), PatientAssignmentController.listMine);
+
+router.get('/mine/:patientId', restrictTo(
+  'HOSPITAL',
+  'HOSPITAL_ADMIN',
+  'DOCTOR',
+  'NURSE',
+  'PHARMACIST',
+  'LAB_TECHNICIAN',
+  'RADIOLOGIST',
+), PatientAssignmentController.getMyPatient);
+
+router.get('/patient/:patientId', restrictTo(
+  'HOSPITAL',
+  'HOSPITAL_ADMIN',
+  'DOCTOR',
+  'NURSE',
+  'PHARMACIST',
+  'LAB_TECHNICIAN',
+  'RADIOLOGIST',
+), PatientAssignmentController.listPatientAssignments);
+
+router.get('/:id', restrictTo(
+  'HOSPITAL',
+  'HOSPITAL_ADMIN',
+  'DOCTOR',
+  'NURSE',
+  'PHARMACIST',
+  'LAB_TECHNICIAN',
+  'RADIOLOGIST',
+), PatientAssignmentController.getById);
+
+router.post('/sync-appointments', restrictTo(
+  'HOSPITAL',
+  'HOSPITAL_ADMIN',
+), PatientAssignmentController.syncAppointments);
+
+router.post('/', restrictTo(
+  'HOSPITAL',
+  'HOSPITAL_ADMIN',
+), PatientAssignmentController.create);
+
+router.patch('/:id', restrictTo(
+  'HOSPITAL',
+  'HOSPITAL_ADMIN',
+), PatientAssignmentController.update);
+
+export default router;
