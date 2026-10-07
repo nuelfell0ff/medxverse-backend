@@ -38,6 +38,27 @@ export interface StaffLoginDTO {
   hospitalCode?: string;
 }
 
+export interface ChangeStaffPasswordDTO {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword?: string;
+}
+
+export interface UpdateStaffProfileDTO {
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  title?: string;
+  jobTitle?: string;
+  profilePhotoUrl?: string;
+  phone?: string;
+  alternatePhone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+}
+
 export interface StaffAuthResponse {
   token: string;
   staff: {

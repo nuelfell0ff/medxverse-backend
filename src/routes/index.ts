@@ -3,6 +3,7 @@ import authRoutes from '../modules/auth/auth.routes.js';
 import staffAuthRoutes from '../modules/staff-auth/staff-auth.routes.js';
 import communicationRoutes from '../modules/communication/communication.routes.js';
 import staffWorkRoutes from '../modules/staff-work/staff-work.routes.js';
+import staffNotificationsRoutes from '../modules/staff-notifications/staff-notifications.routes.js';
 
 // hospital hms
 import dashboardRoutes from '../modules/dashboard/dashboard.routes.js';
@@ -57,6 +58,7 @@ v1Router.use('/auth', authRoutes);
 v1Router.use('/auth/staff', staffAuthRoutes);
 v1Router.use('/communication', communicationRoutes);
 v1Router.use('/staff-work', staffWorkRoutes);
+v1Router.use('/staff-notifications', staffNotificationsRoutes);
 
 // hospital hms
 v1Router.use('/dashboard', dashboardRoutes);

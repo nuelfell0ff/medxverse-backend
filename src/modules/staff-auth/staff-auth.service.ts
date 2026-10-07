@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Types } from 'mongoose';
 import { Staff } from '../staff/staff.model.js';
 import { Account } from '../auth/auth.model.js';
+import { Department } from '../communication/department.model.js';
 import { JwtUtils } from '../../utils/jwt.js';
 import { sendEmail } from '../../utils/email.js';
 import { env } from '../../config/env.js';
@@ -15,6 +16,8 @@ import {
   StaffAuthResponse,
   StaffLoginDTO,
   StaffUserStatus,
+  ChangeStaffPasswordDTO,
+  UpdateStaffProfileDTO,
 } from './staff-auth.types.js';
 
 function hashToken(token: string): string {
@@ -439,6 +442,169 @@ If you did not expect this invitation, please contact your hospital administrato
     await user.save();
 
     return this.issueStaffToken(user._id.toString());
+  }
+
+  static async getProfile(userId: string, hospitalId: string) {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(hospitalId)) {
+      throw new Error('Invalid staff or hospital ID');
+    }
+
+    const user = await StaffUser.findOne({
+      _id: userId,
+      hospitalId,
+      isActive: true,
+      status: StaffUserStatus.ACTIVE,
+    }).lean();
+
+    if (!user) throw new Error('Active staff account not found');
+
+    const staff = await Staff.findOne({
+      _id: user.staffId,
+      hospitalId,
+    }).lean();
+
+    const hospitalResult = await Account.findOne({
+      _id: hospitalId,
+      accountType: 'HOSPITAL',
+      isActive: true,
+    })
+      .select('name code email phone address logoUrl')
+      .lean();
+
+    if (!staff) throw new Error('Linked staff record not found');
+    if (!hospitalResult) throw new Error('Hospital account not found or inactive');
+
+    // Keep the hospital shape explicit. Mongoose can otherwise infer a
+    // document-or-array union here when this model is used with populate
+    // elsewhere in the project, which causes false TypeScript errors for
+    // properties such as _id, name, code, and logoUrl.
+    const hospital: {
+      _id: Types.ObjectId;
+      name: string;
+      code?: string;
+      email: string;
+      phone: string;
+      address?: string;
+      logoUrl?: string;
+    } = hospitalResult as unknown as {
+      _id: Types.ObjectId;
+      name: string;
+      code?: string;
+      email: string;
+      phone: string;
+      address?: string;
+      logoUrl?: string;
+    };
+
+    const departmentId = (staff as any).employment?.departmentId;
+    const department = departmentId && Types.ObjectId.isValid(String(departmentId))
+      ? await Department.findOne({ _id: departmentId, hospitalId }).select('name code').lean()
+      : null;
+
+    return {
+      account: {
+        id: String(user._id),
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        isActive: user.isActive,
+        lastLoginAt: user.lastLoginAt,
+        presenceStatus: user.presenceStatus,
+        lastSeenAt: user.lastSeenAt,
+      },
+      staff: {
+        id: String(staff._id),
+        staffId: staff.staffId,
+        firstName: staff.firstName,
+        middleName: staff.middleName,
+        lastName: staff.lastName,
+        title: staff.title,
+        professionalTitle: staff.professionalTitle,
+        jobTitle: staff.jobTitle,
+        profilePhotoUrl: staff.profilePhotoUrl,
+        role: staff.role,
+        category: staff.category,
+        classification: staff.classification,
+        contact: staff.contact || {},
+        department: department
+          ? { id: String(department._id), name: department.name, code: department.code }
+          : undefined,
+      },
+      hospital: {
+        id: String(hospital._id),
+        name: hospital.name,
+        code: hospital.code,
+        email: hospital.email,
+        phone: hospital.phone,
+        address: hospital.address,
+        logoUrl: hospital.logoUrl,
+      },
+    };
+  }
+
+  static async updateProfile(userId: string, hospitalId: string, dto: UpdateStaffProfileDTO) {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(hospitalId)) {
+      throw new Error('Invalid staff or hospital ID');
+    }
+
+    const user = await StaffUser.findOne({
+      _id: userId,
+      hospitalId,
+      isActive: true,
+      status: StaffUserStatus.ACTIVE,
+    }).lean();
+    if (!user) throw new Error('Active staff account not found');
+
+    const staff = await Staff.findOne({ _id: user.staffId, hospitalId });
+    if (!staff) throw new Error('Linked staff record not found');
+
+    const allowedTextFields = ['firstName', 'middleName', 'lastName', 'title', 'jobTitle', 'profilePhotoUrl'] as const;
+    for (const field of allowedTextFields) {
+      if (dto[field] !== undefined) {
+        const value = String(dto[field] ?? '').trim();
+        if ((field === 'firstName' || field === 'lastName') && !value) {
+          throw new Error(`${field} is required`);
+        }
+        (staff as any)[field] = value || undefined;
+      }
+    }
+
+    if (!(staff as any).contact) (staff as any).contact = {};
+    if (dto.phone !== undefined) staff.contact.phone = String(dto.phone).trim();
+    if (dto.alternatePhone !== undefined) staff.contact.alternatePhone = String(dto.alternatePhone).trim();
+    if (dto.address !== undefined) staff.contact.address = String(dto.address).trim();
+    if (dto.city !== undefined) staff.contact.city = String(dto.city).trim();
+    if (dto.state !== undefined) staff.contact.state = String(dto.state).trim();
+    if (dto.country !== undefined) staff.contact.country = String(dto.country).trim();
+
+    await staff.save();
+    return this.getProfile(userId, hospitalId);
+  }
+
+  static async changePassword(userId: string, hospitalId: string, dto: ChangeStaffPasswordDTO) {
+    if (!dto.currentPassword || !dto.newPassword) throw new Error('Current password and new password are required');
+    if (dto.confirmPassword !== undefined && dto.newPassword !== dto.confirmPassword) {
+      throw new Error('New password and confirmation do not match');
+    }
+    if (dto.currentPassword === dto.newPassword) throw new Error('New password must be different from the current password');
+    if (!passwordIsStrongEnough(dto.newPassword)) {
+      throw new Error('Password must be at least 8 characters and include uppercase, lowercase, number, and special character');
+    }
+
+    const user = await StaffUser.findOne({
+      _id: userId,
+      hospitalId,
+      isActive: true,
+      status: StaffUserStatus.ACTIVE,
+    }).select('+password');
+
+    if (!user) throw new Error('Active staff account not found');
+    if (!(await user.comparePassword(dto.currentPassword))) throw new Error('Current password is incorrect');
+
+    user.password = dto.newPassword;
+    await user.save();
+
+    return { changedAt: new Date().toISOString() };
   }
 
   private static async issueStaffToken(

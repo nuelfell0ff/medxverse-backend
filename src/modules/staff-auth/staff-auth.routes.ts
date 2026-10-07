@@ -9,6 +9,10 @@ router.get('/invitation/:token', StaffAuthController.previewInvitation);
 router.post('/invitation/accept', StaffAuthController.acceptInvitation);
 router.post('/login', StaffAuthController.login);
 
+router.get('/me', protect, StaffAuthController.me);
+router.patch('/me', protect, StaffAuthController.updateProfile);
+router.post('/change-password', protect, StaffAuthController.changePassword);
+
 // Existing hospital administrators can issue invitations from the staff page.
 router.post(
   '/invite/:staffId',
