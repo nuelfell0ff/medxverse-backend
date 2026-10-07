@@ -129,10 +129,34 @@ export class StaffWorkService {
     return { userId, hospitalId, isStaff: false };
   }
 
-  private static async assertStaffBelongsToHospital(staffId: string, hospitalId: string): Promise<void> {
-    asObjectId(staffId, 'staffId');
-    const exists = await Staff.exists({ _id: staffId, hospitalId });
-    if (!exists) throw new Error('Assigned staff member does not belong to this hospital');
+  /**
+   * Resolve either the MongoDB Staff document _id or the hospital's
+   * human-readable Staff.staffId value to the canonical Staff._id.
+   *
+   * The Staff login response exposes the human-readable staffId for display,
+   * while WorkTask/WorkTicket store references to Staff._id. Accepting both
+   * here keeps the API compatible with the existing Staff portal.
+   */
+  private static async resolveStaffObjectId(staffId: string, hospitalId: string): Promise<Types.ObjectId> {
+    if (!staffId || !isObjectId(hospitalId)) throw new Error('Invalid staffId');
+
+    if (isObjectId(staffId)) {
+      const byObjectId = await Staff.findOne({ _id: staffId, hospitalId }).select('_id').lean();
+      if (byObjectId?._id) return new Types.ObjectId(String(byObjectId._id));
+    }
+
+    const byStaffCode = await Staff.findOne({
+      staffId: String(staffId).trim().toUpperCase(),
+      hospitalId,
+    }).select('_id').lean();
+
+    if (byStaffCode?._id) return new Types.ObjectId(String(byStaffCode._id));
+
+    throw new Error('Assigned staff member does not belong to this hospital');
+  }
+
+  private static async assertStaffBelongsToHospital(staffId: string, hospitalId: string): Promise<Types.ObjectId> {
+    return this.resolveStaffObjectId(staffId, hospitalId);
   }
 
   private static async getPatient(patientId: string, hospitalId: string): Promise<boolean> {
@@ -169,7 +193,7 @@ export class StaffWorkService {
   static async createTask(actor: ActorContext, input: any) {
     if (!input.title || !String(input.title).trim()) throw new Error('Task title is required');
     if (!input.assignedTo) throw new Error('assignedTo is required');
-    await this.assertStaffBelongsToHospital(String(input.assignedTo), actor.hospitalId);
+    const assignedTo = await this.assertStaffBelongsToHospital(String(input.assignedTo), actor.hospitalId);
     if (input.patientId && !(await this.getPatient(String(input.patientId), actor.hospitalId))) throw new Error('Patient not found in this hospital');
     if (input.relatedRecordId && !isObjectId(String(input.relatedRecordId))) throw new Error('Invalid relatedRecordId');
 
@@ -180,7 +204,7 @@ export class StaffWorkService {
       category: input.category || WorkTaskCategory.GENERAL,
       priority: input.priority || WorkTaskPriority.NORMAL,
       status: input.status || WorkTaskStatus.PENDING,
-      assignedTo: asObjectId(String(input.assignedTo), 'assignedTo'),
+      assignedTo,
       createdByUserId: asObjectId(actor.userId, 'userId'),
       createdByStaffId: actor.staffId ? asObjectId(actor.staffId, 'staffId') : undefined,
       patientId: input.patientId ? asObjectId(String(input.patientId), 'patientId') : undefined,
@@ -200,13 +224,17 @@ export class StaffWorkService {
     const task = await WorkTaskModel.findOne({ _id: taskId, hospitalId: actor.hospitalId });
     if (!task) throw new Error('Task not found');
 
-    if (input.assignedTo) await this.assertStaffBelongsToHospital(String(input.assignedTo), actor.hospitalId);
+    const assignedTo = input.assignedTo
+      ? await this.assertStaffBelongsToHospital(String(input.assignedTo), actor.hospitalId)
+      : undefined;
     if (input.patientId && !(await this.getPatient(String(input.patientId), actor.hospitalId))) throw new Error('Patient not found in this hospital');
 
     const allowed = ['title', 'description', 'category', 'priority', 'status', 'assignedTo', 'patientId', 'relatedModule', 'relatedRecordId', 'dueAt'];
     for (const key of allowed) {
       if (!(key in input)) continue;
-      if (key === 'assignedTo' || key === 'patientId' || key === 'relatedRecordId') {
+      if (key === 'assignedTo') {
+        (task as any).assignedTo = assignedTo;
+      } else if (key === 'patientId' || key === 'relatedRecordId') {
         (task as any)[key] = input[key] ? asObjectId(String(input[key]), key) : undefined;
       } else if (key === 'dueAt') {
         (task as any)[key] = input[key] ? normalizeDate(String(input[key])) : undefined;
@@ -269,7 +297,9 @@ export class StaffWorkService {
   static async createTicket(actor: ActorContext, input: any) {
     if (!input.subject || !String(input.subject).trim()) throw new Error('Ticket subject is required');
     if (!input.description || !String(input.description).trim()) throw new Error('Ticket description is required');
-    if (input.assignedTo) await this.assertStaffBelongsToHospital(String(input.assignedTo), actor.hospitalId);
+    const assignedTo = input.assignedTo
+      ? await this.assertStaffBelongsToHospital(String(input.assignedTo), actor.hospitalId)
+      : undefined;
     if (input.patientId && !(await this.getPatient(String(input.patientId), actor.hospitalId))) throw new Error('Patient not found in this hospital');
 
     const ticket = await WorkTicketModel.create({
@@ -282,7 +312,7 @@ export class StaffWorkService {
       status: input.assignedTo ? WorkTicketStatus.ASSIGNED : WorkTicketStatus.OPEN,
       requesterUserId: asObjectId(actor.userId, 'userId'),
       requesterStaffId: actor.staffId ? asObjectId(actor.staffId, 'staffId') : undefined,
-      assignedTo: input.assignedTo ? asObjectId(String(input.assignedTo), 'assignedTo') : undefined,
+      assignedTo,
       patientId: input.patientId ? asObjectId(String(input.patientId), 'patientId') : undefined,
       relatedModule: input.relatedModule,
       relatedRecordId: input.relatedRecordId ? asObjectId(String(input.relatedRecordId), 'relatedRecordId') : undefined,
@@ -304,13 +334,15 @@ export class StaffWorkService {
     });
     if (!ticket) throw new Error('Ticket not found');
 
-    if (input.assignedTo) await this.assertStaffBelongsToHospital(String(input.assignedTo), actor.hospitalId);
+    const assignedTo = input.assignedTo
+      ? await this.assertStaffBelongsToHospital(String(input.assignedTo), actor.hospitalId)
+      : undefined;
     if (input.patientId && !(await this.getPatient(String(input.patientId), actor.hospitalId))) throw new Error('Patient not found in this hospital');
 
     for (const key of ['subject', 'description', 'category', 'priority', 'status', 'relatedModule']) {
       if (key in input) (ticket as any)[key] = input[key];
     }
-    if ('assignedTo' in input) ticket.assignedTo = input.assignedTo ? asObjectId(String(input.assignedTo), 'assignedTo') : undefined;
+    if ('assignedTo' in input) ticket.assignedTo = assignedTo;
     if ('patientId' in input) ticket.patientId = input.patientId ? asObjectId(String(input.patientId), 'patientId') : undefined;
     if ('relatedRecordId' in input) ticket.relatedRecordId = input.relatedRecordId ? asObjectId(String(input.relatedRecordId), 'relatedRecordId') : undefined;
 
