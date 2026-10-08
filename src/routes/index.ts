@@ -32,6 +32,7 @@ import inventoryRoutes from '../modules/inventory/inventory.routes.js';
 import administrationRoutes from '../modules/administration/administration.routes.js';
 import telemedicineRoutes from '../modules/telemedicine/telemedicine.routes.js';
 import icuRoutes from '../modules/icu/icu.routes.js';
+import globalSearchRoutes from '../modules/global-search/global-search.routes.js';
 
 // hmo portal
 import hmsDashboardRoutes from '../modules/hms-dashboard/hms-dashboard.routes.js';
@@ -58,6 +59,7 @@ const v1Router = Router();
 v1Router.use('/auth', authRoutes);
 v1Router.use('/auth/staff', staffAuthRoutes);
 v1Router.use('/communication', communicationRoutes);
+v1Router.use('/search', globalSearchRoutes);
 v1Router.use('/staff-work', staffWorkRoutes);
 v1Router.use('/staff-notifications', staffNotificationsRoutes);
 v1Router.use('/patient-assignments', patientAssignmentRoutes);

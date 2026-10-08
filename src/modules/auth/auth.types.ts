@@ -5,7 +5,6 @@ export enum AccountType {
   HMO = 'HMO',
 }
 
-// Added missing JWT payload interface
 export interface AuthUserPayload {
   id: string;
   accountId?: string;
@@ -49,6 +48,20 @@ export interface RegisterAccountDTO {
 export interface LoginDTO {
   email: string;
   password: string;
+}
+
+export interface UpdateAccountProfileDTO {
+  name?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  logoUrl?: string;
+}
+
+export interface ChangeAccountPasswordDTO {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword?: string;
 }
 
 export interface AuthResponse {
