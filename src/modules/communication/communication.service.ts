@@ -36,6 +36,83 @@ async function ensurePatientInHospital(patientId: string, hospitalId: string) {
   return patient;
 }
 
+
+async function resolveStaffUserIds(hospitalId: string, ids: string[]): Promise<Types.ObjectId[]> {
+  const uniqueIds = uniqueStrings(ids);
+  if (!uniqueIds.length) return [];
+
+  const validObjectIds = uniqueIds.filter((id) => Types.ObjectId.isValid(id)).map((id) => new Types.ObjectId(id));
+
+  const users = await StaffUser.find({
+    hospitalId,
+    $or: [
+      { _id: { $in: validObjectIds } },
+      { staffId: { $in: validObjectIds } },
+    ],
+    isActive: true,
+    status: 'ACTIVE',
+  }).select('_id staffId').lean();
+
+  const byRequestedId = new Map<string, Types.ObjectId>();
+  for (const user of users) {
+    byRequestedId.set(String(user._id), user._id as Types.ObjectId);
+    byRequestedId.set(String(user.staffId), user._id as Types.ObjectId);
+  }
+
+  const unresolved = uniqueIds.filter((id) => !byRequestedId.has(id));
+  if (unresolved.length) {
+    throw new Error('One or more selected staff members do not belong to this hospital');
+  }
+
+  return uniqueIds.map((id) => byRequestedId.get(id)!);
+}
+
+async function departmentStaffUserIds(hospitalId: string, departmentId: Types.ObjectId): Promise<Types.ObjectId[]> {
+  const staff = await Staff.find({
+    hospitalId,
+    isActive: true,
+    status: 'ACTIVE',
+    'employment.departmentId': departmentId,
+  }).select('_id').lean();
+
+  if (!staff.length) return [];
+
+  const users = await StaffUser.find({
+    hospitalId,
+    staffId: { $in: staff.map((member: any) => member._id) },
+    isActive: true,
+    status: 'ACTIVE',
+  }).select('_id').lean();
+
+  return users.map((user: any) => user._id as Types.ObjectId);
+}
+
+async function authorizedConversationFilter(hospitalId: string, userId: string) {
+  const user = await ensureStaffUserInHospital(userId, hospitalId);
+  const departmentIds = user.staffId
+    ? await Staff.find({
+        _id: user.staffId,
+        hospitalId,
+        isActive: true,
+      }).select('employment.departmentId').lean()
+    : [];
+
+  const departmentId = departmentIds[0]?.employment?.departmentId;
+
+  const clauses: any[] = [
+    { 'participants.userId': user._id },
+  ];
+
+  if (departmentId) {
+    clauses.push({
+      type: ConversationType.DEPARTMENT,
+      departmentId,
+    });
+  }
+
+  return { user, filter: { hospitalId: oid(hospitalId, 'hospital ID'), archivedAt: { $exists: false }, $or: clauses } };
+}
+
 async function decorateConversationParticipants(conversations: any[]) {
   const staffIds = [...new Set(
     conversations.flatMap((conversation: any) => (conversation.participants || []))
@@ -73,12 +150,12 @@ export class CommunicationService {
   static async listInbox(hospitalId: string, userId: string, page = 1, limit = 30) {
     const h = oid(hospitalId, 'hospital ID');
     const u = oid(userId, 'user ID');
-    await ensureStaffUserInHospital(userId, hospitalId);
+    const { filter } = await authorizedConversationFilter(hospitalId, userId);
 
     const safePage = Math.max(1, page);
     const safeLimit = Math.min(100, Math.max(1, limit));
     const [items, total] = await Promise.all([
-      Conversation.find({ hospitalId: h, 'participants.userId': u, archivedAt: { $exists: false } })
+      Conversation.find(filter)
         .sort({ lastMessageAt: -1, updatedAt: -1 })
         .skip((safePage - 1) * safeLimit)
         .limit(safeLimit)
@@ -86,7 +163,7 @@ export class CommunicationService {
         .populate('patientId', 'firstName lastName mrn phone')
         .populate('participants.userId', 'email role staffId')
         .lean(),
-      Conversation.countDocuments({ hospitalId: h, 'participants.userId': u, archivedAt: { $exists: false } }),
+      Conversation.countDocuments(filter),
     ]);
 
     const conversationIds = items.map((item) => item._id);
@@ -149,9 +226,9 @@ export class CommunicationService {
   }
 
   static async searchMessages(hospitalId: string, userId: string, search: string, limit = 50) {
-    await ensureStaffUserInHospital(userId, hospitalId);
+    const { filter } = await authorizedConversationFilter(hospitalId, userId);
     if (!search?.trim()) throw new Error('Search text is required');
-    const conversations = await Conversation.find({ hospitalId, 'participants.userId': userId }).select('_id').lean();
+    const conversations = await Conversation.find(filter).select('_id').lean();
     const ids = conversations.map((c) => c._id);
     if (!ids.length) return [];
     const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -164,29 +241,50 @@ export class CommunicationService {
     const safe = search.trim();
     if (safe.length < 2) throw new Error('Search must contain at least 2 characters');
     const regex = new RegExp(safe.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const safeLimit = Math.min(50, Math.max(1, limit));
 
-    const users = await StaffUser.find({
+    const staff = await Staff.find({
       hospitalId,
       isActive: true,
       status: 'ACTIVE',
-      $or: [{ email: regex }, { role: regex }],
-    }).limit(Math.min(50, limit)).lean();
+      $or: [
+        { firstName: regex },
+        { lastName: regex },
+        { staffId: regex },
+        { jobTitle: regex },
+        { role: regex },
+        { professionalTitle: regex },
+      ],
+    }).select('firstName lastName staffId role jobTitle professionalTitle profilePhotoUrl employment.departmentId').limit(safeLimit).lean();
 
-    const staffIds = users.map((u) => u.staffId);
-    const staff = await Staff.find({ _id: { $in: staffIds }, hospitalId }).select('firstName lastName staffId role jobTitle profilePhotoUrl employment.departmentId').lean();
-    const byStaff = new Map(staff.map((s: any) => [String(s._id), s]));
+    const staffIds = staff.map((member: any) => member._id);
+    const users = staffIds.length
+      ? await StaffUser.find({
+          hospitalId,
+          staffId: { $in: staffIds },
+          isActive: true,
+          status: 'ACTIVE',
+        }).select('_id email role staffId').lean()
+      : [];
 
-    return users.map((user: any) => ({
-      id: user._id.toString(),
-      email: user.email,
-      role: user.role,
-      staff: byStaff.get(String(user.staffId)),
-    }));
+    const byStaff = new Map(users.map((user: any) => [String(user.staffId), user]));
+
+    return staff.map((member: any) => {
+      const user = byStaff.get(String(member._id));
+      return {
+        id: user ? String(user._id) : String(member._id),
+        email: user?.email,
+        role: user?.role || member.role,
+        staff: member,
+      };
+    });
   }
 
   static async createDirectConversation(hospitalId: string, creatorId: string, targetUserId: string) {
     const creator = await ensureStaffUserInHospital(creatorId, hospitalId);
-    const target = await ensureStaffUserInHospital(targetUserId, hospitalId);
+    const resolved = await resolveStaffUserIds(hospitalId, [targetUserId]);
+    const targetId = resolved[0];
+    const target = await ensureStaffUserInHospital(String(targetId), hospitalId);
     if (String(creator._id) === String(target._id)) throw new Error('You cannot create a direct conversation with yourself');
 
     const directKey = [String(creator._id), String(target._id)].sort().join(':');
@@ -205,6 +303,16 @@ export class CommunicationService {
         createdBy: creator._id,
         priority: ConversationPriority.NORMAL,
       });
+
+      communicationEvents.emit('event', {
+        type: 'conversation.created',
+        hospitalId,
+        userIds: [String(creator._id), String(target._id)],
+        conversationId: String(conversation._id),
+        payload: conversation.toObject(),
+        occurredAt: new Date().toISOString(),
+      });
+
       return conversation;
     } catch (error: any) {
       if (error?.code === 11000) return Conversation.findOne({ hospitalId, type: ConversationType.DIRECT, directKey });
@@ -215,13 +323,13 @@ export class CommunicationService {
   static async createGroupConversation(hospitalId: string, creatorId: string, title: string, memberIds: string[]) {
     const creator = await ensureStaffUserInHospital(creatorId, hospitalId);
     if (!title?.trim()) throw new Error('Group title is required');
-    const ids = uniqueStrings([creatorId, ...memberIds]);
+
+    const resolvedIds = await resolveStaffUserIds(hospitalId, [creatorId, ...memberIds]);
+    const ids = [...new Set(resolvedIds.map((id) => String(id)))].map((id) => new Types.ObjectId(id));
+
     if (ids.length < 2) throw new Error('A group must contain at least two staff members');
 
-    const users = await StaffUser.find({ hospitalId, _id: { $in: ids }, isActive: true, status: 'ACTIVE' }).select('_id').lean();
-    if (users.length !== ids.length) throw new Error('One or more selected staff members do not belong to this hospital');
-
-    return Conversation.create({
+    const conversation = await Conversation.create({
       hospitalId,
       type: ConversationType.GROUP,
       title: title.trim(),
@@ -229,6 +337,17 @@ export class CommunicationService {
       createdBy: creator._id,
       priority: ConversationPriority.NORMAL,
     });
+
+    communicationEvents.emit('event', {
+      type: 'conversation.created',
+      hospitalId,
+      userIds: ids.map(String),
+      conversationId: String(conversation._id),
+      payload: conversation.toObject(),
+      occurredAt: new Date().toISOString(),
+    });
+
+    return conversation;
   }
 
   static async createDepartment(hospitalId: string, creatorId: string, name: string, code: string, description?: string) {
@@ -244,31 +363,48 @@ export class CommunicationService {
 
   static async createDepartmentConversation(hospitalId: string, creatorId: string, departmentId: string, title?: string) {
     const creator = await ensureStaffUserInHospital(creatorId, hospitalId);
-    const department = await Department.findOne({ _id: departmentId, hospitalId, isActive: true }).lean();
+    const department = await Department.findOne({ _id: oid(departmentId, 'department ID'), hospitalId, isActive: true }).lean();
     if (!department) throw new Error('Department not found in this hospital');
 
-    const existing = await Conversation.findOne({ hospitalId, type: ConversationType.DEPARTMENT, departmentId });
-    if (existing) {
-      const isMember = existing.participants.some((p) => String(p.userId) === String(creator._id));
-      if (!isMember) {
-        existing.participants.push({ type: ParticipantType.STAFF, userId: creator._id, joinedAt: new Date() });
-        await existing.save();
+    const departmentUsers = await departmentStaffUserIds(hospitalId, department._id as Types.ObjectId);
+    const allUserIds = [...new Set([String(creator._id), ...departmentUsers.map(String)])].map((id) => new Types.ObjectId(id));
+
+    let conversation = await Conversation.findOne({ hospitalId, type: ConversationType.DEPARTMENT, departmentId: department._id });
+    if (conversation) {
+      const existing = new Set(conversation.participants.map((p: any) => String(p.userId)));
+      for (const userId of allUserIds) {
+        if (!existing.has(String(userId))) {
+          conversation.participants.push({ type: ParticipantType.STAFF, userId, joinedAt: new Date() });
+        }
       }
-      return existing;
+      if (!conversation.title) conversation.title = title?.trim() || department.name;
+      await conversation.save();
+    } else {
+      conversation = await Conversation.create({
+        hospitalId,
+        type: ConversationType.DEPARTMENT,
+        title: title?.trim() || department.name,
+        departmentId: department._id,
+        participants: allUserIds.map((id) => ({ type: ParticipantType.STAFF, userId: id, joinedAt: new Date() })),
+        createdBy: creator._id,
+        priority: ConversationPriority.NORMAL,
+      });
     }
 
-    return Conversation.create({
+    communicationEvents.emit('event', {
+      type: 'conversation.created',
       hospitalId,
-      type: ConversationType.DEPARTMENT,
-      title: title?.trim() || department.name,
-      departmentId: department._id,
-      participants: [{ type: ParticipantType.STAFF, userId: creator._id, joinedAt: new Date() }],
-      createdBy: creator._id,
-      priority: ConversationPriority.NORMAL,
+      userIds: allUserIds.map(String),
+      conversationId: String(conversation._id),
+      payload: conversation.toObject(),
+      occurredAt: new Date().toISOString(),
     });
+
+    return conversation;
   }
 
   static async createPatientCareConversation(hospitalId: string, creatorId: string, patientId: string, memberIds: string[], title?: string) {
+    throw new Error('Patient messaging is currently disabled for staff messaging');
     const creator = await ensureStaffUserInHospital(creatorId, hospitalId);
     const patient = await ensurePatientInHospital(patientId, hospitalId);
     const ids = uniqueStrings([creatorId, ...memberIds]);
@@ -289,11 +425,10 @@ export class CommunicationService {
   }
 
   static async getConversation(hospitalId: string, userId: string, conversationId: string) {
-    const user = await ensureStaffUserInHospital(userId, hospitalId);
+    const { user, filter } = await authorizedConversationFilter(hospitalId, userId);
     const conversation = await Conversation.findOne({
-      _id: conversationId,
-      hospitalId,
-      'participants.userId': user._id,
+      ...filter,
+      _id: oid(conversationId, 'conversation ID'),
     })
       .populate('departmentId', 'name code')
       .populate('patientId', 'firstName lastName mrn phone gender dateOfBirth')
@@ -341,9 +476,20 @@ export class CommunicationService {
       { $set: { lastMessageAt: new Date(), lastMessagePreview: preview } }
     );
 
-    const recipientIds = conversation.participants
-      .filter((p: any) => p.userId && String(p.userId) !== String(sender._id))
-      .map((p: any) => String(p.userId));
+    const recipientSet = new Set(
+      conversation.participants
+        .filter((p: any) => p.userId && String(p.userId) !== String(sender._id))
+        .map((p: any) => String(p.userId)),
+    );
+
+    if (conversation.type === ConversationType.DEPARTMENT && conversation.departmentId) {
+      const departmentUsers = await departmentStaffUserIds(hospitalId, conversation.departmentId as Types.ObjectId);
+      for (const userId of departmentUsers) {
+        if (String(userId) !== String(sender._id)) recipientSet.add(String(userId));
+      }
+    }
+
+    const recipientIds = [...recipientSet];
 
     communicationEvents.emit('event', {
       type: 'message.created',
