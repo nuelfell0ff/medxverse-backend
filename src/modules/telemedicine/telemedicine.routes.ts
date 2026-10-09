@@ -6,6 +6,11 @@ const router = Router();
 
 router.use(authenticate);
 
+// Telemedicine directory for the authenticated hospital
+router.get('/directory', (req, res, next) =>
+  telemedicineController.getDirectory(req, res, next)
+);
+
 // Telemedicine Consultation Sessions
 router.post('/sessions', (req, res, next) =>
   telemedicineController.createSession(req, res, next)

@@ -10,7 +10,7 @@ export interface AuthRequest extends Request {
     name: string;
     email: string;
     role?: string;
-    userType?: 'ACCOUNT' | 'STAFF';
+    userType?: 'ACCOUNT' | 'STAFF' | 'PATIENT';
     [key: string]: unknown;
   };
 
@@ -23,7 +23,7 @@ export interface AuthRequest extends Request {
     name?: string;
     email?: string;
     role?: string;
-    userType?: 'ACCOUNT' | 'STAFF';
+    userType?: 'ACCOUNT' | 'STAFF' | 'PATIENT';
     [key: string]: unknown;
   };
 }
@@ -44,7 +44,7 @@ interface JwtPayload {
   name?: string;
   email?: string;
   role?: string;
-  userType?: 'ACCOUNT' | 'STAFF';
+  userType?: 'ACCOUNT' | 'STAFF' | 'PATIENT';
 
   [key: string]: unknown;
 }
@@ -79,6 +79,11 @@ export const authenticateAccount = (
       token,
       process.env.JWT_SECRET || 'fallback_secret_key'
     ) as JwtPayload;
+
+    if (decoded.userType === 'PATIENT' && !req.originalUrl.split('?')[0].includes('/telemedicine')) {
+      res.status(403).json({ success: false, message: 'Patient portal tokens may only access telemedicine endpoints.' });
+      return;
+    }
 
     const accountType =
       decoded.accountType === 'HMO' || decoded.accountType === 'HOSPITAL'
@@ -195,6 +200,11 @@ export const restrictTo = (...allowedRoles: string[]) => {
     res: Response,
     next: NextFunction
   ): void => {
+    if (req.user?.userType === 'PATIENT' && !allowedRoles.includes('PATIENT')) {
+      res.status(403).json({ success: false, message: 'Patient portal access is limited to patient-enabled features.' });
+      return;
+    }
+
     const role =
       req.user?.role ??
       req.user?.accountType ??
