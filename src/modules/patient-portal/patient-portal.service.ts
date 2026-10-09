@@ -45,6 +45,38 @@ function tokenFor(account: any, patient: PatientRecord & { hospitalId: Types.Obj
 }
 
 export class PatientPortalService {
+  /**
+   * Public, read-only directory for patient portal screens.
+   * Only exposes fields safe to show before authentication.
+   */
+  static async listHospitals() {
+    const hospitalResults = await Account.find({
+      accountType: 'HOSPITAL',
+      isActive: true,
+    })
+      .select('_id name code logoUrl address')
+      .sort({ name: 1 })
+      .lean()
+      .exec();
+
+    const hospitals = (Array.isArray(hospitalResults) ? hospitalResults : [hospitalResults]) as Array<{
+      _id: Types.ObjectId | string;
+      name?: string;
+      code?: string;
+      logoUrl?: string;
+      address?: string;
+    }>;
+
+    return hospitals.map((hospital) => ({
+      id: hospital._id.toString(),
+      name: hospital.name || 'Hospital',
+      // Code is returned only to support legacy portal screens. Login does not require it.
+      code: hospital.code || '',
+      logoUrl: hospital.logoUrl || '',
+      address: hospital.address || '',
+    }));
+  }
+
   static async register(input: {
     hospitalCode: string;
     mrn: string;
