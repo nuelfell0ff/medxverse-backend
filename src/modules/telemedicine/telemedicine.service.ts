@@ -38,15 +38,50 @@ export class TelemedicineService {
       const previous = await TelemedicineSessionModel.findOne({ _id: input.followUpOfSessionId, hospitalId: input.hospitalId, patientId: input.patientId }).select('_id').lean();
       if (!previous) throw new Error('The follow-up must be linked to an earlier consultation for this patient.');
     }
-    const roster = await ProviderScheduleModel.findOne({ hospitalId: input.hospitalId, providerId: input.doctorId, active: true }).lean();
-    if (roster && Array.isArray(roster.availability) && roster.availability.length) {
-      const parts = new Intl.DateTimeFormat('en-US', { timeZone: roster.timezone || 'Africa/Lagos', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(scheduledStartTime);
+    // Some project model typings infer findOne().lean() as a document-or-array union.
+    // Normalize the result and explicitly describe the schedule fields used here so
+    // TypeScript can safely access availability, timezone, and blockedTimes.
+    const rosterResult = await ProviderScheduleModel.findOne({
+      hospitalId: input.hospitalId,
+      providerId: input.doctorId,
+      active: true,
+    }).lean().exec();
+
+    type ProviderRoster = {
+      availability?: Array<{
+        dayOfWeek: number;
+        startTime: string;
+        endTime: string;
+      }>;
+      timezone?: string;
+      blockedTimes?: Array<{
+        startAt: Date | string;
+        endAt: Date | string;
+      }>;
+    };
+
+    const roster = (Array.isArray(rosterResult) ? rosterResult[0] : rosterResult) as ProviderRoster | null | undefined;
+
+    if (roster && Array.isArray(roster.availability) && roster.availability.length > 0) {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: roster.timezone || 'Africa/Lagos',
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).formatToParts(scheduledStartTime);
       const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
       const weekday = ({ Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 } as Record<string, number>)[part('weekday')];
       const time = `${part('hour')}:${part('minute')}`;
-      const hasAvailability = roster.availability.some((slot: any) => slot.dayOfWeek === weekday && time >= slot.startTime && time < slot.endTime);
-      if (!hasAvailability) throw new Error('The selected time is outside this doctor’s configured duty roster. Choose an available time.');
-      const blocked = (roster.blockedTimes || []).some((slot: any) => scheduledStartTime >= new Date(slot.startAt) && scheduledStartTime < new Date(slot.endAt));
+      const hasAvailability = roster.availability.some(
+        (slot) => slot.dayOfWeek === weekday && time >= slot.startTime && time < slot.endTime,
+      );
+      if (!hasAvailability) {
+        throw new Error('The selected time is outside this doctor’s configured duty roster. Choose an available time.');
+      }
+      const blocked = (roster.blockedTimes || []).some(
+        (slot) => scheduledStartTime >= new Date(slot.startAt) && scheduledStartTime < new Date(slot.endAt),
+      );
       if (blocked) throw new Error('The doctor is unavailable at this time. Choose another slot.');
     }
     const conflictingSession = await TelemedicineSessionModel.findOne({
