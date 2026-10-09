@@ -21,6 +21,9 @@ router.get('/sessions', (req, res, next) =>
 router.get('/sessions/:id', (req, res, next) =>
   telemedicineController.getSessionById(req, res, next)
 );
+router.get('/sessions/:id/meeting-token', (req, res, next) =>
+  telemedicineController.getMeetingToken(req, res, next)
+);
 router.patch('/sessions/:id/status', (req, res, next) =>
   telemedicineController.updateSessionStatus(req, res, next)
 );

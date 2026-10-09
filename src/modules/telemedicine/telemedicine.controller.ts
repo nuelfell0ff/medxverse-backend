@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { telemedicineService } from './telemedicine.service.js';
 import { StaffUser } from '../staff-auth/staff-user.model.js';
 import { Staff } from '../staff/staff.model.js';
+import jwt, { SignOptions } from 'jsonwebtoken';
+import { env } from '../../config/env.js';
 import { ConsultationType, ConsultationStatus } from './telemedicine.types.js';
 
 export interface AuthenticatedRequest extends Request {
@@ -123,6 +125,117 @@ export class TelemedicineController {
       }
 
       res.status(200).json({ success: true, data: session });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Creates a short-lived JaaS JWT for an authenticated participant.
+   * The JaaS private key is used only on the backend and is never returned.
+   */
+  public async getMeetingToken(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const appId = env.JAAS_APP_ID;
+      const apiKeyId = env.JAAS_API_KEY_ID;
+      const privateKey = env.JAAS_PRIVATE_KEY;
+
+      if (!appId || !apiKeyId || !privateKey) {
+        res.status(503).json({
+          success: false,
+          message: 'JaaS is not configured. Set JAAS_APP_ID, JAAS_API_KEY_ID, and JAAS_PRIVATE_KEY on the backend.',
+        });
+        return;
+      }
+
+      const sessionId = String(req.params.id || '');
+      const isPatient = authReq.user.userType === 'PATIENT';
+      const staffRecordId = await resolveStaffRecordId(authReq);
+
+      if (!isPatient && authReq.user.userType !== 'STAFF') {
+        res.status(403).json({ success: false, message: 'Only the assigned patient or doctor can join this consultation.' });
+        return;
+      }
+      if (authReq.user.userType === 'STAFF' && !staffRecordId) {
+        res.status(403).json({ success: false, message: 'Your staff login is not linked to a staff profile.' });
+        return;
+      }
+
+      const session = await telemedicineService.getSessionById(
+        sessionId,
+        String(authReq.user.hospitalId || ''),
+        isPatient ? String(authReq.user._id) : undefined,
+        isPatient ? undefined : staffRecordId,
+      );
+
+      if (!session) {
+        res.status(404).json({ success: false, message: 'Telemedicine session not found or you are not assigned to it.' });
+        return;
+      }
+      if ([ConsultationStatus.COMPLETED, ConsultationStatus.CANCELLED, ConsultationStatus.NO_SHOW].includes(session.status)) {
+        res.status(409).json({ success: false, message: 'This consultation has ended and its meeting is no longer available.' });
+        return;
+      }
+
+      const user = authReq.user as Record<string, unknown>;
+      const firstName = typeof user.firstName === 'string' ? user.firstName : '';
+      const lastName = typeof user.lastName === 'string' ? user.lastName : '';
+      const suppliedName = typeof user.name === 'string' ? user.name : '';
+      const displayName = (suppliedName || `${firstName} ${lastName}`.trim() ||
+        (isPatient ? 'MedXVerse Patient' : 'MedXVerse Doctor')).slice(0, 100);
+      const email = typeof user.email === 'string' ? user.email : undefined;
+      const now = Math.floor(Date.now() / 1000);
+      const expiresIn = env.JAAS_TOKEN_TTL_SECONDS;
+      const roomName = `${appId}/${session.meetingRoomId}`;
+
+      const tokenPayload = {
+        aud: 'jitsi',
+        iss: 'chat',
+        sub: appId,
+        room: session.meetingRoomId,
+        nbf: now - 10,
+        exp: now + expiresIn,
+        context: {
+          user: {
+            id: String(user._id),
+            name: displayName,
+            ...(email ? { email } : {}),
+            moderator: !isPatient,
+          },
+          features: {
+            livestreaming: false,
+            recording: false,
+            transcription: false,
+            'outbound-call': false,
+          },
+        },
+      };
+
+      // Explicitly type the options so TypeScript selects jsonwebtoken's
+      // options overload rather than treating this object as a callback.
+      const signingOptions: SignOptions = {
+        algorithm: 'RS256',
+        header: {
+          alg: 'RS256',
+          kid: `${appId}/${apiKeyId}`,
+          typ: 'JWT',
+        },
+      };
+
+      const token = jwt.sign(tokenPayload, privateKey, signingOptions);
+
+      res.status(200).json({
+        success: true,
+        data: {
+          domain: '8x8.vc',
+          appId,
+          roomName,
+          jwt: token,
+          meetingUrl: `https://8x8.vc/${roomName}`,
+          expiresAt: new Date((now + expiresIn) * 1000).toISOString(),
+        },
+      });
     } catch (error) {
       next(error);
     }
