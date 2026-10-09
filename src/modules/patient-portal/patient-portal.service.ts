@@ -1,15 +1,8 @@
-
 import bcrypt from 'bcryptjs';
 import jwt, { SignOptions } from 'jsonwebtoken';
 import { Types } from 'mongoose';
-import { Account } from '../auth/auth.model.js';
 import { PatientModel } from '../patient/patient.model.js';
 import { PatientPortalAccountModel } from './patient-portal.model.js';
-
-interface HospitalLean {
-  _id: Types.ObjectId;
-  code?: string;
-}
 
 interface PatientLean {
   _id: Types.ObjectId;
@@ -18,70 +11,82 @@ interface PatientLean {
   email?: string;
   hospitalId?: Types.ObjectId;
   mrn?: string;
+  dateOfBirth?: Date;
 }
 
-interface ExistingPortalAccountLean {
+interface PortalAccountLean {
   _id: Types.ObjectId;
+  hospitalId?: Types.ObjectId;
+  patientId?: Types.ObjectId;
+  firstName: string;
+  lastName: string;
+  email: string;
+  dateOfBirth: Date;
+  password?: string;
+  active: boolean;
 }
 
 function validPassword(password: string): boolean {
-  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/.test(
-    password
-  );
+  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/.test(password);
 }
 
-function tokenFor(account: any, patient: PatientLean): string {
-  const secret = process.env.JWT_SECRET || 'fallback_secret_key';
-  const expiresIn = (process.env.JWT_EXPIRES_IN || '7d') as SignOptions['expiresIn'];
+function tokenFor(account: PortalAccountLean, patient?: PatientLean | null): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET is not configured on the server.');
+  }
 
-  return jwt.sign(
-    {
-      accountId: account._id.toString(),
-      _id: patient._id.toString(),
-      id: patient._id.toString(),
-      patientId: patient._id.toString(),
-      hospitalId: account.hospitalId.toString(),
-      accountType: 'HOSPITAL',
-      userType: 'PATIENT',
-      name: `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
-      email: patient.email,
-    },
-    secret,
-    { expiresIn }
-  );
+  const expiresIn = (process.env.JWT_EXPIRES_IN || '7d') as SignOptions['expiresIn'];
+  const firstName = patient?.firstName || account.firstName;
+  const lastName = patient?.lastName || account.lastName;
+  const email = patient?.email || account.email;
+
+  const payload: Record<string, unknown> = {
+    accountId: account._id.toString(),
+    portalAccountId: account._id.toString(),
+    userType: 'PATIENT',
+    accountType: 'PATIENT_PORTAL',
+    name: `${firstName} ${lastName}`.trim(),
+    email,
+  };
+
+  // Only include clinical identifiers when this portal account has been linked
+  // to a hospital patient record. Self-registration alone must not grant access
+  // to another patient's medical records.
+  if (patient?._id) payload.patientId = patient._id.toString();
+  if (account.hospitalId) payload.hospitalId = account.hospitalId.toString();
+
+  return jwt.sign(payload, secret, { expiresIn });
 }
 
 export class PatientPortalService {
   static async register(input: {
-    hospitalCode: string;
-    mrn: string;
-    dateOfBirth: string;
+    name: string;
     email: string;
-    phone: string;
+    dateOfBirth: string;
     password: string;
     confirmPassword?: string;
   }) {
-    const hospitalCode = String(input.hospitalCode || '').trim().toUpperCase();
-    const mrn = String(input.mrn || '').trim();
+    const name = String(input.name || '').trim().replace(/\s+/g, ' ');
     const email = String(input.email || '').trim().toLowerCase();
-    const phone = String(input.phone || '').trim();
-    const dob = new Date(input.dateOfBirth);
+    const dobInput = String(input.dateOfBirth || '').trim();
     const password = String(input.password || '');
 
-    if (
-      !hospitalCode ||
-      !mrn ||
-      !email ||
-      !phone ||
-      !input.dateOfBirth
-    ) {
-      throw new Error(
-        'Hospital code, medical record number, date of birth, email and phone are required.'
-      );
+    if (!name || !email || !dobInput || !password) {
+      throw new Error('Name, email, date of birth and password are required.');
     }
 
-    if (Number.isNaN(dob.getTime())) {
-      throw new Error('Enter a valid date of birth.');
+    if (name.length < 2 || name.length > 120) {
+      throw new Error('Enter a name between 2 and 120 characters.');
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error('Enter a valid email address.');
+    }
+
+    const dob = new Date(`${dobInput}T00:00:00.000Z`);
+    if (Number.isNaN(dob.getTime()) || dob > new Date()) {
+      throw new Error('Enter a valid date of birth that is not in the future.');
     }
 
     if (!validPassword(password)) {
@@ -90,156 +95,123 @@ export class PatientPortalService {
       );
     }
 
-    if (
-      input.confirmPassword !== undefined &&
-      input.confirmPassword !== password
-    ) {
+    if (input.confirmPassword !== undefined && input.confirmPassword !== password) {
       throw new Error('Passwords do not match.');
     }
 
-    const hospital = (await Account.findOne({
-      code: hospitalCode,
-      accountType: 'HOSPITAL',
-      isActive: true,
-    })
-      .select('_id code')
-      .lean()
-      .exec()) as unknown as HospitalLean | null;
-
-    if (!hospital) {
-      throw new Error('Hospital code was not found or the hospital is inactive.');
-    }
-
-    const dayStart = new Date(dob);
-    dayStart.setUTCHours(0, 0, 0, 0);
-
-    const dayEnd = new Date(dayStart);
-    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
-
-    const patient = (await PatientModel.findOne({
-      hospitalId: hospital._id,
-      mrn,
-      email,
-      phone,
-      dateOfBirth: { $gte: dayStart, $lt: dayEnd },
-      active: true,
-    })
-      .select('_id firstName lastName email hospitalId mrn')
-      .lean()
-      .exec()) as unknown as PatientLean | null;
-
-    if (!patient) {
-      throw new Error(
-        'We could not match those details to an active patient record. Check them with your hospital before trying again.'
-      );
-    }
-
-    const existing = (await PatientPortalAccountModel.findOne({
-      hospitalId: hospital._id,
-      $or: [{ patientId: patient._id }, { email }],
-    })
+    const existing = await PatientPortalAccountModel.findOne({ email })
       .select('_id')
       .lean()
-      .exec()) as unknown as ExistingPortalAccountLean | null;
+      .exec();
 
     if (existing) {
-      throw new Error(
-        'A patient portal account already exists for this record or email. Please sign in.'
-      );
+      throw new Error('An account with this email already exists. Please sign in instead.');
     }
 
+    const nameParts = name.split(' ');
+    const firstName = nameParts.shift() || name;
+    const lastName = nameParts.join(' ') || firstName;
     const passwordHash = await bcrypt.hash(password, 12);
 
     const portalAccount = await PatientPortalAccountModel.create({
-      hospitalId: hospital._id,
-      patientId: patient._id,
+      firstName,
+      lastName,
+      dateOfBirth: dob,
       email,
       password: passwordHash,
       active: true,
     });
 
+    const accountForToken: PortalAccountLean = {
+      _id: portalAccount._id,
+      firstName: portalAccount.firstName,
+      lastName: portalAccount.lastName,
+      dateOfBirth: portalAccount.dateOfBirth,
+      email: portalAccount.email,
+      active: portalAccount.active,
+    };
+
     return {
-      token: tokenFor(portalAccount, patient),
+      token: tokenFor(accountForToken),
       patient: {
-        id: patient._id.toString(),
-        hospitalId: hospital._id.toString(),
-        name: `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
+        id: portalAccount._id.toString(),
+        portalAccountId: portalAccount._id.toString(),
+        name: `${firstName} ${lastName}`.trim(),
+        firstName,
+        lastName,
         email,
-        mrn: patient.mrn,
+        dateOfBirth: dob.toISOString().slice(0, 10),
+        linkedToHospital: false,
       },
+      message: 'Account created. Your account must be linked to a hospital patient record before hospital-specific medical records are available.',
     };
   }
 
   static async login(input: {
-    hospitalCode: string;
     email: string;
     password: string;
   }) {
-    const hospitalCode = String(input.hospitalCode || '').trim().toUpperCase();
     const email = String(input.email || '').trim().toLowerCase();
     const password = String(input.password || '');
 
-    if (!hospitalCode || !email || !password) {
-      throw new Error('Hospital code, email and password are required.');
+    if (!email || !password) {
+      throw new Error('Email and password are required.');
     }
 
-    const hospital = (await Account.findOne({
-      code: hospitalCode,
-      accountType: 'HOSPITAL',
-      isActive: true,
-    })
-      .select('_id')
-      .lean()
-      .exec()) as unknown as HospitalLean | null;
-
-    if (!hospital) {
-      throw new Error('Invalid hospital code or credentials.');
-    }
-
-    const portalAccount = await PatientPortalAccountModel.findOne({
-      hospitalId: hospital._id,
-      email,
-      active: true,
-    })
+    const portalAccount = await PatientPortalAccountModel.findOne({ email, active: true })
       .select('+password')
       .exec();
 
-    if (
-      !portalAccount ||
-      !(await bcrypt.compare(password, portalAccount.password))
-    ) {
-      throw new Error('Invalid hospital code, email or password.');
+    if (!portalAccount || !(await bcrypt.compare(password, portalAccount.password))) {
+      throw new Error('Invalid email or password.');
     }
 
-    const patient = (await PatientModel.findOne({
-      _id: portalAccount.patientId,
-      hospitalId: hospital._id,
-      active: true,
-    })
-      .select('_id firstName lastName email mrn')
-      .lean()
-      .exec()) as unknown as PatientLean | null;
+    let patient: PatientLean | null = null;
+    if (portalAccount.patientId && portalAccount.hospitalId) {
+      patient = (await PatientModel.findOne({
+        _id: portalAccount.patientId,
+        hospitalId: portalAccount.hospitalId,
+        active: true,
+      })
+        .select('_id firstName lastName email hospitalId mrn dateOfBirth')
+        .lean()
+        .exec()) as unknown as PatientLean | null;
 
-    if (!patient) {
-      throw new Error('The linked patient record is inactive. Contact your hospital.');
+      if (!patient) {
+        throw new Error('The linked hospital patient record is inactive or unavailable. Contact your hospital.');
+      }
     }
 
     portalAccount.lastLoginAt = new Date();
     await portalAccount.save();
 
-    const patientWithHospital: PatientLean = {
-      ...patient,
-      hospitalId: hospital._id,
+    const accountForToken: PortalAccountLean = {
+      _id: portalAccount._id,
+      hospitalId: portalAccount.hospitalId,
+      patientId: portalAccount.patientId,
+      firstName: portalAccount.firstName,
+      lastName: portalAccount.lastName,
+      email: portalAccount.email,
+      dateOfBirth: portalAccount.dateOfBirth,
+      active: portalAccount.active,
     };
 
+    const firstName = patient?.firstName || portalAccount.firstName;
+    const lastName = patient?.lastName || portalAccount.lastName;
+
     return {
-      token: tokenFor(portalAccount, patientWithHospital),
+      token: tokenFor(accountForToken, patient),
       patient: {
-        id: patient._id.toString(),
-        hospitalId: hospital._id.toString(),
-        name: `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
-        email: patient.email || email,
-        mrn: patient.mrn,
+        id: patient?._id.toString() || portalAccount._id.toString(),
+        portalAccountId: portalAccount._id.toString(),
+        ...(patient?.hospitalId ? { hospitalId: patient.hospitalId.toString() } : {}),
+        name: `${firstName} ${lastName}`.trim(),
+        firstName,
+        lastName,
+        email: patient?.email || portalAccount.email,
+        dateOfBirth: (patient?.dateOfBirth || portalAccount.dateOfBirth).toISOString().slice(0, 10),
+        ...(patient?.mrn ? { mrn: patient.mrn } : {}),
+        linkedToHospital: Boolean(patient),
       },
     };
   }
