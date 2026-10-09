@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { Types } from 'mongoose';
 import { telemedicineService } from './telemedicine.service.js';
 import { ConsultationType, ConsultationStatus } from './telemedicine.types.js';
 
@@ -40,6 +41,13 @@ export class TelemedicineController {
       const authReq = req as AuthenticatedRequest;
       const isPatient = authReq.user.userType === 'PATIENT';
       const isStaff = authReq.user.userType === 'STAFF';
+      if (!authReq.user.hospitalId || !Types.ObjectId.isValid(authReq.user.hospitalId)) {
+        res.status(403).json({
+          success: false,
+          message: 'Connect your patient portal account to a hospital before opening the telemedicine directory.',
+        });
+        return;
+      }
       const result = await telemedicineService.getDirectory(authReq.user.hospitalId, !isPatient && !isStaff);
       res.status(200).json({ success: true, data: result });
     } catch (error) {

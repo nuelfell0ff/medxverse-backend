@@ -3,6 +3,8 @@ import jwt, { SignOptions } from 'jsonwebtoken';
 import { Types } from 'mongoose';
 import { PatientModel } from '../patient/patient.model.js';
 import { PatientPortalAccountModel } from './patient-portal.model.js';
+import { Account } from '../auth/auth.model.js';
+import { AccountType } from '../auth/auth.types.js';
 
 interface PatientLean {
   _id: Types.ObjectId;
@@ -215,4 +217,123 @@ export class PatientPortalService {
       },
     };
   }
+
+  static async listHospitals() {
+    const hospitals = await Account.find({ accountType: AccountType.HOSPITAL, isActive: true })
+      .select('_id name code address logoUrl')
+      .sort({ name: 1 })
+      .lean()
+      .exec();
+
+    return {
+      hospitals: hospitals.map((hospital: any) => ({
+        id: String(hospital._id),
+        name: String(hospital.name || 'Hospital'),
+        code: String(hospital.code || ''),
+        ...(hospital.address ? { address: String(hospital.address) } : {}),
+        ...(hospital.logoUrl ? { logoUrl: String(hospital.logoUrl) } : {}),
+      })).filter((hospital: { code: string }) => Boolean(hospital.code)),
+    };
+  }
+
+  static async linkHospital(input: {
+    email: string;
+    password: string;
+    hospitalCode: string;
+    mrn: string;
+    dateOfBirth: string;
+  }) {
+    const email = String(input.email || '').trim().toLowerCase();
+    const password = String(input.password || '');
+    const hospitalCode = String(input.hospitalCode || '').trim().toUpperCase();
+    const mrn = String(input.mrn || '').trim();
+    const dobInput = String(input.dateOfBirth || '').trim();
+
+    if (!email || !password || !hospitalCode || !mrn || !dobInput) {
+      throw new Error('Hospital, medical record number, date of birth and portal password are required.');
+    }
+
+    const portalAccount = await PatientPortalAccountModel.findOne({ email, active: true })
+      .select('+password')
+      .exec();
+    if (!portalAccount || !(await bcrypt.compare(password, portalAccount.password))) {
+      throw new Error('Your portal password could not be verified. Please sign in again and try once more.');
+    }
+
+    if (portalAccount.hospitalId && portalAccount.patientId) {
+      throw new Error('This portal account is already linked to a hospital patient record.');
+    }
+
+    const hospital = await Account.findOne({
+      accountType: AccountType.HOSPITAL,
+      code: hospitalCode,
+      isActive: true,
+    }).select('_id name code').lean().exec() as any;
+
+    if (!hospital) {
+      throw new Error('We could not find an active hospital with that code. Choose the correct hospital and try again.');
+    }
+
+    const dob = new Date(`${dobInput}T00:00:00.000Z`);
+    if (Number.isNaN(dob.getTime()) || dob > new Date()) {
+      throw new Error('Enter a valid date of birth.');
+    }
+    const nextDay = new Date(dob.getTime() + 24 * 60 * 60 * 1000);
+    const patient = await PatientModel.findOne({
+      hospitalId: hospital._id,
+      mrn: { $regex: `^${mrn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+      dateOfBirth: { $gte: dob, $lt: nextDay },
+      active: true,
+    }).select('_id firstName lastName email hospitalId mrn dateOfBirth').lean().exec() as unknown as PatientLean | null;
+
+    if (!patient) {
+      throw new Error('We could not match those details to an active patient record at that hospital. Check the hospital, MRN and date of birth, or contact hospital reception.');
+    }
+
+    const portalName = `${portalAccount.firstName} ${portalAccount.lastName}`.trim().toLocaleLowerCase();
+    const patientName = `${patient.firstName || ''} ${patient.lastName || ''}`.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+    if (portalName !== patientName) {
+      throw new Error('The name on your portal account does not match the hospital record. Contact hospital reception to verify your details.');
+    }
+
+    if (patient.email && patient.email.trim().toLowerCase() !== email) {
+      throw new Error('The email on your hospital record is different from your portal email. Contact hospital reception to update or verify it.');
+    }
+
+    portalAccount.hospitalId = hospital._id as any;
+    portalAccount.patientId = patient._id as any;
+    portalAccount.firstName = patient.firstName || portalAccount.firstName;
+    portalAccount.lastName = patient.lastName || portalAccount.lastName;
+    await portalAccount.save();
+
+    const accountForToken: PortalAccountLean = {
+      _id: portalAccount._id as Types.ObjectId,
+      hospitalId: hospital._id as Types.ObjectId,
+      patientId: patient._id as Types.ObjectId,
+      firstName: portalAccount.firstName,
+      lastName: portalAccount.lastName,
+      email: portalAccount.email,
+      dateOfBirth: portalAccount.dateOfBirth,
+      active: portalAccount.active,
+    };
+
+    return {
+      token: tokenFor(accountForToken, patient),
+      hospital: { id: String(hospital._id), name: String(hospital.name), code: String(hospital.code) },
+      patient: {
+        id: String(patient._id),
+        portalAccountId: String(portalAccount._id),
+        hospitalId: String(hospital._id),
+        name: `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
+        firstName: patient.firstName || portalAccount.firstName,
+        lastName: patient.lastName || portalAccount.lastName,
+        email: patient.email || portalAccount.email,
+        dateOfBirth: (patient.dateOfBirth || portalAccount.dateOfBirth).toISOString().slice(0, 10),
+        mrn: patient.mrn,
+        linkedToHospital: true,
+      },
+      message: 'Your patient portal account has been connected to the hospital record.',
+    };
+  }
+
 }
