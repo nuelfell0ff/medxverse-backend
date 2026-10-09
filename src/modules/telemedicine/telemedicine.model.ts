@@ -10,7 +10,7 @@ const TelemedicineSessionSchema = new Schema<ITelemedicineSessionDocument>(
   {
     hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-    doctorId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    doctorId: { type: Schema.Types.ObjectId, ref: 'Staff', required: true, index: true },
     consultationType: {
       type: String,
       enum: Object.values(ConsultationType),
@@ -33,6 +33,7 @@ const TelemedicineSessionSchema = new Schema<ITelemedicineSessionDocument>(
     chiefComplaint: { type: String, trim: true },
     clinicalNotes: { type: String, trim: true },
     recordingUrl: { type: String },
+    followUpOfSessionId: { type: Schema.Types.ObjectId, ref: 'TelemedicineSession', index: true },
   },
   { timestamps: true }
 );

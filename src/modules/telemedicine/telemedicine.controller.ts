@@ -34,6 +34,8 @@ export class TelemedicineController {
       const authReq = req as AuthenticatedRequest;
       const hospitalId = authReq.user.hospitalId;
 
+      const { patientId: requestedPatientId, doctorId, consultationType, scheduledStartTime, chiefComplaint, followUpOfSessionId } = req.body;
+      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : requestedPatientId;
       const { patientId, doctorId, consultationType, scheduledStartTime, chiefComplaint } = req.body;
 
       const session = await telemedicineService.createSession({
@@ -58,6 +60,8 @@ export class TelemedicineController {
 
       const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : req.query.patientId as string | undefined;
+      const doctorId = authReq.user.userType === 'STAFF' ? authReq.user._id : req.query.doctorId as string | undefined;
       const patientId = req.query.patientId as string | undefined;
       const requestedDoctorId = req.query.doctorId as string | undefined;
       const doctorId = authReq.user.userType === 'STAFF'
@@ -87,6 +91,9 @@ export class TelemedicineController {
       const hospitalId = authReq.user.hospitalId;
       const id = req.params.id as string;
 
+      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : undefined;
+      const doctorId = authReq.user.userType === 'STAFF' ? authReq.user._id : undefined;
+      const session = await telemedicineService.getSessionById(id, hospitalId, patientId, doctorId);
       const session = await telemedicineService.getSessionById(id, hospitalId);
 
       if (!session) {
@@ -111,6 +118,8 @@ export class TelemedicineController {
         return;
       }
 
+      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : undefined;
+      const doctorId = authReq.user.userType === 'STAFF' ? authReq.user._id : undefined;
       const { status, clinicalNotes, recordingUrl } = req.body;
 
       const updated = await telemedicineService.updateSessionStatus(id, hospitalId, {
@@ -162,6 +171,10 @@ export class TelemedicineController {
       const authReq = req as AuthenticatedRequest;
       const hospitalId = authReq.user.hospitalId;
       const sessionId = req.params.sessionId as string;
+
+      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : undefined;
+      const doctorId = authReq.user.userType === 'STAFF' ? authReq.user._id : undefined;
+      const messages = await telemedicineService.getSessionMessages(sessionId, hospitalId, patientId, doctorId);
       if (!(await this.canStaffAccessSession(authReq, sessionId, hospitalId))) {
         res.status(403).json({ success: false, message: 'You are not assigned to this patient consultation.' });
         return;
