@@ -1,4 +1,9 @@
-import { Schema, model, models, Types, Document } from 'mongoose';
+
+import mongoose, {
+  Schema,
+  Types,
+  Document,
+} from 'mongoose';
 
 export interface IPatientPortalAccount extends Document {
   hospitalId: Types.ObjectId;
@@ -11,16 +16,66 @@ export interface IPatientPortalAccount extends Document {
   updatedAt: Date;
 }
 
-const PatientPortalAccountSchema = new Schema<IPatientPortalAccount>({
-  hospitalId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
-  patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
-  email: { type: String, required: true, lowercase: true, trim: true },
-  password: { type: String, required: true, select: false },
-  active: { type: Boolean, default: true, index: true },
-  lastLoginAt: Date,
-}, { timestamps: true });
+const PatientPortalAccountSchema =
+  new Schema<IPatientPortalAccount>(
+    {
+      hospitalId: {
+        type: Schema.Types.ObjectId,
+        ref: 'Account',
+        required: true,
+        index: true,
+      },
 
-PatientPortalAccountSchema.index({ hospitalId: 1, email: 1 }, { unique: true });
-PatientPortalAccountSchema.index({ hospitalId: 1, patientId: 1 }, { unique: true });
+      patientId: {
+        type: Schema.Types.ObjectId,
+        ref: 'Patient',
+        required: true,
+        index: true,
+      },
 
-export const PatientPortalAccountModel = models.PatientPortalAccount || model<IPatientPortalAccount>('PatientPortalAccount', PatientPortalAccountSchema);
+      email: {
+        type: String,
+        required: true,
+        lowercase: true,
+        trim: true,
+      },
+
+      password: {
+        type: String,
+        required: true,
+        select: false,
+      },
+
+      active: {
+        type: Boolean,
+        default: true,
+        index: true,
+      },
+
+      lastLoginAt: {
+        type: Date,
+      },
+    },
+    {
+      timestamps: true,
+    }
+  );
+
+PatientPortalAccountSchema.index(
+  { hospitalId: 1, email: 1 },
+  { unique: true }
+);
+
+PatientPortalAccountSchema.index(
+  { hospitalId: 1, patientId: 1 },
+  { unique: true }
+);
+
+export const PatientPortalAccountModel =
+  (mongoose.models.PatientPortalAccount as
+    | mongoose.Model<IPatientPortalAccount>
+    | undefined) ??
+  mongoose.model<IPatientPortalAccount>(
+    'PatientPortalAccount',
+    PatientPortalAccountSchema
+  );
