@@ -13,8 +13,6 @@ import { publishAppointmentEvent } from './appointment.events.js';
 import '../patient/patient.model.js';
 import '../staff/staff.model.js';
 import { PatientAssignmentService } from '../patient-assignment/patient-assignment.service.js';
-import { TelemedicineSessionModel } from '../telemedicine/telemedicine.model.js';
-import { ConsultationStatus } from '../telemedicine/telemedicine.types.js';
 
 const priorityValue: Record<QueuePriority, number> = {
   [QueuePriority.ROUTINE]: 0, [QueuePriority.PRIORITY]: 50, [QueuePriority.URGENT]: 100, [QueuePriority.EMERGENCY]: 200,
@@ -109,14 +107,6 @@ export class AppointmentService {
       (current as any).occupiedSlotKeys=slots(dto.startTime,end);
       await current.save();
     } catch(e:any){ if(e?.code===11000) throw err('That provider slot was just booked by another request.',409); throw e; }
-    await TelemedicineSessionModel.updateMany(
-      {
-        hospitalId: h,
-        appointmentId: id,
-        status: ConsultationStatus.WAITING_ROOM,
-      },
-      { $set: { scheduledStartTime: startAt } },
-    );
     await ReminderLogModel.updateMany({appointmentId:id,status:ReminderStatus.SCHEDULED},{$set:{status:ReminderStatus.CANCELLED}});
     await this.scheduleReminders(hospitalId,appointmentId,current.patientId.toString(),current.appointmentDate,current.startTime,current.reminderPolicyMinutes||[]);
     const result=await this.getAppointmentById(hospitalId,appointmentId);
@@ -308,12 +298,8 @@ export class AppointmentService {
     return {appointments,total,page,limit,pages:Math.ceil(total/limit)};
   }
 
-  static async getAppointmentById(hospitalId:string,appointmentId:string,doctorId?:string){
-    const appointment=await AppointmentModel.findOne({
-      _id:oid(appointmentId,'Appointment ID'),
-      hospitalId:oid(hospitalId,'Hospital ID'),
-      ...(doctorId ? { doctorId: oid(doctorId,'Doctor ID') } : {}),
-    }).populate([{path:'patientId',select:'firstName lastName mrn phone gender dateOfBirth'},{path:'doctorId',select:'firstName lastName email department role'}]).lean();
+  static async getAppointmentById(hospitalId:string,appointmentId:string){
+    const appointment=await AppointmentModel.findOne({_id:oid(appointmentId,'Appointment ID'),hospitalId:oid(hospitalId,'Hospital ID')}).populate([{path:'patientId',select:'firstName lastName mrn phone gender dateOfBirth'},{path:'doctorId',select:'firstName lastName email department role'}]).lean();
     if(!appointment)throw err('Appointment record not found.',404);return appointment;
   }
 
@@ -324,24 +310,6 @@ export class AppointmentService {
     if([AppointmentStatus.COMPLETED, AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW].includes(dto.status)) {
       await PatientAssignmentService.endAppointmentAssignment(hospitalId, appointmentId);
     }
-
-    if (dto.status === AppointmentStatus.CANCELLED) {
-      await TelemedicineSessionModel.updateMany(
-        { hospitalId: h, appointmentId: id, status: ConsultationStatus.WAITING_ROOM },
-        { $set: { status: ConsultationStatus.CANCELLED, endTime: new Date() } },
-      );
-    } else if (dto.status === AppointmentStatus.COMPLETED) {
-      await TelemedicineSessionModel.updateMany(
-        { hospitalId: h, appointmentId: id, status: ConsultationStatus.IN_PROGRESS },
-        { $set: { status: ConsultationStatus.COMPLETED, endTime: new Date() } },
-      );
-    } else if (dto.status === AppointmentStatus.NO_SHOW) {
-      await TelemedicineSessionModel.updateMany(
-        { hospitalId: h, appointmentId: id, status: ConsultationStatus.WAITING_ROOM },
-        { $set: { status: ConsultationStatus.NO_SHOW, endTime: new Date() } },
-      );
-    }
-
     publishAppointmentEvent(dto.status===AppointmentStatus.CANCELLED?'appointment.cancelled':'appointment.updated',hospitalId,appointment);
     return appointment;
   }

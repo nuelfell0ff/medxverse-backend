@@ -30,8 +30,6 @@ export interface ITelemedicineSession {
   chiefComplaint?: string;
   clinicalNotes?: string;
   recordingUrl?: string;
-  followUpOfSessionId?: Types.ObjectId;
-  appointmentId?: Types.ObjectId;
 }
 
 export interface ITelemedicineSessionDocument extends ITelemedicineSession, Document {
@@ -58,8 +56,6 @@ export interface CreateTelemedicineSessionInput {
   consultationType: ConsultationType;
   scheduledStartTime: Date;
   chiefComplaint?: string;
-  followUpOfSessionId?: string;
-  appointmentId?: string;
 }
 
 export interface UpdateSessionStatusInput {
@@ -75,7 +71,6 @@ export interface SendMessageInput {
   senderModel: 'User' | 'Patient';
   messageText: string;
   attachmentUrl?: string;
-  senderRole?: string;
 }
 
 export interface GetSessionsQuery {

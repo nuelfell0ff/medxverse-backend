@@ -11,19 +11,11 @@ interface AuthenticatedRequest extends Request {
 /**
  * Cache middleware for GET routes.
  * @param durationInSeconds Time-to-live (TTL) for cache in seconds.
- *
- * Redis is optional: if it has not been configured, the request continues
- * without caching instead of failing.
  */
 export const cacheMiddleware = (durationInSeconds: number = 300) => {
-  return async (
-    req: AuthenticatedRequest,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> => {
-    if (req.method !== 'GET' || !redisClient) {
-      next();
-      return;
+  return async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    if (req.method !== 'GET') {
+      return next();
     }
 
     const userId = req.user?.id || 'public';
@@ -40,21 +32,15 @@ export const cacheMiddleware = (durationInSeconds: number = 300) => {
       const originalJson = res.json.bind(res);
       res.json = (body: any): Response => {
         if (res.statusCode === 200) {
-          // Do not delay or fail the HTTP response if writing to Redis fails.
-          void redisClient
-            ?.set(key, JSON.stringify(body), 'EX', durationInSeconds)
-            .catch((err: unknown) => {
-              console.error('Cache write error:', err);
-            });
+          redisClient.set(key, JSON.stringify(body), 'EX', durationInSeconds);
         }
-
         return originalJson(body);
       };
 
       next();
     } catch (err) {
       console.error('Cache Middleware Error:', err);
-      next(); // Fail open: proceed if Redis encounters an issue.
+      next(); // Fail open: proceed if Redis encounters an issue
     }
   };
 };

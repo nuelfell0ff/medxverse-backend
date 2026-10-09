@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppointmentService } from './appointment.service.js';
-import { StaffUser } from '../staff-auth/staff-user.model.js';
 import {
   CreateAppointmentDTO,
   UpdateAppointmentStatusDTO,
@@ -27,8 +26,6 @@ interface AuthenticatedRequest extends Request {
     hospitalId?: string;
     hospital?: string;
     _id?: string;
-    userType?: string;
-    role?: string;
   };
 }
 
@@ -70,42 +67,6 @@ export class AppointmentController {
     return hospitalId;
   }
 
-  /**
-   * Doctor accounts are scoped to their own appointments. Front-desk and
-   * authorized hospital account users retain the existing hospital-wide view.
-   */
-  private static async doctorScope(
-    req: Request,
-    hospitalId: string,
-  ): Promise<{ isDoctor: boolean; doctorId?: string }> {
-    const user = (req as AuthenticatedRequest).user;
-    const role = String(user?.role || '').toLowerCase();
-    const isDoctor =
-      user?.userType === 'STAFF' &&
-      /doctor|physician|specialist|consultant/.test(role);
-
-    if (!isDoctor) return { isDoctor: false };
-
-    if (!user?._id) return { isDoctor: true };
-
-    // Staff login tokens identify the StaffUser record, while appointments
-    // reference the clinical Staff record. Resolve the link before querying.
-    const staffUser = await StaffUser.findOne({
-      _id: user._id,
-      hospitalId,
-      isActive: true,
-      status: 'ACTIVE',
-    })
-      .select('staffId')
-      .lean()
-      .exec();
-
-    return {
-      isDoctor: true,
-      ...(staffUser?.staffId ? { doctorId: String(staffUser.staffId) } : {}),
-    };
-  }
-
   static async create(req: Request, res: Response, next: NextFunction) {
     try {
       const h = AppointmentController.hospital(req, res);
@@ -128,23 +89,11 @@ export class AppointmentController {
       const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
-      const scope = await AppointmentController.doctorScope(req, h);
-      if (scope.isDoctor && !scope.doctorId) {
-        res.status(403).json({
-          success: false,
-          message: 'Your staff account is not linked to a clinical staff profile.',
-        });
-        return;
-      }
-
       res.json({
         success: true,
         ...(await AppointmentService.getAppointments(
           h,
-          {
-            ...(req.query as GetAppointmentsQueryDTO),
-            ...(scope.isDoctor ? { doctorId: scope.doctorId } : {}),
-          },
+          req.query as GetAppointmentsQueryDTO,
         )),
       });
     } catch (e) {
@@ -161,22 +110,9 @@ export class AppointmentController {
       const h = AppointmentController.hospital(req, res);
       if (!h) return;
 
-      const scope = await AppointmentController.doctorScope(req, h);
-      if (scope.isDoctor && !scope.doctorId) {
-        res.status(403).json({
-          success: false,
-          message: 'Your staff account is not linked to a clinical staff profile.',
-        });
-        return;
-      }
-
       res.json({
         success: true,
-        data: await AppointmentService.getAppointmentById(
-          h,
-          req.params.id,
-          scope.isDoctor ? scope.doctorId : undefined,
-        ),
+        data: await AppointmentService.getAppointmentById(h, req.params.id),
       });
     } catch (e) {
       next(e);

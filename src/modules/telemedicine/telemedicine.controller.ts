@@ -1,8 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { Types } from 'mongoose';
 import { telemedicineService } from './telemedicine.service.js';
 import { ConsultationType, ConsultationStatus } from './telemedicine.types.js';
-import { StaffUser } from '../staff-auth/staff-user.model.js';
 
 export interface AuthenticatedRequest extends Request {
   user: {
@@ -13,55 +11,22 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export class TelemedicineController {
-  private async clinicalStaffId(authReq: AuthenticatedRequest): Promise<string | undefined> {
-    if (authReq.user.userType !== 'STAFF') return undefined;
+  private async canStaffAccessSession(
+    authReq: AuthenticatedRequest,
+    sessionId: string,
+    hospitalId: string
+  ): Promise<boolean> {
+    const user = authReq.user;
+    if (user.userType !== 'STAFF') return true;
 
-    const staffUser = await StaffUser.findOne({
-      _id: authReq.user._id,
-      hospitalId: authReq.user.hospitalId,
-      isActive: true,
-      status: 'ACTIVE',
-    })
-      .select('staffId')
-      .lean()
-      .exec();
+    const role = String(user.role || '').toUpperCase();
+    if (['HOSPITAL_ADMIN', 'ADMIN', 'SYSTEM_ADMIN'].includes(role)) return true;
 
-    return staffUser?.staffId ? String(staffUser.staffId) : undefined;
-  }
-
-  public async createSessionFromAppointment(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const hospitalId = authReq.user.hospitalId;
-
-      if (!hospitalId || authReq.user.userType === 'PATIENT') {
-        res.status(403).json({
-          success: false,
-          message: 'Only authorized hospital staff can open a consultation from an appointment.',
-        });
-        return;
-      }
-
-      const isStaff = authReq.user.userType === 'STAFF';
-      const staffId = isStaff ? await this.clinicalStaffId(authReq) : undefined;
-      if (isStaff && !staffId) {
-        res.status(403).json({
-          success: false,
-          message: 'Your staff account is not linked to a clinical staff profile.',
-        });
-        return;
-      }
-
-      const session = await telemedicineService.createSessionForAppointment(
-        hospitalId,
-        req.params.appointmentId as string,
-        staffId,
-      );
-
-      res.status(200).json({ success: true, data: session });
-    } catch (error) {
-      next(error);
-    }
+    const session = await telemedicineService.getSessionById(sessionId, hospitalId);
+    if (!session) return false;
+    const doctor = session.doctorId as unknown as { _id?: unknown } | string;
+    const doctorId = typeof doctor === 'string' ? doctor : String(doctor?._id || '');
+    return doctorId === String(user._id);
   }
 
   public async createSession(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -69,28 +34,7 @@ export class TelemedicineController {
       const authReq = req as AuthenticatedRequest;
       const hospitalId = authReq.user.hospitalId;
 
-      const { patientId: requestedPatientId, doctorId: requestedDoctorId, consultationType, scheduledStartTime, chiefComplaint, followUpOfSessionId } = req.body;
-      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : requestedPatientId;
-      let doctorId = requestedDoctorId as string;
-
-      if (authReq.user.userType === 'STAFF') {
-        const clinicalStaffId = await this.clinicalStaffId(authReq);
-        if (!clinicalStaffId) {
-          res.status(403).json({
-            success: false,
-            message: 'Your staff account is not linked to a clinical staff profile.',
-          });
-          return;
-        }
-        if (doctorId && doctorId !== clinicalStaffId) {
-          res.status(403).json({
-            success: false,
-            message: 'You can only create consultations assigned to you.',
-          });
-          return;
-        }
-        doctorId = clinicalStaffId;
-      }
+      const { patientId, doctorId, consultationType, scheduledStartTime, chiefComplaint } = req.body;
 
       const session = await telemedicineService.createSession({
         hospitalId,
@@ -99,29 +43,9 @@ export class TelemedicineController {
         consultationType: consultationType as ConsultationType,
         scheduledStartTime,
         chiefComplaint,
-        followUpOfSessionId,
       });
 
       res.status(201).json({ success: true, data: session });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  public async getDirectory(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      const isPatient = authReq.user.userType === 'PATIENT';
-      const isStaff = authReq.user.userType === 'STAFF';
-      if (!authReq.user.hospitalId || !Types.ObjectId.isValid(authReq.user.hospitalId)) {
-        res.status(403).json({
-          success: false,
-          message: 'Connect your patient portal account to a hospital before opening the telemedicine directory.',
-        });
-        return;
-      }
-      const result = await telemedicineService.getDirectory(authReq.user.hospitalId, !isPatient && !isStaff);
-      res.status(200).json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
@@ -134,17 +58,11 @@ export class TelemedicineController {
 
       const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
-      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : req.query.patientId as string | undefined;
-      const isStaff = authReq.user.userType === 'STAFF';
-      const clinicalStaffId = isStaff ? await this.clinicalStaffId(authReq) : undefined;
-      if (isStaff && !clinicalStaffId) {
-        res.status(403).json({
-          success: false,
-          message: 'Your staff account is not linked to a clinical staff profile.',
-        });
-        return;
-      }
-      const doctorId = isStaff ? clinicalStaffId : req.query.doctorId as string | undefined;
+      const patientId = req.query.patientId as string | undefined;
+      const requestedDoctorId = req.query.doctorId as string | undefined;
+      const doctorId = authReq.user.userType === 'STAFF'
+        ? authReq.user._id
+        : requestedDoctorId;
       const status = req.query.status as ConsultationStatus | undefined;
       const consultationType = req.query.consultationType as ConsultationType | undefined;
 
@@ -169,17 +87,7 @@ export class TelemedicineController {
       const hospitalId = authReq.user.hospitalId;
       const id = req.params.id as string;
 
-      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : undefined;
-      const isStaff = authReq.user.userType === 'STAFF';
-      const doctorId = isStaff ? await this.clinicalStaffId(authReq) : undefined;
-      if (isStaff && !doctorId) {
-        res.status(403).json({
-          success: false,
-          message: 'Your staff account is not linked to a clinical staff profile.',
-        });
-        return;
-      }
-      const session = await telemedicineService.getSessionById(id, hospitalId, patientId, doctorId);
+      const session = await telemedicineService.getSessionById(id, hospitalId);
 
       if (!session) {
         res.status(404).json({ success: false, message: 'Telemedicine session not found' });
@@ -198,27 +106,18 @@ export class TelemedicineController {
       const hospitalId = authReq.user.hospitalId;
       const id = req.params.id as string;
 
-      const { status, clinicalNotes, recordingUrl } = req.body;
-      if (authReq.user.userType === 'PATIENT' && status !== ConsultationStatus.CANCELLED) {
-        res.status(403).json({ success: false, message: 'Patients may cancel a consultation but cannot change its clinical status.' });
+      if (!(await this.canStaffAccessSession(authReq, id, hospitalId))) {
+        res.status(403).json({ success: false, message: 'You are not assigned to this patient consultation.' });
         return;
       }
 
-      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : undefined;
-      const isStaff = authReq.user.userType === 'STAFF';
-      const doctorId = isStaff ? await this.clinicalStaffId(authReq) : undefined;
-      if (isStaff && !doctorId) {
-        res.status(403).json({
-          success: false,
-          message: 'Your staff account is not linked to a clinical staff profile.',
-        });
-        return;
-      }
+      const { status, clinicalNotes, recordingUrl } = req.body;
+
       const updated = await telemedicineService.updateSessionStatus(id, hospitalId, {
         status: status as ConsultationStatus,
-        clinicalNotes: patientId ? undefined : clinicalNotes,
-        recordingUrl: patientId ? undefined : recordingUrl,
-      }, patientId, doctorId);
+        clinicalNotes,
+        recordingUrl,
+      });
 
       if (!updated) {
         res.status(404).json({ success: false, message: 'Telemedicine session not found' });
@@ -238,14 +137,16 @@ export class TelemedicineController {
       const senderId = authReq.user._id;
 
       const { sessionId, messageText, attachmentUrl } = req.body;
-      const senderModel = authReq.user.userType === 'PATIENT' ? 'Patient' : 'User';
+      if (!sessionId || !(await this.canStaffAccessSession(authReq, String(sessionId), hospitalId))) {
+        res.status(403).json({ success: false, message: 'You are not assigned to this patient consultation.' });
+        return;
+      }
 
       const message = await telemedicineService.sendMessage({
         hospitalId,
         sessionId,
         senderId,
-        senderModel: senderModel || 'User',
-        senderRole: String(authReq.user.userType || 'ACCOUNT'),
+        senderModel: String(authReq.user.userType || '').toUpperCase() === 'PATIENT' ? 'Patient' : 'User',
         messageText,
         attachmentUrl,
       });
@@ -261,18 +162,12 @@ export class TelemedicineController {
       const authReq = req as AuthenticatedRequest;
       const hospitalId = authReq.user.hospitalId;
       const sessionId = req.params.sessionId as string;
-
-      const patientId = authReq.user.userType === 'PATIENT' ? authReq.user._id : undefined;
-      const isStaff = authReq.user.userType === 'STAFF';
-      const doctorId = isStaff ? await this.clinicalStaffId(authReq) : undefined;
-      if (isStaff && !doctorId) {
-        res.status(403).json({
-          success: false,
-          message: 'Your staff account is not linked to a clinical staff profile.',
-        });
+      if (!(await this.canStaffAccessSession(authReq, sessionId, hospitalId))) {
+        res.status(403).json({ success: false, message: 'You are not assigned to this patient consultation.' });
         return;
       }
-      const messages = await telemedicineService.getSessionMessages(sessionId, hospitalId, patientId, doctorId);
+
+      const messages = await telemedicineService.getSessionMessages(sessionId, hospitalId);
       res.status(200).json({ success: true, data: messages });
     } catch (error) {
       next(error);

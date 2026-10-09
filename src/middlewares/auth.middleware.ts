@@ -1,9 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-export type AccountType = 'HOSPITAL' | 'HMO' | 'PATIENT_PORTAL';
-
-type UserType = 'ACCOUNT' | 'STAFF' | 'PATIENT';
+export type AccountType = 'HOSPITAL' | 'HMO';
 
 export interface AuthRequest extends Request {
   account?: {
@@ -12,7 +10,7 @@ export interface AuthRequest extends Request {
     name: string;
     email: string;
     role?: string;
-    userType?: UserType;
+    userType?: 'ACCOUNT' | 'STAFF';
     [key: string]: unknown;
   };
 
@@ -25,7 +23,7 @@ export interface AuthRequest extends Request {
     name?: string;
     email?: string;
     role?: string;
-    userType?: UserType;
+    userType?: 'ACCOUNT' | 'STAFF';
     [key: string]: unknown;
   };
 }
@@ -34,36 +32,23 @@ interface JwtPayload {
   _id?: string;
   id?: string;
   accountId?: string;
-  patientId?: string;
-  portalAccountId?: string;
+
   hospitalId?: string;
   hmoId?: string;
+
   hospital?: string;
   hmo?: string;
+
   accountType?: AccountType | string;
+
   name?: string;
   email?: string;
   role?: string;
-  userType?: UserType;
+  userType?: 'ACCOUNT' | 'STAFF';
+
   [key: string]: unknown;
 }
 
-/**
- * Safely converts an unknown JWT value into a string.
- * Non-string values are ignored instead of causing TypeScript errors.
- */
-const optionalString = (value: unknown): string | undefined => {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-
-  const normalized = value.trim();
-  return normalized.length > 0 ? normalized : undefined;
-};
-
-/**
- * Authenticate a request using a JWT.
- */
 export const authenticateAccount = (
   req: AuthRequest,
   res: Response,
@@ -95,49 +80,26 @@ export const authenticateAccount = (
       process.env.JWT_SECRET || 'fallback_secret_key'
     ) as JwtPayload;
 
-    const requestPath = req.originalUrl.split('?')[0];
-
-    // Patient portal tokens must not be used as hospital or HMO accounts.
-    // Permit patient portal routes for account linking and telemedicine.
-    if (
-      decoded.userType === 'PATIENT' &&
-      !requestPath.includes('/telemedicine') &&
-      !requestPath.includes('/patient-portal')
-    ) {
-      res.status(403).json({
-        success: false,
-        message:
-          'Patient portal tokens may only access patient portal and telemedicine endpoints.',
-      });
-      return;
-    }
-
-    const rawAccountType = decoded.accountType;
-
-    const accountType: AccountType | undefined =
-      rawAccountType === 'HOSPITAL' ||
-      rawAccountType === 'HMO' ||
-      rawAccountType === 'PATIENT_PORTAL'
-        ? rawAccountType
+    const accountType =
+      decoded.accountType === 'HMO' || decoded.accountType === 'HOSPITAL'
+        ? decoded.accountType
         : undefined;
 
-    // Resolve the account ID independently from the clinical patient ID.
+    /*
+     * Resolve the authenticated account/user ID.
+     *
+     * accountId is the preferred tenant/account identifier.
+     * _id/id are supported for compatibility with older JWTs.
+     */
     const accountId =
-      optionalString(decoded.accountId) ??
-      optionalString(decoded._id) ??
-      optionalString(decoded.id) ??
-      optionalString(decoded.portalAccountId);
+      decoded.accountId ??
+      decoded._id ??
+      decoded.id;
 
     const userId =
-      decoded.userType === 'PATIENT'
-        ? optionalString(decoded.patientId) ??
-          optionalString(decoded._id) ??
-          optionalString(decoded.id) ??
-          optionalString(decoded.portalAccountId) ??
-          optionalString(decoded.accountId)
-        : optionalString(decoded._id) ??
-          optionalString(decoded.id) ??
-          optionalString(decoded.accountId);
+      decoded._id ??
+      decoded.id ??
+      decoded.accountId;
 
     if (!accountId) {
       res.status(401).json({
@@ -155,44 +117,63 @@ export const authenticateAccount = (
       return;
     }
 
-    // Resolve hospital and HMO tenant IDs as strings only.
+    /*
+     * Resolve tenant IDs independently.
+     *
+     * For HMO accounts:
+     *   req.user.hmoId MUST be populated.
+     *
+     * For hospital accounts:
+     *   req.user.hospitalId MUST be populated.
+     */
     const resolvedHmoId =
-      optionalString(decoded.hmoId) ??
-      optionalString(decoded.hmo) ??
+      decoded.hmoId ??
+      decoded.hmo ??
       (accountType === 'HMO' ? accountId : undefined);
 
     const resolvedHospitalId =
-      optionalString(decoded.hospitalId) ??
-      optionalString(decoded.hospital) ??
+      decoded.hospitalId ??
+      decoded.hospital ??
       (accountType === 'HOSPITAL' ? accountId : undefined);
 
-    // Preserve the decoded token data for existing middleware and routes.
+    /*
+     * Preserve the decoded JWT as req.account.
+     */
     req.account = {
       ...decoded,
       accountId,
       accountType: accountType as AccountType,
-      name: optionalString(decoded.name) ?? '',
-      email: optionalString(decoded.email) ?? '',
-      role: optionalString(decoded.role),
-      userType: decoded.userType ?? 'ACCOUNT',
+      name: String(decoded.name ?? ''),
+      email: String(decoded.email ?? ''),
+      role: decoded.role ? String(decoded.role) : undefined,
+      userType: decoded.userType || 'ACCOUNT',
     };
 
-    // Normalize the user object for downstream controllers.
+    /*
+     * Normalize req.user for every downstream module.
+     *
+     * This is the important part for the HMO modules:
+     *
+     * req.user.hmoId
+     */
     req.user = {
       ...decoded,
+
       _id: userId,
       accountId,
       accountType,
+
       hospitalId: resolvedHospitalId,
       hmoId: resolvedHmoId,
-      name: optionalString(decoded.name),
-      email: optionalString(decoded.email),
-      role: optionalString(decoded.role),
-      userType: decoded.userType ?? 'ACCOUNT',
+
+      name: decoded.name ? String(decoded.name) : undefined,
+      email: decoded.email ? String(decoded.email) : undefined,
+      role: decoded.role ? String(decoded.role) : undefined,
+      userType: decoded.userType || 'ACCOUNT',
     };
 
     next();
-  } catch {
+  } catch (error) {
     res.status(401).json({
       success: false,
       message: 'Invalid or expired token.',
@@ -201,12 +182,12 @@ export const authenticateAccount = (
 };
 
 /**
- * Restrict access based on account type or user role.
+ * Restrict access based on AccountType or User Role.
  *
- * Examples:
- * restrictTo('HMO')
- * restrictTo('HOSPITAL')
- * restrictTo('ADMIN')
+ * Example:
+ *   restrictTo('HMO')
+ *   restrictTo('HOSPITAL')
+ *   restrictTo('ADMIN')
  */
 export const restrictTo = (...allowedRoles: string[]) => {
   return (
@@ -214,18 +195,6 @@ export const restrictTo = (...allowedRoles: string[]) => {
     res: Response,
     next: NextFunction
   ): void => {
-    if (
-      req.user?.userType === 'PATIENT' &&
-      !allowedRoles.includes('PATIENT')
-    ) {
-      res.status(403).json({
-        success: false,
-        message:
-          'Patient portal access is limited to patient-enabled features.',
-      });
-      return;
-    }
-
     const role =
       req.user?.role ??
       req.user?.accountType ??
@@ -234,7 +203,8 @@ export const restrictTo = (...allowedRoles: string[]) => {
     if (!role || !allowedRoles.includes(role)) {
       res.status(403).json({
         success: false,
-        message: 'Forbidden. You do not have permission to perform this action.',
+        message:
+          'Forbidden. You do not have permission to perform this action.',
       });
       return;
     }

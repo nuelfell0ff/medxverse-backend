@@ -31,7 +31,6 @@ import notificationsRoutes from '../modules/notifications/notifications.routes.j
 import inventoryRoutes from '../modules/inventory/inventory.routes.js';
 import administrationRoutes from '../modules/administration/administration.routes.js';
 import telemedicineRoutes from '../modules/telemedicine/telemedicine.routes.js';
-import patientPortalRoutes from '../modules/patient-portal/patient-portal.routes.js';
 import icuRoutes from '../modules/icu/icu.routes.js';
 import globalSearchRoutes from '../modules/global-search/global-search.routes.js';
 
@@ -58,7 +57,6 @@ const v1Router = Router();
 
 // Platform & Onboarding
 v1Router.use('/auth', authRoutes);
-v1Router.use('/patient-portal/auth', patientPortalRoutes);
 v1Router.use('/auth/staff', staffAuthRoutes);
 v1Router.use('/communication', communicationRoutes);
 v1Router.use('/search', globalSearchRoutes);
