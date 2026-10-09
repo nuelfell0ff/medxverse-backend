@@ -6,15 +6,19 @@ import { attachEmergencyWebSocket } from './modules/emergency/emergency.socket.j
 import { attachBedWardWebSocket } from './modules/bed-ward/bed-ward.socket.js';
 import { initializeBedWardIntegrations } from './modules/bed-ward/bed-ward.integration.js';
 import { attachAppointmentWebSocket } from './modules/appointment/appointment.socket.js';
+import { attachCommunicationWebSocket } from './modules/communication/communication.socket.js';
+// IMPORTANT: production must start this file (not app.ts directly).
+// WebSocket upgrades are handled by this HTTP server.
 const server = http.createServer(app);
 attachEmergencyWebSocket(server);
 attachBedWardWebSocket(server);
 attachAppointmentWebSocket(server);
+attachCommunicationWebSocket(server);
 initializeBedWardIntegrations();
 const startServer = async () => {
     // Connect to MongoDB
     await connectDB();
-    server.listen(env.PORT, () => {
+    server.listen(env.PORT, '0.0.0.0', () => {
         console.log(`
   ======================================================
      🚀 MedxVerse Backend Running on Port ${env.PORT}

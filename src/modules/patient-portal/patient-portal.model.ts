@@ -1,4 +1,4 @@
-import { Schema, model, models, Types, Document } from 'mongoose';
+import mongoose, { Schema, Model, Types, Document } from 'mongoose';
 
 export interface IPatientPortalAccount extends Document {
   hospitalId: Types.ObjectId;
@@ -23,4 +23,7 @@ const PatientPortalAccountSchema = new Schema<IPatientPortalAccount>({
 PatientPortalAccountSchema.index({ hospitalId: 1, email: 1 }, { unique: true });
 PatientPortalAccountSchema.index({ hospitalId: 1, patientId: 1 }, { unique: true });
 
-export const PatientPortalAccountModel = models.PatientPortalAccount || model<IPatientPortalAccount>('PatientPortalAccount', PatientPortalAccountSchema);
+export const PatientPortalAccountModel: Model<IPatientPortalAccount> =
+  (mongoose.models.PatientPortalAccount as Model<IPatientPortalAccount>) ||
+  mongoose.model<IPatientPortalAccount>('PatientPortalAccount', PatientPortalAccountSchema);
+

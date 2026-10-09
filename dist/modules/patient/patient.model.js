@@ -169,7 +169,8 @@ const PatientEhrViewSchema = new Schema({
 }, { timestamps: true, minimize: false });
 PatientEhrViewSchema.index({ 'patient.hospitalId': 1 });
 PatientEhrViewSchema.index({ 'patient._id': 1 }, { unique: true });
-export const PatientModel = mongoose.models.Patient || model('Patient', PatientSchema);
+export const PatientModel = mongoose.models.Patient ||
+    model('Patient', PatientSchema);
 export const EncounterModel = mongoose.models.Encounter || model('Encounter', EncounterSchema);
 export const ObservationModel = mongoose.models.Observation || model('Observation', ObservationSchema);
 export const ConditionModel = mongoose.models.Condition || model('Condition', ConditionSchema);

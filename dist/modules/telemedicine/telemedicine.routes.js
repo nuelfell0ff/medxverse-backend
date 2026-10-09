@@ -3,6 +3,8 @@ import { telemedicineController } from './telemedicine.controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
 const router = Router();
 router.use(authenticate);
+// Telemedicine directory for the authenticated hospital
+router.get('/directory', (req, res, next) => telemedicineController.getDirectory(req, res, next));
 // Telemedicine Consultation Sessions
 router.post('/sessions', (req, res, next) => telemedicineController.createSession(req, res, next));
 router.get('/sessions', (req, res, next) => telemedicineController.getSessions(req, res, next));

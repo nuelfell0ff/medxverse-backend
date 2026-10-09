@@ -290,8 +290,15 @@ const CommunicationSchema = new Schema({
 const StaffSchema = new Schema({
     hospitalId: {
         type: Schema.Types.ObjectId,
-        ref: 'Hospital',
+        ref: 'Account',
         required: [true, 'Hospital ID is required'],
+        index: true,
+    },
+    userAccountId: {
+        type: Schema.Types.ObjectId,
+        ref: 'StaffUser',
+        unique: true,
+        sparse: true,
         index: true,
     },
     staffId: {
@@ -494,6 +501,6 @@ StaffSchema.index({
 StaffSchema.index({
     hospitalId: 1,
     'contact.email': 1,
-});
+}, { sparse: true });
 export const Staff = mongoose.models.Staff ||
     mongoose.model('Staff', StaffSchema);

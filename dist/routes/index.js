@@ -1,5 +1,10 @@
 import { Router } from 'express';
 import authRoutes from '../modules/auth/auth.routes.js';
+import staffAuthRoutes from '../modules/staff-auth/staff-auth.routes.js';
+import communicationRoutes from '../modules/communication/communication.routes.js';
+import staffWorkRoutes from '../modules/staff-work/staff-work.routes.js';
+import staffNotificationsRoutes from '../modules/staff-notifications/staff-notifications.routes.js';
+import patientAssignmentRoutes from '../modules/patient-assignment/patient-assignment.routes.js';
 // hospital hms
 import dashboardRoutes from '../modules/dashboard/dashboard.routes.js';
 import patientRoutes from '../modules/patient/patient.routes.js';
@@ -25,7 +30,9 @@ import notificationsRoutes from '../modules/notifications/notifications.routes.j
 import inventoryRoutes from '../modules/inventory/inventory.routes.js';
 import administrationRoutes from '../modules/administration/administration.routes.js';
 import telemedicineRoutes from '../modules/telemedicine/telemedicine.routes.js';
+import patientPortalRoutes from '../modules/patient-portal/patient-portal.routes.js';
 import icuRoutes from '../modules/icu/icu.routes.js';
+import globalSearchRoutes from '../modules/global-search/global-search.routes.js';
 // hmo portal
 import hmsDashboardRoutes from '../modules/hms-dashboard/hms-dashboard.routes.js';
 import preAuthorizationRoutes from '../modules/pre-authorizations/pre-authorizations.routes.js';
@@ -47,6 +54,13 @@ import analyticsRoutes from '../modules/analytics/analytics.routes.js';
 const v1Router = Router();
 // Platform & Onboarding
 v1Router.use('/auth', authRoutes);
+v1Router.use('/patient-portal/auth', patientPortalRoutes);
+v1Router.use('/auth/staff', staffAuthRoutes);
+v1Router.use('/communication', communicationRoutes);
+v1Router.use('/search', globalSearchRoutes);
+v1Router.use('/staff-work', staffWorkRoutes);
+v1Router.use('/staff-notifications', staffNotificationsRoutes);
+v1Router.use('/patient-assignments', patientAssignmentRoutes);
 // hospital hms
 v1Router.use('/dashboard', dashboardRoutes);
 v1Router.use('/patients', patientRoutes);

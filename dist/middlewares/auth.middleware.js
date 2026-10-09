@@ -18,6 +18,10 @@ export const authenticateAccount = (req, res, next) => {
     }
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_key');
+        if (decoded.userType === 'PATIENT' && !req.originalUrl.split('?')[0].includes('/telemedicine')) {
+            res.status(403).json({ success: false, message: 'Patient portal tokens may only access telemedicine endpoints.' });
+            return;
+        }
         const accountType = decoded.accountType === 'HMO' || decoded.accountType === 'HOSPITAL'
             ? decoded.accountType
             : undefined;
@@ -72,6 +76,7 @@ export const authenticateAccount = (req, res, next) => {
             name: String(decoded.name ?? ''),
             email: String(decoded.email ?? ''),
             role: decoded.role ? String(decoded.role) : undefined,
+            userType: decoded.userType || 'ACCOUNT',
         };
         /*
          * Normalize req.user for every downstream module.
@@ -90,6 +95,7 @@ export const authenticateAccount = (req, res, next) => {
             name: decoded.name ? String(decoded.name) : undefined,
             email: decoded.email ? String(decoded.email) : undefined,
             role: decoded.role ? String(decoded.role) : undefined,
+            userType: decoded.userType || 'ACCOUNT',
         };
         next();
     }
@@ -110,6 +116,10 @@ export const authenticateAccount = (req, res, next) => {
  */
 export const restrictTo = (...allowedRoles) => {
     return (req, res, next) => {
+        if (req.user?.userType === 'PATIENT' && !allowedRoles.includes('PATIENT')) {
+            res.status(403).json({ success: false, message: 'Patient portal access is limited to patient-enabled features.' });
+            return;
+        }
         const role = req.user?.role ??
             req.user?.accountType ??
             req.account?.accountType;

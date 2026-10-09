@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { StaffController } from './staff.controller.js';
+import { StaffAuthController } from '../staff-auth/staff-auth.controller.js';
 import { protect, restrictTo, } from '../../middlewares/auth.middleware.js';
 const router = Router();
 /**
@@ -36,5 +37,6 @@ router
 /**
  * Activate/deactivate staff.
  */
+router.post('/:staffId/invitation', restrictTo('HOSPITAL', 'HOSPITAL_ADMIN', 'ADMIN', 'SYSTEM_ADMIN'), StaffAuthController.createInvitation);
 router.patch('/:id/toggle-status', restrictTo('HOSPITAL', 'ADMIN'), StaffController.toggleStaffStatus);
 export default router;

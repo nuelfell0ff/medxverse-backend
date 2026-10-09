@@ -5,6 +5,7 @@ import { publishAppointmentEvent } from './appointment.events.js';
 // Ensure referenced models are registered before Mongoose populate is used.
 import '../patient/patient.model.js';
 import '../staff/staff.model.js';
+import { PatientAssignmentService } from '../patient-assignment/patient-assignment.service.js';
 const priorityValue = {
     [QueuePriority.ROUTINE]: 0, [QueuePriority.PRIORITY]: 50, [QueuePriority.URGENT]: 100, [QueuePriority.EMERGENCY]: 200,
 };
@@ -72,6 +73,7 @@ export class AppointmentService {
         }
         await this.scheduleReminders(hospitalId, appointment._id.toString(), dto.patientId, appointment.appointmentDate, dto.startTime, appointment.reminderPolicyMinutes || []);
         await this.persistRisk(hospitalId, appointment._id.toString(), dto.patientId, risk);
+        await PatientAssignmentService.assignFromAppointment(hospitalId, appointment._id.toString());
         const result = await this.getAppointmentById(hospitalId, appointment._id.toString());
         publishAppointmentEvent('appointment.created', hospitalId, result);
         return result;
@@ -348,6 +350,9 @@ export class AppointmentService {
         const appointment = await AppointmentModel.findOneAndUpdate({ _id: id, hospitalId: h }, { $set: { status: dto.status, ...(dto.notes !== undefined && { notes: dto.notes }) } }, { new: true }).populate('patientId', 'firstName lastName mrn phone').populate('doctorId', 'firstName lastName email department role').lean();
         if (!appointment)
             throw err('Appointment record not found.', 404);
+        if ([AppointmentStatus.COMPLETED, AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW].includes(dto.status)) {
+            await PatientAssignmentService.endAppointmentAssignment(hospitalId, appointmentId);
+        }
         publishAppointmentEvent(dto.status === AppointmentStatus.CANCELLED ? 'appointment.cancelled' : 'appointment.updated', hospitalId, appointment);
         return appointment;
     }
