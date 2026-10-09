@@ -1,14 +1,6 @@
 import rateLimit from 'express-rate-limit';
-
-/**
- * Rate limiting must not depend on Redis being reachable.
- *
- * The previous RedisStore caused login/register requests to return HTTP 500
- * when REDIS_URL was missing, unreachable, or exhausted its retry limit.
- * express-rate-limit's built-in MemoryStore keeps the API usable when Redis
- * is unavailable. Limits are per process, so use a healthy shared store later
- * if the deployment needs rate limits shared across multiple instances.
- */
+import { RedisStore } from 'rate-limit-redis';
+import { redisClient } from '../config/redis.js';
 
 // Global API Limiter (100 requests per 15 minutes per IP)
 export const apiLimiter = rateLimit({
@@ -16,6 +8,11 @@ export const apiLimiter = rateLimit({
   limit: 100,
   standardHeaders: true,
   legacyHeaders: false,
+  store: new RedisStore({
+    sendCommand: async (...args: string[]) => {
+      return (await redisClient.call(args[0], ...args.slice(1))) as any;
+    },
+  }),
   message: {
     status: 429,
     error: 'Too many requests from this IP, please try again after 15 minutes.',
@@ -28,6 +25,11 @@ export const authLimiter = rateLimit({
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  store: new RedisStore({
+    sendCommand: async (...args: string[]) => {
+      return (await redisClient.call(args[0], ...args.slice(1))) as any;
+    },
+  }),
   message: {
     status: 429,
     error: 'Too many authentication attempts, please try again later.',

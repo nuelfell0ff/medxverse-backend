@@ -150,17 +150,73 @@ export class PatientPortalService {
     };
   }
 
-  static async login(input: { hospitalCode: string; email: string; password: string }) {
+  static async login(input: { hospitalCode?: string; hospitalId?: string; email: string; password: string }) {
     const hospitalCode = String(input.hospitalCode || '').trim().toUpperCase();
+    const requestedHospitalId = String(input.hospitalId || '').trim();
     const email = String(input.email || '').trim().toLowerCase();
     const password = String(input.password || '');
 
-    if (!hospitalCode || !email || !password) {
-      throw new Error('Hospital code, email and password are required.');
+    // Hospital code is optional. The patient portal can resolve the hospital
+    // from the authenticated portal account, or use hospitalId when the app
+    // already knows the selected hospital from its dashboard context.
+    if (!email || !password) {
+      throw new Error('Email and password are required.');
     }
 
+    let hospitalId: Types.ObjectId | string | undefined;
+
+    if (hospitalCode) {
+      const hospitalResult = await Account.findOne({
+        code: hospitalCode,
+        accountType: 'HOSPITAL',
+        isActive: true,
+      })
+        .select('_id')
+        .lean()
+        .exec();
+
+      const hospital = (
+        Array.isArray(hospitalResult) ? hospitalResult[0] : hospitalResult
+      ) as HospitalRecord | null | undefined;
+
+      if (!hospital) throw new Error('Invalid email, password or hospital code.');
+      hospitalId = hospital._id;
+    } else if (requestedHospitalId) {
+      if (!Types.ObjectId.isValid(requestedHospitalId)) {
+        throw new Error('The selected hospital is invalid. Please reopen the patient portal from your hospital dashboard.');
+      }
+      hospitalId = new Types.ObjectId(requestedHospitalId);
+    }
+
+    const portalAccountQuery: Record<string, any> = {
+      email,
+      active: true,
+    };
+    if (hospitalId) portalAccountQuery.hospitalId = hospitalId;
+
+    const portalAccountResults = await PatientPortalAccountModel.find(portalAccountQuery)
+      .select('+password')
+      .exec();
+
+    // Compare against candidate accounts so a patient can sign in with only
+    // email/password when that credential pair identifies one hospital account.
+    const matchingAccounts: typeof portalAccountResults = [];
+    for (const candidate of portalAccountResults) {
+      if (await bcrypt.compare(password, candidate.password)) {
+        matchingAccounts.push(candidate);
+      }
+    }
+
+    if (matchingAccounts.length === 0) {
+      throw new Error('Invalid email or password.');
+    }
+    if (matchingAccounts.length > 1) {
+      throw new Error('This email and password match more than one hospital account. Please open the patient portal from the correct hospital dashboard.');
+    }
+
+    const portalAccount = matchingAccounts[0];
     const hospitalResult = await Account.findOne({
-      code: hospitalCode,
+      _id: portalAccount.hospitalId,
       accountType: 'HOSPITAL',
       isActive: true,
     })
@@ -172,19 +228,7 @@ export class PatientPortalService {
       Array.isArray(hospitalResult) ? hospitalResult[0] : hospitalResult
     ) as HospitalRecord | null | undefined;
 
-    if (!hospital) throw new Error('Invalid hospital code or credentials.');
-
-    const portalAccount = await PatientPortalAccountModel.findOne({
-      hospitalId: hospital._id,
-      email,
-      active: true,
-    })
-      .select('+password')
-      .exec();
-
-    if (!portalAccount || !(await bcrypt.compare(password, portalAccount.password))) {
-      throw new Error('Invalid hospital code, email or password.');
-    }
+    if (!hospital) throw new Error('The hospital linked to this patient account is inactive. Contact your hospital.');
 
     const patientResult = await PatientModel.findOne({
       _id: portalAccount.patientId,
