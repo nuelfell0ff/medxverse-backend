@@ -8,5 +8,6 @@ const router = Router();
 router.get('/hospitals', (req, res) => PatientPortalController.hospitals(req, res));
 router.post('/register', authLimiter, (req, res) => PatientPortalController.register(req, res));
 router.post('/login', authLimiter, (req, res) => PatientPortalController.login(req, res));
+router.post('/link', authLimiter, (req, res) => PatientPortalController.link(req, res));
 
 export default router;

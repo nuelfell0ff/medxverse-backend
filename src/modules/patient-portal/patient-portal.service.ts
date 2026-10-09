@@ -296,4 +296,151 @@ export class PatientPortalService {
       },
     };
   }
+
+  static async link(input: {
+    hospitalId?: string;
+    hospitalCode?: string;
+    mrn: string;
+    dateOfBirth: string;
+    email?: string;
+    password?: string;
+  }) {
+    const requestedHospitalId = String(input.hospitalId || '').trim();
+    const hospitalCode = String(input.hospitalCode || '').trim().toUpperCase();
+    const mrn = String(input.mrn || '').trim();
+    const email = String(input.email || '').trim().toLowerCase();
+    const dob = new Date(input.dateOfBirth);
+    const password = String(input.password || '');
+
+    if (!requestedHospitalId && !hospitalCode) {
+      throw new Error('Please select a hospital.');
+    }
+    if (!mrn || !input.dateOfBirth) {
+      throw new Error('Medical record number and date of birth are required.');
+    }
+    if (Number.isNaN(dob.getTime())) {
+      throw new Error('Enter a valid date of birth.');
+    }
+
+    let hospitalResult: any = null;
+    if (requestedHospitalId && Types.ObjectId.isValid(requestedHospitalId)) {
+      hospitalResult = await Account.findOne({
+        _id: new Types.ObjectId(requestedHospitalId),
+        accountType: 'HOSPITAL',
+        isActive: true,
+      })
+        .select('_id name code')
+        .lean()
+        .exec();
+    }
+    if (!hospitalResult && hospitalCode) {
+      hospitalResult = await Account.findOne({
+        code: hospitalCode,
+        accountType: 'HOSPITAL',
+        isActive: true,
+      })
+        .select('_id name code')
+        .lean()
+        .exec();
+    }
+
+    const hospital = (
+      Array.isArray(hospitalResult) ? hospitalResult[0] : hospitalResult
+    ) as (HospitalRecord & { name?: string }) | null | undefined;
+
+    if (!hospital) {
+      throw new Error('Hospital was not found or the hospital is inactive.');
+    }
+
+    const dayStart = new Date(dob);
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+    const patientResult = await PatientModel.findOne({
+      hospitalId: hospital._id,
+      mrn,
+      dateOfBirth: { $gte: dayStart, $lt: dayEnd },
+      active: true,
+    })
+      .select('_id firstName lastName email hospitalId mrn')
+      .lean()
+      .exec();
+
+    const patient = (
+      Array.isArray(patientResult) ? patientResult[0] : patientResult
+    ) as PatientRecord | null | undefined;
+
+    if (!patient) {
+      throw new Error('We could not match those details to an active patient record at this hospital. Check your MRN and date of birth.');
+    }
+
+    let portalAccount = await PatientPortalAccountModel.findOne({
+      hospitalId: hospital._id,
+      $or: [{ patientId: patient._id }, ...(email ? [{ email }] : [])],
+    })
+      .select('+password')
+      .exec();
+
+    if (!portalAccount) {
+      let existingByEmail = email
+        ? await PatientPortalAccountModel.findOne({ email }).select('+password').exec()
+        : null;
+
+      let passwordHash: string;
+      if (password) {
+        if (existingByEmail) {
+          const match = await bcrypt.compare(password, existingByEmail.password);
+          if (!match) throw new Error('Incorrect portal password.');
+          passwordHash = existingByEmail.password;
+        } else {
+          if (!validPassword(password)) {
+            throw new Error('Password must be at least 8 characters and include uppercase, lowercase, number and special character.');
+          }
+          passwordHash = await bcrypt.hash(password, 12);
+        }
+      } else if (existingByEmail) {
+        passwordHash = existingByEmail.password;
+      } else {
+        throw new Error('Please enter your portal account password to confirm.');
+      }
+
+      portalAccount = await PatientPortalAccountModel.create({
+        hospitalId: hospital._id,
+        patientId: patient._id,
+        email: email || patient.email || `${patient.mrn}@patient.local`,
+        password: passwordHash,
+        active: true,
+      });
+    } else {
+      if (password) {
+        const match = await bcrypt.compare(password, portalAccount.password);
+        if (!match) throw new Error('Incorrect portal password.');
+      }
+      portalAccount.patientId = patient._id as Types.ObjectId;
+      portalAccount.lastLoginAt = new Date();
+      await portalAccount.save();
+    }
+
+    const patientWithHospital: PatientRecord & { hospitalId: Types.ObjectId | string } = {
+      ...patient,
+      hospitalId: hospital._id,
+    };
+
+    return {
+      token: tokenFor(portalAccount, patientWithHospital),
+      patient: {
+        id: patient._id.toString(),
+        hospitalId: hospital._id.toString(),
+        name: `${patient.firstName} ${patient.lastName}`.trim(),
+        email: patient.email || email,
+        mrn: patient.mrn,
+      },
+      hospital: {
+        id: hospital._id.toString(),
+        name: hospital.name || 'Hospital',
+        code: hospital.code || '',
+      },
+    };
+  }
 }

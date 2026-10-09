@@ -49,4 +49,20 @@ export class PatientPortalController {
       });
     }
   }
+
+  static async link(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await PatientPortalService.link(req.body || {});
+      res.status(200).json({
+        success: true,
+        message: 'Account connected to hospital successfully.',
+        data,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error?.message || 'Connecting account to hospital failed.',
+      });
+    }
+  }
 }
