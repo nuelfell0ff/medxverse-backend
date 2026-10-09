@@ -34,6 +34,7 @@ const TelemedicineSessionSchema = new Schema<ITelemedicineSessionDocument>(
     clinicalNotes: { type: String, trim: true },
     recordingUrl: { type: String },
     followUpOfSessionId: { type: Schema.Types.ObjectId, ref: 'TelemedicineSession', index: true },
+    appointmentId: { type: Schema.Types.ObjectId, ref: 'Appointment', index: true },
   },
   { timestamps: true }
 );

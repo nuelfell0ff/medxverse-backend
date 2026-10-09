@@ -31,6 +31,7 @@ export interface ITelemedicineSession {
   clinicalNotes?: string;
   recordingUrl?: string;
   followUpOfSessionId?: Types.ObjectId;
+  appointmentId?: Types.ObjectId;
 }
 
 export interface ITelemedicineSessionDocument extends ITelemedicineSession, Document {
@@ -58,6 +59,7 @@ export interface CreateTelemedicineSessionInput {
   scheduledStartTime: Date;
   chiefComplaint?: string;
   followUpOfSessionId?: string;
+  appointmentId?: string;
 }
 
 export interface UpdateSessionStatusInput {

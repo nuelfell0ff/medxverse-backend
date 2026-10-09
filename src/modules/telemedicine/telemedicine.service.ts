@@ -2,7 +2,8 @@
 import { Types } from 'mongoose';
 import { PatientModel } from '../patient/patient.model.js';
 import { Staff } from '../staff/staff.model.js';
-import { ProviderScheduleModel } from '../appointment/appointment.model.js';
+import { AppointmentModel, ProviderScheduleModel } from '../appointment/appointment.model.js';
+import { AppointmentStatus } from '../appointment/appointment.types.js';
 import {
   TelemedicineSessionModel,
   TelemedicineMessageModel,
@@ -37,14 +38,84 @@ interface ProviderScheduleLean {
   blockedTimes?: ProviderBlockedTime[];
 }
 
+/** Narrow, stable shape for the appointment fields used to create a consultation. */
+interface AppointmentForTelemedicine {
+  _id: Types.ObjectId;
+  hospitalId: Types.ObjectId;
+  patientId: Types.ObjectId | string;
+  doctorId: Types.ObjectId | string;
+  appointmentDate: Date | string;
+  startTime: string;
+  status: AppointmentStatus;
+  reason?: string;
+  notes?: string;
+}
+
 export class TelemedicineService {
+  /**
+   * Create or return the video consultation linked to a booked appointment.
+   * A staff doctor may only open a consultation for an appointment assigned to them.
+   */
+  public async createSessionForAppointment(
+    hospitalId: string,
+    appointmentId: string,
+    requestedByStaffId?: string
+  ): Promise<ITelemedicineSessionDocument> {
+    if (!Types.ObjectId.isValid(hospitalId) || !Types.ObjectId.isValid(appointmentId)) {
+      throw Object.assign(new Error('A valid hospital and appointment ID are required.'), { statusCode: 400 });
+    }
+
+    const appointment = (await AppointmentModel.findOne({
+      _id: appointmentId,
+      hospitalId,
+    }).lean().exec()) as unknown as AppointmentForTelemedicine | null;
+
+    if (!appointment) {
+      throw Object.assign(new Error('Appointment not found in this hospital.'), { statusCode: 404 });
+    }
+
+    if (requestedByStaffId && String(appointment.doctorId) !== requestedByStaffId) {
+      throw Object.assign(new Error('You can only open consultations for appointments assigned to you.'), { statusCode: 403 });
+    }
+
+    if ([AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED, AppointmentStatus.NO_SHOW].includes(appointment.status)) {
+      throw Object.assign(new Error('A consultation cannot be opened for a cancelled, completed, or missed appointment.'), { statusCode: 409 });
+    }
+
+    const existing = await TelemedicineSessionModel.findOne({
+      hospitalId,
+      appointmentId,
+      status: { $nin: [ConsultationStatus.CANCELLED, ConsultationStatus.NO_SHOW] },
+    })
+      .populate('patientId', 'firstName lastName mrn phone')
+      .populate('doctorId', 'firstName lastName role specialization')
+      .populate('appointmentId', 'appointmentDate startTime endTime status type department')
+      .exec();
+
+    if (existing) return existing;
+
+    const date = new Date(appointment.appointmentDate).toISOString().slice(0, 10);
+    const scheduledStartTime = new Date(`${date}T${appointment.startTime}:00`);
+
+    return this.createSession({
+      hospitalId,
+      patientId: String(appointment.patientId),
+      doctorId: String(appointment.doctorId),
+      appointmentId,
+      consultationType: ConsultationType.VIDEO,
+      scheduledStartTime,
+      chiefComplaint: appointment.reason || appointment.notes,
+    });
+  }
+
   public async createSession(
     input: CreateTelemedicineSessionInput
   ): Promise<ITelemedicineSessionDocument> {
     if (
       !Types.ObjectId.isValid(input.hospitalId) ||
       !Types.ObjectId.isValid(input.patientId) ||
-      !Types.ObjectId.isValid(input.doctorId)
+      !Types.ObjectId.isValid(input.doctorId) ||
+      (input.appointmentId !== undefined && !Types.ObjectId.isValid(input.appointmentId))
     ) {
       throw new Error(
         'A valid hospital, patient, and doctor ID are required.'
@@ -230,6 +301,7 @@ export class TelemedicineService {
 
     const session = await TelemedicineSessionModel.create({
       ...input,
+      ...(input.appointmentId ? { appointmentId: new Types.ObjectId(input.appointmentId) } : {}),
       hospitalId: new Types.ObjectId(input.hospitalId),
       patientId: new Types.ObjectId(input.patientId),
       doctorId: new Types.ObjectId(input.doctorId),
@@ -343,6 +415,7 @@ export class TelemedicineService {
       TelemedicineSessionModel.find(filter)
         .populate('patientId', 'firstName lastName mrn phone')
         .populate('doctorId', 'firstName lastName role specialization')
+        .populate('appointmentId', 'appointmentDate startTime endTime status type department')
         .sort({ scheduledStartTime: -1 })
         .skip(skip)
         .limit(limit)
@@ -373,6 +446,7 @@ export class TelemedicineService {
     })
       .populate('patientId', 'firstName lastName mrn dateOfBirth gender phone')
       .populate('doctorId', 'firstName lastName role specialization')
+      .populate('appointmentId', 'appointmentDate startTime endTime status type department')
       .exec();
   }
 
