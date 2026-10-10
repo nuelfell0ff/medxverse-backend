@@ -137,14 +137,30 @@ export class TelemedicineController {
   public async getMeetingToken(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthenticatedRequest;
-      const appId = env.JAAS_APP_ID;
-      const apiKeyId = env.JAAS_API_KEY_ID;
+      const configuredAppId = env.JAAS_APP_ID?.trim();
+      const configuredApiKeyId = env.JAAS_API_KEY_ID?.trim();
       const privateKey = env.JAAS_PRIVATE_KEY;
 
-      if (!appId || !apiKeyId || !privateKey) {
+      if (!configuredAppId || !configuredApiKeyId || !privateKey) {
         res.status(503).json({
           success: false,
           message: 'JaaS is not configured. Set JAAS_APP_ID, JAAS_API_KEY_ID, and JAAS_PRIVATE_KEY on the backend.',
+        });
+        return;
+      }
+
+      // JaaS displays API key IDs as "APP_ID/KEY_SUFFIX". Accept either that
+      // complete key ID or just the suffix in JAAS_API_KEY_ID, and always use
+      // the bare AppID for the JWT "sub" claim and room namespace.
+      const appId = configuredAppId.split('/')[0];
+      const kid = configuredApiKeyId.includes('/')
+        ? configuredApiKeyId
+        : `${appId}/${configuredApiKeyId}`;
+
+      if (!appId.startsWith('vpaas-magic-cookie-') || !kid.startsWith(`${appId}/`)) {
+        res.status(503).json({
+          success: false,
+          message: 'JaaS configuration is invalid. JAAS_APP_ID must be the AppID starting with vpaas-magic-cookie-, and JAAS_API_KEY_ID must be the key suffix or the full AppID/key-suffix value shown in the JaaS console.',
         });
         return;
       }
@@ -218,7 +234,7 @@ export class TelemedicineController {
         algorithm: 'RS256',
         header: {
           alg: 'RS256',
-          kid: `${appId}/${apiKeyId}`,
+          kid,
           typ: 'JWT',
         },
       };
